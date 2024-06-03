@@ -19,6 +19,7 @@
           ./nixvim.nix
           ./starship.nix
           ./terminal.nix
+          ./texlive.nix
           ./zellij.nix
           ./zsh.nix
         ];
