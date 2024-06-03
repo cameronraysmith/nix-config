@@ -15,6 +15,7 @@
           ./bat.nix
           ./git.nix
           ./helix.nix
+          ./nixpkgs.nix
           ./nixvim.nix
           ./starship.nix
           ./terminal.nix
