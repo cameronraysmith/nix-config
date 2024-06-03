@@ -37,6 +37,13 @@
       EOF
       }
 
+      # Shell function to compute the sha256 nix hash of a file from a url.
+      nix_hash_func() {
+        url="$1";
+        nix_hash=$(nix-prefetch-url "$url");
+        nix hash to-sri --type sha256 "$nix_hash";
+      }
+
       # Shell function to alias nnn to n
       n () {
         if [ -n $NNNLVL ] && [ "$NNNLVL" -ge 1 ]; then

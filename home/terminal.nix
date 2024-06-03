@@ -60,6 +60,7 @@
     t = "tree";
     mm = "micromamba";
     nb = "nix build --json --no-link --print-build-logs";
+    nix-hash = "nix_hash_func";
   };
 
   fonts.fontconfig.enable = true;
