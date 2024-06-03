@@ -3,10 +3,16 @@
 {
   home.packages = with pkgs; [
     # Unix tools
-    ripgrep
+    coreutils
     fd
+    ripgrep
     sd
     tree
+
+    # IO
+    aria2
+    curl
+    wget
 
     # Nix dev
     cachix
@@ -26,6 +32,7 @@
 
     # Dev
     gh
+    graphite-cli
     just
     lunarvim
     ratchet
@@ -42,6 +49,7 @@
 
   home.shellAliases = rec {
     e = "lvim";
+    dl = "aria2c -x 16 -s 16 -k 1M";
     dr = "docker container run --interactive --rm --tty";
     g = "git";
     j = "just";
