@@ -17,6 +17,7 @@
           ./helix.nix
           ./nixpkgs.nix
           ./nixvim.nix
+          ./pandoc.nix
           ./starship.nix
           ./terminal.nix
           ./texlive.nix
