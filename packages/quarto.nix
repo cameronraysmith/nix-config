@@ -1,13 +1,17 @@
 { stdenv
 , lib
 , esbuild
-, deno
-, fetchurl
 , dart-sass
+, deno
+, pandoc
+, python3
+, fetchurl
 , makeWrapper
 , rWrapper
 , rPackages
 , autoPatchelfHook
+, extraRPackages ? [ ]
+, extraPythonPackages ? ps: with ps; [ ]
 }:
 
 let
@@ -39,10 +43,12 @@ stdenv.mkDerivation rec {
 
   preFixup = ''
     wrapProgram $out/bin/quarto \
-      --prefix QUARTO_ESBUILD : ${esbuild}/bin/esbuild \
-      --prefix QUARTO_DENO : ${deno}/bin/deno \
-      --prefix QUARTO_R : ${rWrapper.override { packages = with rPackages; [ dplyr reticulate rmarkdown tidyr ]; }}/bin/R \
-      --prefix QUARTO_DART_SASS : ${dart-sass}/bin/dart-sass
+      --prefix QUARTO_ESBUILD : ${lib.getExe esbuild} \
+      --prefix QUARTO_DART_SASS : ${lib.getExe dart-sass} \
+      --prefix QUARTO_DENO : ${lib.getExe deno} \
+      --prefix QUARTO_PANDOC : ${lib.getExe pandoc} \
+      ${lib.optionalString (rWrapper != null) "--prefix QUARTO_R : ${rWrapper.override { packages = with rPackages; [ dplyr reticulate rmarkdown tidyr ] ++ extraRPackages; }}/bin/R"} \
+      ${lib.optionalString (python3 != null) "--prefix QUARTO_PYTHON : ${python3.withPackages (ps: with ps; [ jupyter ipython ] ++ (extraPythonPackages ps))}/bin/python3"}
   '';
 
   installPhase = ''
@@ -60,6 +66,7 @@ stdenv.mkDerivation rec {
 
   meta = with lib; {
     description = "Open-source scientific and technical publishing system built on Pandoc";
+    mainProgram = "quarto";
     longDescription = ''
       Quarto is an open-source scientific and technical publishing system built on Pandoc.
       Quarto documents are authored using markdown, an easy to write plain text format.
@@ -67,7 +74,7 @@ stdenv.mkDerivation rec {
     homepage = "https://quarto.org/";
     changelog = "https://github.com/quarto-dev/quarto-cli/releases/tag/v${version}";
     license = licenses.gpl2Plus;
-    maintainers = with maintainers; [ mrtarantoga ];
+    maintainers = with maintainers; [ minijackson mrtarantoga ];
     platforms = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
     sourceProvenance = with sourceTypes; [ binaryNativeCode binaryBytecode ];
   };
