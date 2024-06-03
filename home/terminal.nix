@@ -22,6 +22,7 @@
 
     # Publishing
     asciinema
+    quarto
 
     # Compute    
     awscli2
