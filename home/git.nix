@@ -66,6 +66,7 @@
         side-by-side = true;
       };
     };
+    ignores = [ "*~" "*.swp" ];
   };
 
   programs.lazygit = {
