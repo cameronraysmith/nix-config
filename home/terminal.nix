@@ -36,6 +36,7 @@
     graphite-cli
     just
     lunarvim
+    pre-commit
     ratchet
     tmate
 
