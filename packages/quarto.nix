@@ -48,7 +48,7 @@ stdenv.mkDerivation rec {
       --prefix QUARTO_DENO : ${lib.getExe deno} \
       --prefix QUARTO_PANDOC : ${lib.getExe pandoc} \
       ${lib.optionalString (rWrapper != null) "--prefix QUARTO_R : ${rWrapper.override { packages = with rPackages; [ dplyr reticulate rmarkdown tidyr ] ++ extraRPackages; }}/bin/R"} \
-      ${lib.optionalString (python3 != null) "--prefix QUARTO_PYTHON : ${python3.withPackages (ps: with ps; [ jupyter ipython ] ++ (extraPythonPackages ps))}/bin/python3"}
+      # ${lib.optionalString (python3 != null) "--prefix QUARTO_PYTHON : ${python3.withPackages (ps: with ps; [ jupyter ipython ] ++ (extraPythonPackages ps))}/bin/python3"}
   '';
 
   installPhase = ''
