@@ -11,10 +11,12 @@
           inputs.nixvim.homeManagerModules.nixvim
           inputs.nix-index-database.hmModules.nix-index
           ./atuin.nix
+          ./awscli.nix
           ./bash.nix
           ./bat.nix
           ./git.nix
           ./helix.nix
+          ./k9s.nix
           ./nixpkgs.nix
           ./nixvim.nix
           ./pandoc.nix

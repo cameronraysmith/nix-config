@@ -34,13 +34,27 @@ in
     quarto
 
     # compute    
-    awscli2
-    k9s
+    argo
+    argocd
+    argocd-autopilot
+    cue
+    (google-cloud-sdk.withExtraComponents
+      [
+        google-cloud-sdk.components.gke-gcloud-auth-plugin
+      ]
+    )
     kind
     kubectl
+    kubectx
+    kubernetes-helm
+    kustomize
     lazydocker
+    terraform
+    timoni
 
     # dev
+    act
+    bazelisk
     dvcWithOptionalRemotes
     gh
     graphite-cli
