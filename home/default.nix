@@ -18,6 +18,7 @@
           ./nixpkgs.nix
           ./nixvim.nix
           ./pandoc.nix
+          ./poetry.nix
           ./starship.nix
           ./terminal.nix
           ./texlive.nix

@@ -98,7 +98,6 @@
         src = pkgs.nnn + "/plugins";
       };
     };
-    poetry.enable = true;
     zoxide.enable = true;
 
   };
