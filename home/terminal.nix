@@ -32,6 +32,7 @@ in
     # publishing
     asciinema
     quarto
+    svg2pdf
 
     # compute    
     argo
