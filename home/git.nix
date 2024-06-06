@@ -78,6 +78,9 @@
           pager = "delta --color-only --dark --paging=never";
           useConfig = false;
         };
+        commit = {
+          signOff = true;
+        };
       };
     };
   };
