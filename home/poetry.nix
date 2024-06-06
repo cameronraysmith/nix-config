@@ -2,7 +2,7 @@
 {
   programs.poetry = {
     enable = true;
-    package = pkgs.poetry.withPlugins (ps: with ps; [ poetry-plugin-up ]);
+    package = pkgs.poetry.withPlugins (ps: with ps; [ poetry-plugin-export poetry-plugin-up ]);
     settings = {
       virtualenvs = {
         in-project = true;
