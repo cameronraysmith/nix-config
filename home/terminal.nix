@@ -1,52 +1,70 @@
 { pkgs, ... }:
-# Platform-independent terminal setup
+let
+  python = pkgs.python3.withPackages (ps: with ps; [ ]);
+  dvcWithOptionalRemotes = pkgs.dvc.override {
+    enableGoogle = true;
+    enableAWS = true;
+    enableAzure = true;
+    enableSSH = true;
+  };
+in
 {
   home.packages = with pkgs; [
-    # Unix tools
+    # unix tools
     coreutils
     fd
     ripgrep
     sd
     tree
 
-    # IO
+    # io
     aria2
     curl
+    rclone
     wget
 
-    # Nix dev
+    # nix dev
     cachix
     nil
     nix-info
     nixpkgs-fmt
 
-    # Publishing
+    # publishing
     asciinema
     quarto
 
-    # Compute    
+    # compute    
     awscli2
     k9s
     kind
     kubectl
     lazydocker
 
-    # Dev
+    # dev
+    dvcWithOptionalRemotes
     gh
     graphite-cli
+    graphviz
     just
     lunarvim
+    plantuml-c4
     pre-commit
     ratchet
     tmate
 
-    # Fonts
+    # fonts
     cascadia-code
     (pkgs.nerdfonts.override { fonts = [ "Inconsolata" ]; })
 
-    # Python
+    # python
+    # conda-lock # not available in nixpkgs
+    # hatch # broken on Darwin
     micromamba
-    python3
+    poethepoet
+    pydeps
+    pylint
+    pyright
+    python
   ];
 
   home.shellAliases = rec {
