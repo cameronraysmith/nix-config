@@ -53,6 +53,11 @@ in
     terraform
     timoni
 
+    # db
+    duckdb
+    postgresql_16
+    sqlite
+
     # dev
     act
     bazelisk
