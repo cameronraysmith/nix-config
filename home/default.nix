@@ -17,6 +17,8 @@
           ./git.nix
           ./helix.nix
           ./k9s.nix
+          ./nix.nix
+          ../nixos/caches
           ./nixpkgs.nix
           ./nixvim.nix
           ./pandoc.nix
