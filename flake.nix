@@ -91,6 +91,14 @@
       perSystem = { self', pkgs, system, config, ... }:
         let
           user = "crs58";
+          homeDirectory =
+            if user == "root"
+            then "/root"
+            else "/${
+            if pkgs.stdenv.isDarwin
+            then "Users"
+            else "home"
+            }/${user}";
         in
         {
           legacyPackages.homeConfigurations.${user} =
@@ -99,7 +107,7 @@
               ({ pkgs, ... }: {
                 imports = [ self.homeModules.common ];
                 home.username = user;
-                home.homeDirectory = "/${if pkgs.stdenv.isDarwin then "Users" else "home"}/${user}";
+                home.homeDirectory = homeDirectory;
               });
 
           devShells = {
