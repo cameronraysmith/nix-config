@@ -90,25 +90,28 @@
 
       perSystem = { self', pkgs, system, config, ... }:
         let
-          user = "crs58";
-          homeDirectory =
-            if user == "root"
-            then "/root"
-            else "/${
-            if pkgs.stdenv.isDarwin
-            then "Users"
-            else "home"
-            }/${user}";
+          users = [ "crs58" "runner" ];
         in
         {
-          legacyPackages.homeConfigurations.${user} =
-            self.nixos-flake.lib.mkHomeConfiguration
-              pkgs
-              ({ pkgs, ... }: {
-                imports = [ self.homeModules.common ];
-                home.username = user;
-                home.homeDirectory = homeDirectory;
-              });
+          legacyPackages.homeConfigurations = builtins.listToAttrs (map
+            (user: {
+              name = user;
+              value = self.nixos-flake.lib.mkHomeConfiguration
+                pkgs
+                ({ pkgs, ... }: {
+                  imports = [ self.homeModules.common ];
+                  home.username = user;
+                  home.homeDirectory =
+                    if user == "root"
+                    then "/root"
+                    else "/${
+                    if pkgs.stdenv.isDarwin
+                    then "Users"
+                    else "home"
+                    }/${user}";
+                });
+            })
+            users);
 
           devShells = {
             default = pkgs.mkShell {
