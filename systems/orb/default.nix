@@ -12,13 +12,12 @@ in
     ./orbstack.nix
   ];
 
-  system.stateVersion = "21.05";
-  nixpkgs.hostPlatform = "aarch64-linux";
-  networking.useDHCP = false;
-  networking.interfaces.eth0.useDHCP = true;
-
-
   documentation.enable = true;
   documentation.nixos.enable = true;
   environment.noXlibs = false;
+  i18n.defaultLocale = "en_US.UTF-8";
+  networking.useDHCP = false;
+  networking.interfaces.eth0.useDHCP = true;
+  nixpkgs.hostPlatform = "aarch64-linux";
+  system.stateVersion = "21.05";
 }

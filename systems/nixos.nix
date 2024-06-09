@@ -25,6 +25,7 @@ in
   boot.initrd.availableKernelModules = [ "xhci_pci" "ahci" "nvme" "sd_mod" ];
   hardware.cpu.intel.updateMicrocode = true;
   hardware.enableRedistributableFirmware = true;
+  i18n.defaultLocale = "en_US.UTF-8";
 
   services.openssh.enable = true;
 

@@ -102,6 +102,12 @@ in
     nix-hash = "nix_hash_func";
   };
 
+  home.sessionVariables = {
+    LANG = "en_US.UTF-8";
+    LC_ALL = "en_US.UTF-8";
+    LC_CTYPE = "en_US.UTF-8";
+  };
+
   fonts.fontconfig.enable = true;
   catppuccin.flavor = "mocha";
   catppuccin.enable = true;
