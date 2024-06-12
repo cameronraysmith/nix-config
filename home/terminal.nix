@@ -16,6 +16,7 @@ in
     massren
     moreutils
     procps
+    procs
     ripgrep
     rsync
     sd
