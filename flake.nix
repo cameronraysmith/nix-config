@@ -90,7 +90,7 @@
 
       perSystem = { self', pkgs, system, config, ... }:
         let
-          users = [ "crs58" "runner" ];
+          users = [ "crs58" "jovyan" "runner" ];
         in
         {
           legacyPackages.homeConfigurations = builtins.listToAttrs (map
