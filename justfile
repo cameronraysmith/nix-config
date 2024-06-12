@@ -260,6 +260,11 @@ check-secrets:
   @printf "Check teller environment for secrets\n\n"
   @teller run -s -- env | grep -E 'GITHUB|CACHIX' | teller redact
 
+# Save KUBECONFIG to file
+[group('secrets')]
+get-kubeconfig:
+  @teller run -s -- printenv KUBECONFIG > kubeconfig.yaml
+
 ## CI/CD
 
 # Update github secrets for repo from environment variables

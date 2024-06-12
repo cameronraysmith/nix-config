@@ -9,3 +9,4 @@ providers:
       keys:
         GITHUB_TOKEN: ==
         CACHIX_AUTH_TOKEN: ==
+        KUBECONFIG: ==
