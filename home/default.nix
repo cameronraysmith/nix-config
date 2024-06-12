@@ -14,6 +14,7 @@
           ./awscli.nix
           ./bash.nix
           ./bat.nix
+          ./bottom.nix
           ./git.nix
           ./helix.nix
           ./k9s.nix
