@@ -89,15 +89,17 @@ in
   ];
 
   home.shellAliases = rec {
+    b = "btm";
     e = "lvim";
     dl = "aria2c -x 16 -s 16 -k 1M";
     dr = "docker container run --interactive --rm --tty";
     g = "git";
     j = "just";
     k = "kubectl";
-    l = "ls";
+    l = "ll";
     ld = "lazydocker";
     lg = "lazygit";
+    py = "poetry run python";
     t = "tree";
     mm = "micromamba";
     nb = "nix build --json --no-link --print-build-logs";
