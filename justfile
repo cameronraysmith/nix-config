@@ -20,45 +20,55 @@ help:
 ## nix
 
 # Print nix flake inputs and outputs
+[group('nix')]
 io:
   nix flake metadata
   nix flake show
 
 # Lint nix files
+[group('nix')]
 lint:
   nix fmt 
 
 # Manually enter dev shell
+[group('nix')]
 dev:
   nix develop
 
 # Remove build output link (no garbage collection)
+[group('nix')]
 clean:
   rm -f ./result
 
 # Build nix flake
+[group('nix')]
 build profile: lint check
   nix build --json --no-link --print-build-logs ".#{{ profile }}"
 
 # Check nix flake
+[group('nix')]
 check:
   nix flake check
   
 # Run nix flake to execute `nix run .#activate` for the current host.
+[group('nix')]
 switch:
   nix run
 
 # Run nix flake to execute `nix run .#activate-home` for the current user.
+[group('nix')]
 switch-home:
   nix run .#activate-home
 
 # https://discourse.nixos.org/t/sudo-run-current-system-sw-bin-sudo-must-be-owned-by-uid-0-and-have-the-setuid-bit-set-and-cannot-chdir-var-cron-bailing-out-var-cron-permission-denied/20463
 # sudo: /run/current-system/sw/bin/sudo must be owned by uid 0 and have the setuid bit set
 # Run nix flake with explicit use of the sudo in `/run/wrappers` 
+[group('nix')]
 switch-wrapper:
   /run/wrappers/bin/sudo nix run
 
 # Shell with bootstrap dependencies 
+[group('nix')]
 bootstrap-shell:
   nix \
   --extra-experimental-features "nix-command flakes" \
@@ -68,6 +78,7 @@ bootstrap-shell:
 
 # nix run home-manager -- build --flake ".#{{ profile }}"
 # Bootstrap build home-manager with flake
+[group('nix-home-manager')]
 home-manager-bootstrap-build profile="aarch64-linux":
   nix \
   --extra-experimental-features "nix-command flakes" \
@@ -79,6 +90,7 @@ home-manager-bootstrap-build profile="aarch64-linux":
 
 # nix run home-manager -- switch --flake ".#{{ profile }}"
 # Bootstrap switch home-manager with flake
+[group('nix-home-manager')]
 home-manager-bootstrap-switch profile="aarch64-linux":
   nix \
   --extra-experimental-features "nix-command flakes" \
@@ -89,30 +101,37 @@ home-manager-bootstrap-switch profile="aarch64-linux":
   --print-build-logs
 
 # Build home-manager with flake
+[group('nix-home-manager')]
 home-manager-build profile="aarch64-linux":
   home-manager build --flake ".#{{ profile }}"
 
 # Switch home-manager with flake
+[group('nix-home-manager')]
 home-manager-switch profile="aarch64-linux":
   home-manager switch --flake ".#{{ profile }}"
 
 # Bootstrap nix-darwin with flake
+[group('nix-darwin')]
 darwin-bootstrap profile="aarch64":
   nix run nix-darwin -- switch --flake ".#{{ profile }}"
 
 # Build darwin from flake
+[group('nix-darwin')]
 darwin-build profile="aarch64":
   just build "darwinConfigurations.{{ profile }}.config.system.build.toplevel"
 
 # Switch darwin from flake
+[group('nix-darwin')]
 darwin-switch profile="aarch64":
   darwin-rebuild switch --flake ".#{{ profile }}"
 
 # Test darwin from flake
+[group('nix-darwin')]
 darwin-test profile="aarch64":
   darwin-rebuild check --flake ".#{{ profile }}"
 
 # Bootstrap nixos
+[group('nixos')]
 nixos-bootstrap destination username publickey:
   ssh \
   -o PubkeyAuthentication=no \
@@ -151,6 +170,7 @@ nixos-bootstrap destination username publickey:
       reboot;"
 
 # Copy flake to VM
+[group('nixos')]
 nixos-vm-sync user destination:
   rsync -avz \
   --exclude='.direnv' \
@@ -159,18 +179,22 @@ nixos-vm-sync user destination:
   {{ user }}@{{ destination }}:~/nix-config
 
 # Build nixos from flake
+[group('nixos')]
 nixos-build profile="aarch64":
   just build "nixosConfigurations.{{ profile }}.config.system.build.toplevel"
 
 # Test nixos from flake
+[group('nixos')]
 nixos-test profile="aarch64":
   nixos-rebuild test --flake ".#{{ profile }}"
 
 # Switch nixos from flake
+[group('nixos')]
 nixos-switch profile="aarch64":
   nixos-rebuild switch --flake ".#{{ profile }}"
 
 # Update nix flake
+[group('nix')]
 update:
   nix flake update
 
@@ -180,18 +204,22 @@ update:
 gcp_project_id := env_var_or_default('GCP_PROJECT_ID', 'development')
 
 # Show existing secrets
+[group('secrets')]
 show:
   @teller show
 
 # Create a secret with the given name
+[group('secrets')]
 create-secret name:
   @gcloud secrets create {{name}} --replication-policy="automatic" --project {{gcp_project_id}}
 
 # Populate a single secret with the contents of a dotenv-formatted file
+[group('secrets')]
 populate-single-secret name path:
   @gcloud secrets versions add {{name}} --data-file={{path}} --project {{gcp_project_id}}
 
 # Populate each line of a dotenv-formatted file as a separate secret
+[group('secrets')]
 populate-separate-secrets path:
   @while IFS= read -r line; do \
      KEY=$(echo $line | cut -d '=' -f 1); \
@@ -201,27 +229,33 @@ populate-separate-secrets path:
    done < {{path}}
 
 # Complete process: Create a secret and populate it with the entire contents of a dotenv file
+[group('secrets')]
 create-and-populate-single-secret name path:
   @just create-secret {{name}}
   @just populate-single-secret {{name}} {{path}}
 
 # Complete process: Create and populate separate secrets for each line in the dotenv file
+[group('secrets')]
 create-and-populate-separate-secrets path:
   @just populate-separate-secrets {{path}}
 
 # Retrieve the contents of a given secret
+[group('secrets')]
 get-secret name:
   @gcloud secrets versions access latest --secret={{name}} --project={{gcp_project_id}}
 
 # Create empty dotenv from template
+[group('secrets')]
 seed-dotenv:
   @cp .template.env .env
 
 # Export unique secrets to dotenv format
+[group('secrets')]
 export:
   @teller export env | sort | uniq | grep -v '^$' > .secrets.env
 
 # Check secrets are available in teller shell.
+[group('secrets')]
 check-secrets:
   @printf "Check teller environment for secrets\n\n"
   @teller run -s -- env | grep -E 'GITHUB|CACHIX' | teller redact
@@ -229,6 +263,7 @@ check-secrets:
 ## CI/CD
 
 # Update github secrets for repo from environment variables
+[group('CI/CD')]
 ghsecrets repo="cameronraysmith/nix-config":
   @echo "secrets before updates:"
   @echo
@@ -242,10 +277,12 @@ ghsecrets repo="cameronraysmith/nix-config":
   PAGER=cat gh secret list --repo={{ repo }}
 
 # List available workflows and associated jobs.
+[group('CI/CD')]
 list-workflows:
   @act -l
 
 # Execute flake.yaml workflow.
+[group('CI/CD')]
 test-flake-workflow:
   @teller run -s -- \
   act workflow_dispatch \
@@ -264,18 +301,21 @@ ratchet_base := "ratchet"
 gha_workflows := "./.github/workflows/flake.yaml"
 
 # Pin all workflow versions to hash values (requires Docker)
+[group('CI/CD')]
 ratchet-pin:
   @for workflow in {{gha_workflows}}; do \
     eval "{{ratchet_base}} pin $workflow"; \
   done
 
 # Unpin hashed workflow versions to semantic values (requires Docker)
+[group('CI/CD')]
 ratchet-unpin:
   @for workflow in {{gha_workflows}}; do \
     eval "{{ratchet_base}} unpin $workflow"; \
   done
 
 # Update GitHub Actions workflows to the latest version (requires Docker)
+[group('CI/CD')]
 ratchet-update:
   @for workflow in {{gha_workflows}}; do \
     eval "{{ratchet_base}} update $workflow"; \
