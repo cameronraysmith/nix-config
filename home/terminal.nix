@@ -94,6 +94,7 @@ in
     dr = "docker container run --interactive --rm --tty";
     g = "git";
     j = "just";
+    k = "kubectl";
     l = "ls";
     ld = "lazydocker";
     lg = "lazygit";
