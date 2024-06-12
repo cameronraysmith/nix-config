@@ -136,6 +136,18 @@
             default = self'.packages.activate;
           };
 
+          # `nix run .#update` vs `nix flake update`
+          nixos-flake = {
+            primary-inputs = [
+              "nixpkgs"
+              "home-manager"
+              # "nix-darwin"
+              "nixos-flake"
+              "nix-index-database"
+              "nixvim"
+            ];
+          };
+
           treefmt.config = {
             projectRootFile = "flake.nix";
             programs.nixpkgs-fmt.enable = true;
