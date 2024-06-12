@@ -10,6 +10,7 @@ examples below.
 
 - [srid/nixos-flake](https://github.com/srid/nixos-flake)
 - [srid/nixos-config](https://github.com/srid/nixos-config)
+- [mirkolenz/nixos](https://github.com/mirkolenz/nixos)
 - [wegank/nixos-config](https://github.com/wegank/nixos-config)
 - [MatthiasBenaets/nixos-config](https://github.com/MatthiasBenaets/nixos-config)
 - [ehllie/dotfiles](https://github.com/ehllie/dotfiles)
