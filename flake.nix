@@ -46,7 +46,7 @@
         flake-parts.follows = "flake-parts";
         home-manager.follows = "home-manager";
         nix-darwin.follows = "nix-darwin";
-        nixpkgs.follows = "nixpkgs";
+        # nixpkgs.follows = "nixpkgs";
         treefmt-nix.follows = "treefmt-nix";
       };
     };
@@ -141,7 +141,7 @@
             primary-inputs = [
               "nixpkgs"
               "home-manager"
-              # "nix-darwin"
+              "nix-darwin"
               "nixos-flake"
               "nix-index-database"
               "nixvim"
