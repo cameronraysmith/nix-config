@@ -13,8 +13,9 @@ in
     # unix tools
     coreutils-full
     fd
-    massren
+    findutils
     moreutils
+    pipe-rename
     procps
     procs
     ripgrep
@@ -112,6 +113,7 @@ in
     lg = "lazygit";
     p = "procs --tree";
     py = "poetry run python";
+    rn = "find ./ -maxdepth 1 -type f -name '*.*' | renamer";
     t = "tree";
     mm = "micromamba";
     nb = "nix build --json --no-link --print-build-logs";
