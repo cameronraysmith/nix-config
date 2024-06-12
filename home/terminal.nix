@@ -104,6 +104,7 @@ in
     dl = "aria2c -x 16 -s 16 -k 1M";
     dr = "docker container run --interactive --rm --tty";
     g = "git";
+    i = "macchina";
     j = "just";
     k = "kubectl";
     l = "ll";
