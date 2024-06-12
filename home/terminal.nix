@@ -52,6 +52,7 @@ in
     lazydocker
     terraform
     timoni
+    vcluster
 
     # db
     duckdb
