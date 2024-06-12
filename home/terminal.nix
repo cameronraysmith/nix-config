@@ -1,6 +1,6 @@
 { pkgs, ... }:
 let
-  python = pkgs.python3.withPackages (ps: with ps; [ ]);
+  python = pkgs.python3.withPackages (ps: with ps; [ pip ]);
   dvcWithOptionalRemotes = pkgs.dvc.override {
     enableGoogle = true;
     enableAWS = true;
@@ -11,16 +11,23 @@ in
 {
   home.packages = with pkgs; [
     # unix tools
-    coreutils
+    coreutils-full
     fd
+    massren
+    moreutils
+    procps
     ripgrep
+    rsync
     sd
     tree
+    unison
 
     # io
     aria2
     curl
     rclone
+    restic
+    autorestic
     wget
 
     # nix dev
@@ -67,11 +74,13 @@ in
     graphite-cli
     graphviz
     just
+    jqp
     lunarvim
     plantuml-c4
     pre-commit
     ratchet
     tmate
+    yq
 
     # fonts
     cascadia-code
