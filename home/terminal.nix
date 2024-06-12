@@ -110,6 +110,7 @@ in
     l = "ll";
     ld = "lazydocker";
     lg = "lazygit";
+    p = "procs --tree";
     py = "poetry run python";
     t = "tree";
     mm = "micromamba";
