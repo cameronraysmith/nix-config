@@ -60,6 +60,22 @@
           rm -f "$NNN_TMPFILE" > /dev/null
         fi
       }
+
+      # Shell function to check differences between the current branch and the
+      # upstream branch prior to merge.
+      pmc() {
+        export PAGER=cat
+        branch=''${1:-upstream/main}
+        echo 'Commit Summary:'
+        git log HEAD..$branch --oneline
+        echo
+        echo 'Detailed Commit Logs:'
+        git log HEAD..$branch
+        echo
+        echo 'Files Changed (Name Status):'
+        git diff --name-status HEAD...$branch
+        unset PAGER
+      }
     '';
 
     oh-my-zsh = {
