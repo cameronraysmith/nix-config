@@ -26,6 +26,7 @@
           ./pandoc.nix
           ./poetry.nix
           ./starship.nix
+          ./tealdeer.nix
           ./terminal.nix
           ./texlive.nix
           ./zellij.nix
