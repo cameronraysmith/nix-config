@@ -76,6 +76,17 @@
         git diff --name-status HEAD...$branch
         unset PAGER
       }
+
+      # List the active scopes of a GitHub legacy PAT provided as argument.
+      check_github_token_scopes() {
+        if [ -z "$1" ]; then
+          echo "Usage: check_github_token_scopes <your_github_token>"
+          return 1
+        fi
+
+        token=$1
+        curl -sS -f -I -H "Authorization: token $token" https://api.github.com | grep -i x-oauth-scopes
+      }
     '';
 
     oh-my-zsh = {
