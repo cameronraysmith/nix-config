@@ -108,6 +108,7 @@ in
     i = "macchina";
     j = "just";
     k = "kubectl";
+    kx = "kubectx";
     l = "ll";
     ld = "lazydocker";
     lg = "lazygit";
