@@ -38,7 +38,7 @@
       }
 
       # Shell function to compute the sha256 nix hash of a file from a url.
-      nix_hash_func() {
+      get_nix_hash() {
         url="$1";
         nix_hash=$(nix-prefetch-url "$url");
         nix hash to-sri --type sha256 "$nix_hash";

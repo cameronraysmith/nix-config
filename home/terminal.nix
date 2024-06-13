@@ -105,6 +105,7 @@ in
     dl = "aria2c -x 16 -s 16 -k 1M";
     dr = "docker container run --interactive --rm --tty";
     g = "git";
+    gts = "check_github_token_scopes";
     i = "macchina";
     j = "just";
     k = "kubectl";
@@ -118,7 +119,7 @@ in
     t = "tree";
     mm = "micromamba";
     nb = "nix build --json --no-link --print-build-logs";
-    nix-hash = "nix_hash_func";
+    nix-hash = "get_nix_hash";
   };
 
   home.sessionVariables = {
