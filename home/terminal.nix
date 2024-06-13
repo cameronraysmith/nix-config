@@ -109,6 +109,8 @@ in
     i = "macchina";
     j = "just";
     k = "kubectl";
+    kns = "kubectl config unset contexts.$(kubectl config current-context).namespace";
+    ks = "kubens";
     kx = "kubectx";
     l = "ll";
     ld = "lazydocker";
