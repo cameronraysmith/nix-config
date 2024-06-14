@@ -105,6 +105,7 @@ in
     dl = "aria2c -x 16 -s 16 -k 1M";
     dr = "docker container run --interactive --rm --tty";
     g = "git";
+    ghe = "github_email";
     gts = "check_github_token_scopes";
     i = "macchina";
     j = "just";

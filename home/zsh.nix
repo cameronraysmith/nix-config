@@ -87,6 +87,26 @@
         token=$1
         curl -sS -f -I -H "Authorization: token $token" https://api.github.com | grep -i x-oauth-scopes
       }
+
+      # GET the GitHub noreply email address for a given username.
+      github_email() {
+        local username=$1
+        local user_id
+
+        if ! command -v gh &> /dev/null; then
+          echo "GitHub CLI (gh) is not installed. Please install it first."
+          return 1
+        fi
+
+        user_id=$(gh api "users/''${username}" --jq ".id")
+
+        if [ -z "$user_id" ]; then
+          echo "Failed to retrieve user ID for username: ''${username}"
+          return 1
+        fi
+
+        echo "''${user_id}+''${username}@users.noreply.github.com"
+      }
     '';
 
     oh-my-zsh = {
