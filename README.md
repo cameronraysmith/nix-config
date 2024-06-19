@@ -2,7 +2,7 @@
 
 This is my personal [nix](https://nix.dev/reference/nix-manual.html)-config.
 If you'd like to experiment with nix in a containerized environment, consider
-trying [nixpod-home](https://github.com/cameronraysmith/nixpod-home) before
+trying [nixpod](https://github.com/cameronraysmith/nixpod) before
 attempting to use something like this repository or one of the credited
 examples below.
 
