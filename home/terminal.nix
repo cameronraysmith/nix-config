@@ -74,6 +74,7 @@ in
     bazelisk
     dvcWithOptionalRemotes
     gh
+    git-filter-repo
     graphite-cli
     graphviz
     just
