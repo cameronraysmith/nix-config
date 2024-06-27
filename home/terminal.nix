@@ -145,6 +145,9 @@ in
     direnv = {
       enable = true;
       nix-direnv.enable = true;
+      config.global = {
+        warn_timeout = "10m";
+      };
     };
     fzf.enable = true;
     htop.enable = true;
