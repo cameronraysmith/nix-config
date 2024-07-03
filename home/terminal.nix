@@ -47,6 +47,7 @@ in
     argo
     argocd
     argocd-autopilot
+    crane
     cue
     dive
     (google-cloud-sdk.withExtraComponents
