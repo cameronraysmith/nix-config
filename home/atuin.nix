@@ -10,6 +10,10 @@
       search_mode = "fuzzy";
       show_help = false;
       show_preview = true;
+      # Only necessary on certain file systems e.g. cephfs.
+      # daemon = {
+      #   enabled = true;
+      # };
     };
   };
 }
