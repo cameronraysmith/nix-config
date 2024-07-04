@@ -56,6 +56,7 @@ in
       ]
     )
     kind
+    krew
     kubectl
     kubectx
     kubernetes-helm
