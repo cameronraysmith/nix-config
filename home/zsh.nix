@@ -7,7 +7,7 @@
 
     envExtra = ''
       # Ensure all nix and home-manager installed files are available in PATH.
-      export PATH=/run/wrappers/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:$PATH:$HOME/.nix-profile/bin:/etc/profiles/per-user/$USER/bin:/opt/homebrew/bin
+      export PATH=/run/wrappers/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:$PATH:$HOME/.nix-profile/bin:/etc/profiles/per-user/$USER/bin:$HOME/.krew/bin:/opt/homebrew/bin
     '';
 
     initExtra = ''
