@@ -92,6 +92,9 @@ in
     cascadia-code
     (pkgs.nerdfonts.override { fonts = [ "Inconsolata" ]; })
 
+    # rust
+    rustup
+
     # python
     # conda-lock # not available in nixpkgs
     # hatch # broken on Darwin
