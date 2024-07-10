@@ -89,6 +89,8 @@ in
     yq
 
     # fonts
+    noto-fonts-emoji
+    fira-code
     cascadia-code
     (pkgs.nerdfonts.override { fonts = [ "Inconsolata" ]; })
 
