@@ -74,6 +74,7 @@ in
     # dev
     act
     bazelisk
+    bazel-buildtools
     dvcWithOptionalRemotes
     gh
     git-filter-repo
