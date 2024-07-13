@@ -1,0 +1,22 @@
+pull_request_rules:
+  - name: self-assign PRs
+    conditions:
+      - -merged
+      - -closed
+      - "#assignee=0"
+    actions:
+      assign:
+        add_users:
+          - "{{ author }}"
+  - name: automatic merge
+    conditions:
+      - "#approved-reviews-by>=1"
+      - label!=work-in-progress
+      - check-success=nixci (ubuntu-latest)
+    actions:
+      queue:
+        name: default
+queue_rules:
+  - name: default
+    merge_method: fast-forward
+    update_method: rebase
