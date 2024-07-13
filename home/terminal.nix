@@ -85,6 +85,7 @@ in
     lunarvim
     plantuml-c4
     pre-commit
+    proto
     ratchet
     tmate
     yq
