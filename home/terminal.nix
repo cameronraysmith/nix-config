@@ -70,6 +70,7 @@ in
     duckdb
     postgresql_16
     sqlite
+    turso-cli
 
     # dev
     act
