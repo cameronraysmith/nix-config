@@ -110,6 +110,7 @@ in
     pylint
     pyright
     python
+    uv
   ];
 
   home.shellAliases = rec {
