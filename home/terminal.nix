@@ -115,6 +115,7 @@ in
 
   home.shellAliases = rec {
     b = "btm";
+    bazel = "bazelisk";
     e = "lvim";
     dl = "aria2c -x 16 -s 16 -k 1M";
     dr = "docker container run --interactive --rm --tty";
