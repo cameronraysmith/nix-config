@@ -100,6 +100,9 @@ in
     # rust
     rustup
 
+    # fable transpiler support
+    dotnet-sdk_8
+
     # python
     # conda-lock # not available in nixpkgs
     # hatch # broken on Darwin
