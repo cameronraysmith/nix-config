@@ -91,6 +91,10 @@ in
     tmate
     yq
 
+    # compression
+    zstd
+    snzip
+
     # fonts
     noto-fonts-emoji
     fira-code
