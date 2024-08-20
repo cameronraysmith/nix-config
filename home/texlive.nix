@@ -13,6 +13,7 @@ let
       caption
       git-latexdiff
       latexdiff
+      latexmk
       latexpand
       multirow
       ncctools
