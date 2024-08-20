@@ -13,6 +13,7 @@ let
       caption
       multirow
       ncctools
+      placeins
       rsfs
       sttools
       threeparttable
