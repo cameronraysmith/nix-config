@@ -11,6 +11,7 @@ let
       apacite
       appendix
       caption
+      framed
       git-latexdiff
       latexdiff
       latexmk
