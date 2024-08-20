@@ -11,6 +11,7 @@ let
       apacite
       appendix
       caption
+      git-latexdiff
       multirow
       ncctools
       placeins
