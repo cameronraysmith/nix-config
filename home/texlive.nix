@@ -12,6 +12,7 @@ let
       appendix
       caption
       git-latexdiff
+      latexpand
       multirow
       ncctools
       placeins
