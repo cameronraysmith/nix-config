@@ -40,6 +40,7 @@ in
 
     # publishing
     asciinema
+    exiftool
     ghostscript
     poppler_utils
     qpdf
