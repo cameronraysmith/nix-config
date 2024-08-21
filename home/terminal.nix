@@ -42,6 +42,7 @@ in
     asciinema
     ghostscript
     poppler_utils
+    qpdf
     quarto
     svg2pdf
 
