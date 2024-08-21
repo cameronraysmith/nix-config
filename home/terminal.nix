@@ -40,6 +40,8 @@ in
 
     # publishing
     asciinema
+    ghostscript
+    poppler_utils
     quarto
     svg2pdf
 
