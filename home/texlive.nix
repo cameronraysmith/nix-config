@@ -11,6 +11,7 @@ let
       apacite
       appendix
       caption
+      cm-super
       framed
       git-latexdiff
       latexdiff
@@ -22,6 +23,7 @@ let
       rsfs
       sttools
       threeparttable
+      type1cm
       vruler
       wrapfig
       xurl
