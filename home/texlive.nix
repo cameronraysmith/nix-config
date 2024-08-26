@@ -12,6 +12,7 @@ let
       appendix
       caption
       cm-super
+      dvipng
       framed
       git-latexdiff
       latexdiff
