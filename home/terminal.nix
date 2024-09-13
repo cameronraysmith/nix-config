@@ -11,6 +11,7 @@ in
 {
   home.packages = with pkgs; [
     # unix tools
+    b3sum
     coreutils-full
     fd
     findutils
