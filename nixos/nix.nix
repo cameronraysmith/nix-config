@@ -17,7 +17,7 @@
     registry.nixpkgs.flake = flake.inputs.nixpkgs; # Make `nix shell` etc use pinned nixpkgs
     settings = {
       auto-optimise-store = false;
-      experimental-features = "nix-command flakes repl-flake auto-allocate-uids";
+      experimental-features = "nix-command flakes auto-allocate-uids";
       extra-platforms = lib.mkIf pkgs.stdenv.isDarwin "aarch64-darwin x86_64-darwin";
       flake-registry = builtins.toFile "empty-flake-registry.json" ''{"flakes":[],"version":2}'';
       max-jobs = "auto";
