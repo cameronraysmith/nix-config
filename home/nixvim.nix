@@ -25,6 +25,7 @@
     plugins = {
 
       # UI
+      web-devicons.enable = true;
       lualine.enable = true;
       bufferline.enable = true;
       treesitter.enable = true;
@@ -33,7 +34,7 @@
       };
       noice = {
         enable = true;
-        presets = {
+        settings.presets = {
           bottom_search = true;
           command_palette = true;
           long_message_to_split = true;
@@ -60,10 +61,13 @@
       lsp = {
         enable = true;
         servers = {
-          hls.enable = true;
+          hls = {
+            enable = true;
+            installGhc = false;
+          };
           marksman.enable = true;
-          nil-ls.enable = true;
-          rust-analyzer = {
+          nil_ls.enable = true;
+          rust_analyzer = {
             enable = true;
             installCargo = false;
             installRustc = false;
