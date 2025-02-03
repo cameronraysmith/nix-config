@@ -104,7 +104,7 @@ in
     noto-fonts-emoji
     fira-code
     cascadia-code
-    (pkgs.nerdfonts.override { fonts = [ "Inconsolata" ]; })
+    nerd-fonts.inconsolata
 
     # rust
     rustup
