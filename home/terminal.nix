@@ -134,6 +134,7 @@ in
     dr = "docker container run --interactive --rm --tty";
     g = "git";
     ghe = "github_email";
+    gmach = "git machete";
     gts = "check_github_token_scopes";
     i = "macchina";
     j = "just";
