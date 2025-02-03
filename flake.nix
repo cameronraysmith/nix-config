@@ -142,7 +142,6 @@
               "nixpkgs"
               "home-manager"
               "nix-darwin"
-              "nixos-flake"
               "nix-index-database"
               "nixvim"
             ];
