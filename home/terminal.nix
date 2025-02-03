@@ -84,6 +84,7 @@ in
     dvcWithOptionalRemotes
     gh
     git-filter-repo
+    git-machete
     graphite-cli
     graphviz
     just
