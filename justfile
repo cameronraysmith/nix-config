@@ -198,6 +198,11 @@ nixos-switch profile="aarch64":
 update:
   nix flake update
 
+# Update primary nix flake inputs (see flake.nix)
+[group('nix')]
+update-primary-inputs:
+  nix run .#update
+
 ## secrets
 
 # Define the project variable
