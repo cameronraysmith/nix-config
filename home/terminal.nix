@@ -53,6 +53,7 @@ in
     argocd
     argocd-autopilot
     crane
+    ctlptl
     cue
     dive
     (google-cloud-sdk.withExtraComponents
