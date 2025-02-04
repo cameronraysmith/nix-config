@@ -152,6 +152,11 @@ in
     py = "poetry run python";
     rn = "find ./ -maxdepth 1 -type f -name '*.*' | renamer";
     t = "tree";
+    tls = "tmux ls";
+    tns = "tmux new -s";
+    tat = "tmux attach -t";
+    tks = "tmux kill-session -t";
+    tmh = "tmux list-keys | less";
     mm = "micromamba";
     nb = "nix build --json --no-link --print-build-logs";
     nix-hash = "get_nix_hash";

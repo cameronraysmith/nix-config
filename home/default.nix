@@ -29,6 +29,7 @@
           ./tealdeer.nix
           ./terminal.nix
           ./texlive.nix
+          ./tmux.nix
           ./zellij.nix
           ./zsh.nix
         ];
