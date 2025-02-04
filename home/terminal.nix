@@ -135,6 +135,7 @@ in
     g = "git";
     ghe = "github_email";
     gmach = "git machete";
+    gu = "git machete traverse --fetch --start-from=first-root";
     gts = "check_github_token_scopes";
     i = "macchina";
     j = "just";
