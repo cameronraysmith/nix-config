@@ -147,6 +147,7 @@ in
     l = "ll";
     ld = "lazydocker";
     lg = "lazygit";
+    nr = "nix run";
     p = "procs --tree";
     py = "poetry run python";
     rn = "find ./ -maxdepth 1 -type f -name '*.*' | renamer";
