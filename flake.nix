@@ -27,6 +27,7 @@
     };
     systems.url = "github:nix-systems/default";
 
+    omnix.url = "github:juspay/omnix";
     nixci = {
       url = "github:srid/nixci";
       inputs = {
