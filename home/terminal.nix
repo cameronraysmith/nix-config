@@ -38,6 +38,7 @@ in
     nil
     nix-info
     nixpkgs-fmt
+    omnix
 
     # publishing
     asciinema
