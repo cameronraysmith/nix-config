@@ -14,7 +14,7 @@ in
 
   documentation.enable = true;
   documentation.nixos.enable = true;
-  environment.noXlibs = false;
+  # environment.noXlibs = false;
   i18n.defaultLocale = "en_US.UTF-8";
   networking.useDHCP = false;
   networking.interfaces.eth0.useDHCP = true;
