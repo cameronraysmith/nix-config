@@ -17,6 +17,7 @@ in
     findutils
     gnupg
     moreutils
+    pinentry-curses
     pipe-rename
     procps
     procs
