@@ -3,3 +3,4 @@
 .env
 .secrets.env
 result
+external-references
