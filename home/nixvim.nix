@@ -2,7 +2,7 @@
 
 {
   programs.nixvim = {
-    enable = pkgs.stdenv.isDarwin;
+    enable = true;
 
     # Theme
     colorschemes.tokyonight.enable = true;
