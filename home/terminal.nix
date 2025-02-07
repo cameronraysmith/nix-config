@@ -128,6 +128,8 @@ in
     pyright
     python
     uv
+  ] ++ lib.optionals pkgs.stdenv.isDarwin [
+    mactop
   ];
 
   home.shellAliases = rec {
