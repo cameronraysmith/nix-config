@@ -10,7 +10,7 @@
     };
 
     extraConfig = {
-      core.editor = "lvim";
+      core.editor = "nvim";
       credential.helper = "store --file ~/.git-credentials";
       github.user = "cameronraysmith";
       color.ui = true;

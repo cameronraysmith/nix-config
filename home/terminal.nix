@@ -131,7 +131,7 @@ in
   home.shellAliases = rec {
     b = "btm";
     bazel = "bazelisk";
-    e = "lvim";
+    e = "nvim";
     dl = "aria2c -x 16 -s 16 -k 1M";
     dr = "docker container run --interactive --rm --tty";
     g = "git";
@@ -164,7 +164,7 @@ in
   };
 
   home.sessionVariables = {
-    EDITOR = "lvim";
+    EDITOR = "nvim";
     LANG = "en_US.UTF-8";
     LC_ALL = "en_US.UTF-8";
     LC_CTYPE = "en_US.UTF-8";
