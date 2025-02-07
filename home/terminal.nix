@@ -15,6 +15,7 @@ in
     coreutils-full
     fd
     findutils
+    gnupg
     moreutils
     pipe-rename
     procps
