@@ -16,6 +16,7 @@
           ./bat.nix
           ./bottom.nix
           ./git.nix
+          ./gpg.nix
           ./helix.nix
           ./k9s.nix
           ./macchina.nix
