@@ -133,7 +133,9 @@ in
   ];
 
   home.shellAliases = rec {
-    b = "btm";
+    b = "bat";
+    bt = "btop";
+    bm = "btm";
     bazel = "bazelisk";
     e = "nvim";
     dl = "aria2c -x 16 -s 16 -k 1M";
