@@ -20,10 +20,10 @@
           ./helix.nix
           ./k9s.nix
           ./macchina.nix
+          ./neovim
           ./nix.nix
           ../nixos/caches
           ./nixpkgs.nix
-          ./nixvim.nix
           ./pandoc.nix
           ./poetry.nix
           ./starship.nix
