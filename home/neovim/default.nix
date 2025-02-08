@@ -4,6 +4,10 @@
   programs.nixvim = {
     enable = true;
 
+    imports = [
+      ./lazygit.nix
+    ];
+
     # Theme
     colorschemes.tokyonight.enable = true;
 
