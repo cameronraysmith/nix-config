@@ -24,6 +24,7 @@ in
     ripgrep
     rsync
     sd
+    sesh
     tree
     unison
 
