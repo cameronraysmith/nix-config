@@ -77,6 +77,7 @@ in
 
     # db
     duckdb
+    limbo
     postgresql_16
     sqlite
     turso-cli
