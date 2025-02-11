@@ -95,8 +95,9 @@ in
     git-machete
     graphite-cli
     graphviz
-    just
+    jc
     jqp
+    just
     lunarvim
     plantuml-c4
     pre-commit
