@@ -24,6 +24,7 @@
           ./nix.nix
           ../nixos/caches
           ./nixpkgs.nix
+          ./nushell
           ./pandoc.nix
           ./poetry.nix
           ./starship.nix
