@@ -77,7 +77,8 @@ in
       bind x swap-pane -D
       bind S choose-session
       bind R source-file ~/.config/tmux/tmux.conf
-      bind K send-keys "clear"\; send-keys "Enter"
+      bind ^R send-keys "clear"\; send-keys "Enter"
+      bind-key "K" display-popup -E -w 80% -h 80% "sesh connect \"$(sesh list -i | gum filter --limit 1 --placeholder 'Pick a sesh' --prompt='⚡')\""      
       bind-key -T copy-mode-vi v send-keys -X begin-selection
 
       set -g default-terminal "xterm-256color"
