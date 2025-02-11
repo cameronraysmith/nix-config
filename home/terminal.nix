@@ -27,6 +27,7 @@ in
     sesh
     tree
     unison
+    yazi
 
     # io
     aria2
