@@ -190,7 +190,10 @@ in
         warn_timeout = "10m";
       };
     };
-    fzf.enable = true;
+    fzf = {
+      enable = true;
+      tmux.enableShellIntegration = true;
+    };
     htop.enable = true;
     jq.enable = true;
     lsd = {
