@@ -16,6 +16,7 @@ in
     fd
     findutils
     gnupg
+    gum
     moreutils
     pinentry-tty
     pipe-rename
@@ -168,6 +169,7 @@ in
     mm = "micromamba";
     nb = "nix build --json --no-link --print-build-logs";
     nix-hash = "get_nix_hash";
+    s = "sesh connect \"$(sesh list -i | gum filter --limit 1 --placeholder 'Pick a sesh' --prompt='⚡')\"";
     y = "yazi";
   };
 
