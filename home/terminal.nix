@@ -119,8 +119,6 @@ in
     dotnet-sdk_8
 
     # python
-    # conda-lock # not available in nixpkgs
-    # hatch # broken on Darwin
     micromamba
     pixi
     poethepoet
