@@ -168,6 +168,7 @@ in
     mm = "micromamba";
     nb = "nix build --json --no-link --print-build-logs";
     nix-hash = "get_nix_hash";
+    y = "yazi";
   };
 
   home.sessionVariables = {
