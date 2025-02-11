@@ -111,6 +111,17 @@
 
         echo "''${user_id}+''${username}@users.noreply.github.com"
       }
+
+      # Print the git log as a json object using nushell.
+      gitjson() {
+        nu -c "git log | jc --git-log | from json"
+      }
+
+      # Print specified number of lines of the git log as a json object using nushell.
+      gitjsonl() {
+        local lines="''${1:-1}"
+        nu -c "git log | jc --git-log | from json | take $lines | transpose"
+      }
     '';
 
     oh-my-zsh = {
