@@ -159,7 +159,7 @@ in
     nr = "nix run";
     p = "procs --tree";
     py = "poetry run python";
-    rn = "find ./ -maxdepth 1 -type f -name '*.*' | renamer";
+    rn = "fd -d 1 -t f '.*' | renamer";
     t = "tree";
     tls = "tmux ls";
     tns = "tmux new -s";
