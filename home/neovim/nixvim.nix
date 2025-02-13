@@ -5,6 +5,7 @@
     enable = true;
 
     imports = [
+      ./options.nix
       ./lazygit.nix
     ];
 
@@ -13,26 +14,16 @@
       lazydev-nvim
       persistence-nvim
       snacks-nvim
-      catppuccin-nvim
+      # catppuccin-nvim
     ];
-
-    opts = {
-      expandtab = true;
-      shiftwidth = 2;
-      smartindent = true;
-      tabstop = 2;
-      number = true;
-      clipboard = "unnamed,unnamedplus";
-      relativenumber = true;
-      cursorline = true;
-      undofile = true;
-      signcolumn = "yes";
-      timeoutlen = 250;
-    };
 
     globals.mapleader = " ";
 
-    colorscheme = "catppuccin";
+    # colorscheme = "catppuccin";
+    colorschemes.catppuccin = {
+      enable = true;
+      autoLoad = true;
+    };
 
     extraConfigLua = ''
       require("catppuccin").setup({
