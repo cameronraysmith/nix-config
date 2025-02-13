@@ -41,6 +41,7 @@
         nixpkgs.follows = "nixpkgs";
       };
     };
+
     nixvim = {
       url = "github:nix-community/nixvim";
       inputs = {
@@ -51,6 +52,11 @@
         treefmt-nix.follows = "treefmt-nix";
       };
     };
+    lazyvim = {
+      url = "github:matadaniel/LazyVim-module";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     treefmt-nix = {
       url = "github:numtide/treefmt-nix";
       inputs = {
@@ -145,6 +151,7 @@
               "nix-darwin"
               "nix-index-database"
               "nixvim"
+              "lazyvim"
             ];
           };
 
