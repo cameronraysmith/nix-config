@@ -1,5 +1,4 @@
 name: CI
-
 on:
   workflow_dispatch:
   push:
@@ -17,14 +16,11 @@ on:
       - "**.md"
       - "!flake.nix"
       - "!flake.lock"
-
 defaults:
   run:
     shell: bash
-
 env:
   CACHIX_BINARY_CACHE: cameronraysmith
-
 jobs:
   nixci:
     concurrency:

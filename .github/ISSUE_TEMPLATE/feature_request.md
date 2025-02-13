@@ -12,7 +12,6 @@ assignees: ""
   <summary>code example</summary>
 
 ```sh
-
 ```
 
 </details>
@@ -23,7 +22,6 @@ assignees: ""
   <summary>code example</summary>
 
 ```sh
-
 ```
 
 </details>

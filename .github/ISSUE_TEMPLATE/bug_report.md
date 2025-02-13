@@ -14,7 +14,6 @@ assignees: ""
   <summary>code example</summary>
 
 ```sh
-
 ```
 
 </details>
@@ -23,7 +22,6 @@ assignees: ""
   <summary>error output</summary>
 
 ```sh
-
 ```
 
 </details>
@@ -36,7 +34,6 @@ assignees: ""
 output of `nix doctor`, `nix flake metadata`, `nix flake show`, etc.
 
 ```sh
-
 ```
 
 </details>
