@@ -157,7 +157,12 @@
 
           treefmt.config = {
             projectRootFile = "flake.nix";
-            programs.nixpkgs-fmt.enable = true;
+            programs = {
+              deno.enable = true;
+              nixpkgs-fmt.enable = true;
+              stylua.enable = true;
+              yamlfmt.enable = true;
+            };
           };
           formatter = config.treefmt.build.wrapper;
 
