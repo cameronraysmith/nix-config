@@ -98,7 +98,6 @@ in
     jc
     jqp
     just
-    lunarvim
     plantuml-c4
     pre-commit
     proto
