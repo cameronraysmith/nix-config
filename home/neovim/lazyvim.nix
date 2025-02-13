@@ -7,6 +7,7 @@
       coding = {
         blink.enable = true;
         mini-surround.enable = true;
+        yanky.enable = true;
       };
       lang = {
         # docker.enable = true;
