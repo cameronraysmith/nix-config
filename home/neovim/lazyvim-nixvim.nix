@@ -1,5 +1,6 @@
 { pkgs, lib, ... }:
 
+# see https://github.com/azuwis/lazyvim-nixvim
 {
   config = {
     programs.nixvim = {
