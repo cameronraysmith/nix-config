@@ -9,6 +9,9 @@
         mini-surround.enable = true;
         yanky.enable = true;
       };
+      dap = {
+        core.enable = true;
+      };
       lang = {
         # docker.enable = true;
         json.enable = true;
