@@ -8,6 +8,7 @@
         home.stateVersion = "23.11";
         imports = [
           inputs.catppuccin.homeManagerModules.catppuccin
+          inputs.lazyvim.homeManagerModules.default
           inputs.nixvim.homeManagerModules.nixvim
           inputs.nix-index-database.hmModules.nix-index
           ./atuin.nix
