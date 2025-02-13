@@ -5,6 +5,7 @@
     enable = true;
     extras = {
       coding = {
+        blink.enable = true;
         mini-surround.enable = true;
       };
       lang = {
@@ -33,6 +34,7 @@
     };
     plugins = with pkgs.vimPlugins; [
       avante-nvim
+      blink-cmp-copilot
       copilot-lua
       dressing-nvim
       img-clip-nvim
