@@ -94,8 +94,8 @@ in
       set -g pane-active-border-style 'fg=magenta,bg=default'
       set -g pane-border-style 'fg=brightblack,bg=default'
 
-      set -g @floax-width '95%'
-      set -g @floax-height '95%'
+      set -g @floax-width '80%'
+      set -g @floax-height '80%'
       set -g @floax-border-color 'magenta'
       set -g @floax-text-color 'blue'
       set -g @floax-bind 'p'
