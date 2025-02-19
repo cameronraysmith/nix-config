@@ -29,6 +29,11 @@ with lib; {
     . /opt/orbstack-guest/etc/profile-late
   '';
 
+  # enable documentation
+  documentation.man.enable = true;
+  documentation.doc.enable = true;
+  documentation.info.enable = true;
+
   # timezone
   time.timeZone = "America/New_York";
 
