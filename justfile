@@ -24,11 +24,12 @@ help:
 io:
   nix flake metadata
   nix flake show
+  om show .
 
 # Lint nix files
 [group('nix')]
 lint:
-  nix fmt 
+  pre-commit run --all-files
 
 # Manually enter dev shell
 [group('nix')]
