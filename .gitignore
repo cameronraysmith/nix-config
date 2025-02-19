@@ -4,3 +4,5 @@
 .secrets.env
 result
 external-references
+.pre-commit-config.yaml
+.*rules*
