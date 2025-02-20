@@ -3,5 +3,6 @@
     ./git.nix
     ./helix.nix
     ./neovim
+    ./wezterm
   ];
 }
