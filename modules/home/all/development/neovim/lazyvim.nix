@@ -19,7 +19,7 @@
         nix.enable = true;
         # nushell.enable = true;
         # ocaml.enable = true;
-        # python.enable = true;
+        python.enable = true;
         # rust.enable = true;
         # scala.enable = true;
         # sql.enable = true;
