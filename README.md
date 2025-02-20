@@ -90,6 +90,81 @@ This enables supporting shared configuration:
 
 </details>
 
+## developing
+
+Run `direnv allow` or `nix develop` and then `just` for a table of commands.
+
+<details>
+<summary>commands</summary>
+
+```zsh
+❯ just
+
+Run 'just -n <command>' to print what would be executed...
+
+Available recipes:
+    default                                        # Run 'just <command>' to execute a command.
+    help                                           # Display help
+
+    [nix]
+    io                                             # Print nix flake inputs and outputs
+    lint                                           # Lint nix files
+    dev                                            # Manually enter dev shell
+    clean                                          # Remove build output link (no garbage collection)
+    build profile                                  # Build nix flake
+    check                                          # Check nix flake
+    switch                                         # Run nix flake to execute `nix run .#activate` for the current host.
+    switch-home                                    # Run nix flake to execute `nix run .#activate-home` for the current user.
+    switch-wrapper                                 # Run nix flake with explicit use of the sudo in `/run/wrappers`
+    bootstrap-shell                                # Shell with bootstrap dependencies
+    update                                         # Update nix flake
+    update-primary-inputs                          # Update primary nix flake inputs (see flake.nix)
+
+    [nix-home-manager]
+    home-manager-bootstrap-build profile="aarch64-linux" # Bootstrap build home-manager with flake
+    home-manager-bootstrap-switch profile="aarch64-linux" # Bootstrap switch home-manager with flake
+    home-manager-build profile="aarch64-linux"     # Build home-manager with flake
+    home-manager-switch profile="aarch64-linux"    # Switch home-manager with flake
+
+    [nix-darwin]
+    darwin-bootstrap profile="aarch64"             # Bootstrap nix-darwin with flake
+    darwin-build profile="aarch64"                 # Build darwin from flake
+    darwin-switch profile="aarch64"                # Switch darwin from flake
+    darwin-test profile="aarch64"                  # Test darwin from flake
+
+    [nixos]
+    nixos-bootstrap destination username publickey # Bootstrap nixos
+    nixos-vm-sync user destination                 # Copy flake to VM
+    nixos-build profile="aarch64"                  # Build nixos from flake
+    nixos-test profile="aarch64"                   # Test nixos from flake
+    nixos-switch profile="aarch64"                 # Switch nixos from flake
+
+    [secrets]
+    show                                           # Show existing secrets
+    create-secret name                             # Create a secret with the given name
+    populate-single-secret name path               # Populate a single secret with the contents of a dotenv-formatted file
+    populate-separate-secrets path                 # Populate each line of a dotenv-formatted file as a separate secret
+    create-and-populate-single-secret name path    # Complete process: Create a secret and populate it with the entire contents of a dotenv file
+    create-and-populate-separate-secrets path      # Complete process: Create and populate separate secrets for each line in the dotenv file
+    get-secret name                                # Retrieve the contents of a given secret
+    seed-dotenv                                    # Create empty dotenv from template
+    export                                         # Export unique secrets to dotenv format
+    check-secrets                                  # Check secrets are available in teller shell.
+    get-kubeconfig                                 # Save KUBECONFIG to file
+
+    [CI/CD]
+    ghsecrets repo="cameronraysmith/nix-config"    # Update github secrets for repo from environment variables
+    list-workflows                                 # List available workflows and associated jobs.
+    test-flake-workflow                            # Execute flake.yaml workflow.
+    ratchet-pin                                    # Pin all workflow versions to hash values (requires Docker)
+    ratchet-unpin                                  # Unpin hashed workflow versions to semantic values (requires Docker)
+    ratchet-update                                 # Update GitHub Actions workflows to the latest version (requires Docker)
+
+...by running 'just <command>'.
+This message is printed by 'just help' and just 'just'.
+```
+
+</details>
 
 ## credits
 
