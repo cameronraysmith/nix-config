@@ -11,11 +11,6 @@ in
 
   nixpkgs.hostPlatform = "aarch64-darwin";
 
-  environment.systemPackages = with pkgs; [
-    # macOS GUI programs
-    # wezterm
-  ];
-
   security.pam.enableSudoTouchIdAuth = true;
 
   # Used for backwards compatibility, please read the changelog before changing.
