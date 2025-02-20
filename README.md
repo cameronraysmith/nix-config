@@ -7,7 +7,7 @@ use something like this repository or one of the credited examples below.
 
 ## credits
 
-- [srid/nixos-flake](https://github.com/srid/nixos-flake)
+- [srid/nixos-unified](https://github.com/srid/nixos-unified)
 - [srid/nixos-config](https://github.com/srid/nixos-config)
 - [mirkolenz/nixos](https://github.com/mirkolenz/nixos)
 - [wegank/nixos-config](https://github.com/wegank/nixos-config)
