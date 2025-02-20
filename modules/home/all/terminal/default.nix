@@ -120,6 +120,7 @@ in
     noto-fonts-emoji
     fira-code
     cascadia-code
+    monaspace
     nerd-fonts.inconsolata
 
     # rust
