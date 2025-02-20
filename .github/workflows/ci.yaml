@@ -52,7 +52,7 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
           name: ${{ env.CACHIX_BINARY_CACHE }}
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-      # - run: nix run --print-build-logs --show-trace github:srid/nixci -- build
       - run: |
          nix develop --command om ci run --systems "x86_64-linux"
+         nix develop --command om show .
       - run: df -h
