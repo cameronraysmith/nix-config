@@ -11,6 +11,7 @@ in
         home = "/Users/${flake.config.me.username}";
       };
       home-manager.users.${config.me.username} = { };
+      home-manager.backupFileExtension = "before-home-manager";
       home-manager.sharedModules = [
         self.homeModules.default
         self.homeModules.darwin-only
