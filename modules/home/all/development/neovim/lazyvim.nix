@@ -43,6 +43,8 @@
       dressing-nvim
       img-clip-nvim
       mini-pick
+      neotest-python
+      nvim-dap-python
       nvim-web-devicons
       render-markdown-nvim
       telescope-nvim
