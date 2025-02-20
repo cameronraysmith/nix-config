@@ -54,5 +54,4 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       - run: |
          nix develop --command om ci run --systems "x86_64-linux"
-         nix develop --command om show .
       - run: df -h
