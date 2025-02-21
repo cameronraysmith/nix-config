@@ -360,11 +360,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1739992710,
-        "narHash": "sha256-9kEscmGnXHjSgcqyJR4TzzHhska4yz1inSQs6HuO9qU=",
+        "lastModified": 1740060750,
+        "narHash": "sha256-FOC9OzJ5Ckh6VjzGSRh4F3UCUOdM8NrzQT19PQcQJ44=",
         "owner": "nix-community",
         "repo": "home-manager",
-        "rev": "1c189f011447810af939a886ba7bee33532bb1f9",
+        "rev": "0c0b0ac8af6ca76b1fcb514483a9bd73c18f1e8c",
         "type": "github"
       },
       "original": {
@@ -427,15 +427,16 @@
         "tailwindcss-colorizer-cmp-nvim": "tailwindcss-colorizer-cmp-nvim"
       },
       "locked": {
-        "lastModified": 1736201680,
-        "narHash": "sha256-qTaT8F6KJa1NkI4yW+HExKj488XheO6dSkC7tnoEQQw=",
-        "owner": "matadaniel",
+        "lastModified": 1740094142,
+        "narHash": "sha256-LwCDNAgVYqsAL8+MsvvPN/hJzPNbuC0An+02CAi/Tws=",
+        "owner": "cameronraysmith",
         "repo": "LazyVim-module",
-        "rev": "7f01fef105d999446e7af78f6c1242b32f6697e1",
+        "rev": "8e4d3e2b3f5980be5791cbaf53e18f2ff148a14d",
         "type": "github"
       },
       "original": {
-        "owner": "matadaniel",
+        "owner": "cameronraysmith",
+        "ref": "dev",
         "repo": "LazyVim-module",
         "type": "github"
       }
@@ -542,11 +543,11 @@
     },
     "nixos-hardware": {
       "locked": {
-        "lastModified": 1739798439,
-        "narHash": "sha256-GyipmjbbQEaosel/+wq1xihCKbv0/e1LU00x/8b/fP4=",
+        "lastModified": 1740089251,
+        "narHash": "sha256-Y78mDBWoO8CLLTjQfPfII+KXFb6lAmF9GrLbyVBsIMM=",
         "owner": "NixOS",
         "repo": "nixos-hardware",
-        "rev": "3e2ea8a49d4d76276b0f4e2041df8ca5c0771371",
+        "rev": "18e9f9753e9ae261bcc7d3abe15745686991fd30",
         "type": "github"
       },
       "original": {
