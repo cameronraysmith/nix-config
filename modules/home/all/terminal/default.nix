@@ -49,6 +49,7 @@ in
     cachix
     nil
     nix-info
+    nix-prefetch-scripts
     nixpkgs-fmt
     omnix
 
