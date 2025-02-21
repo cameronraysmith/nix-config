@@ -9,7 +9,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    lazyvim.url = "github:cameronraysmith/LazyVim-module/lang-python";
+    lazyvim.url = "github:cameronraysmith/LazyVim-module/dev";
     lazyvim.inputs.nixpkgs.follows = "nixpkgs";
   };
 
