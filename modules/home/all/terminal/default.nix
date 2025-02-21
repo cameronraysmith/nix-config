@@ -60,6 +60,7 @@ in
     poppler_utils
     qpdf
     quarto
+    repomix
     svg2pdf
 
     # compute    
