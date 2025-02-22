@@ -62,6 +62,7 @@ in
     quarto
     repomix
     svg2pdf
+    tailwindcss_4
 
     # compute    
     argo
