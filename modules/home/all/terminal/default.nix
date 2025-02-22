@@ -133,6 +133,7 @@ in
     rustup
 
     # typescript
+    pnpm
     tailwindcss_4
     yarn-berry
 
