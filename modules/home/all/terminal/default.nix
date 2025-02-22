@@ -87,7 +87,9 @@ in
     terraform
     timoni
     vcluster
-    wrangler
+    # https://github.com/NixOS/nixpkgs/issues/381980
+    # ❯ yarn dlx wrangler ...
+    # wrangler
 
     # db
     duckdb
