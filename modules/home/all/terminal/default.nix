@@ -68,6 +68,7 @@ in
     argocd
     argocd-autopilot
     crane
+    crossplane-cli
     ctlptl
     cue
     dive
