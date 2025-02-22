@@ -25,6 +25,7 @@ in
       flake-registry = builtins.toFile "empty-flake-registry.json" ''{"flakes":[],"version":2}'';
       max-jobs = "auto";
       trusted-users = [ "root" (if pkgs.stdenv.isDarwin then flake.config.me.username else "@wheel") ];
+      download-buffer-size = 1024 * 1024 * 500;
     };
   };
 }
