@@ -62,7 +62,6 @@ in
     quarto
     repomix
     svg2pdf
-    tailwindcss_4
 
     # compute    
     argo
@@ -133,10 +132,12 @@ in
     dioxus-cli
     rustup
 
-    # fable transpiler support
-    dotnet-sdk_8
+    # typescript
+    tailwindcss_4
+    yarn-berry
 
     # python
+    dotnet-sdk_8 # for fable transpiler
     micromamba
     pixi
     poethepoet
