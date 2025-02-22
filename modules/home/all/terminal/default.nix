@@ -112,7 +112,7 @@ in
     just
     plantuml-c4
     pre-commit
-    proto
+    proto # version manager NOT protobuf-related
     ratchet
     tmate
     yq
@@ -127,6 +127,11 @@ in
     cascadia-code
     monaspace
     nerd-fonts.inconsolata
+
+    # Note: for quick experiments with different versions
+    # of language toolchains, use proto as a dynamic version manager
+    # versus a reproducible language-specific flake.
+    # Versions installed below will be latest stable from nixpkgs/master.
 
     # rust
     dioxus-cli
