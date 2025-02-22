@@ -87,6 +87,7 @@ in
     terraform
     timoni
     vcluster
+    wrangler
 
     # db
     duckdb
