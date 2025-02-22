@@ -126,6 +126,7 @@ in
     nerd-fonts.inconsolata
 
     # rust
+    dioxus-cli
     rustup
 
     # fable transpiler support
