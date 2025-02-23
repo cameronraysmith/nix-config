@@ -77,6 +77,7 @@ in
         google-cloud-sdk.components.gke-gcloud-auth-plugin
       ]
     )
+    kcl
     kind
     krew
     kubectl
