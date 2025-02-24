@@ -134,7 +134,7 @@ in
     # Note: for quick experiments with different versions
     # of language toolchains, use proto as a dynamic version manager
     # versus a reproducible language-specific flake.
-    # Versions installed below will be latest stable from nixpkgs/master.
+    # Versions installed below will be latest stable from nixpkgs.
 
     # rust
     dioxus-cli
@@ -145,6 +145,9 @@ in
     pnpm
     tailwindcss_4
     yarn-berry
+
+    # go
+    go
 
     # python
     dotnet-sdk_8 # for fable transpiler
