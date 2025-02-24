@@ -123,6 +123,7 @@ in
     pre-commit
     proto # version manager NOT protobuf-related
     ratchet
+    step-ca
     tmate
     yq
 
