@@ -19,20 +19,23 @@ in
   home.packages = with pkgs; [
     # unix tools
     b3sum
-    coreutils-full
+    coreutils-full # many (non-)overlapping tools in toybox
     fd
-    findutils
+    findutils # mostly covered by alternatives in toybox
+    gnugrep # alternative in toybox
     gnupg
+    gnused # alternative in toybox
     gum
     moreutils
     pinentry-tty
     pipe-rename
-    procps
-    procs
+    procps # mostly covered by alternatives in toybox
+    procs # alternative to ps
     ripgrep
     rsync
     sd
     sesh
+    # toybox # many (non-)overlapping tools in coreutils-full + grep/sed/find/xargs/ps
     tree
     unison
     yazi
