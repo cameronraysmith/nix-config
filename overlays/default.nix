@@ -10,4 +10,5 @@ self: super: {
   # teller = self.callPackage "${packages}/teller.nix" { };
   omnix = inputs.omnix.packages.${self.system}.default;
   quarto = self.callPackage "${packages}/quarto.nix" { };
+  holos = self.callPackage "${packages}/holos.nix" { };
 }
