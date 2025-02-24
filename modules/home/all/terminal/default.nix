@@ -118,6 +118,7 @@ in
     jc
     jqp
     just
+    mkcert
     plantuml-c4
     pre-commit
     proto # version manager NOT protobuf-related
