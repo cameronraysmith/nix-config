@@ -175,4 +175,4 @@ This message is printed by 'just help' and just 'just'.
 - [MatthiasBenaets/nixos-config](https://github.com/MatthiasBenaets/nixos-config)
 - [ehllie/dotfiles](https://github.com/ehllie/dotfiles)
 - [Misterio77/nix-config](https://github.com/Misterio77/nix-config)
-- [ALT-F4-LLC/dotfiles.nix](https://github.com/ALT-F4-LLC/dotfiles.nix)
+- [hercules-ci/flake-parts](https://github.com/hercules-ci/flake-parts)
