@@ -40,21 +40,27 @@
     git-hooks.flake = false;
   };
 
-  outputs = inputs @ { self, ... }:
+  outputs =
+    inputs@{ self, ... }:
     inputs.flake-parts.lib.mkFlake { inherit inputs; } {
-      systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
-      imports = with builtins;
-        map
-          (fn: ./modules/flake-parts/${fn})
-          (attrNames (readDir ./modules/flake-parts));
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "aarch64-darwin"
+      ];
+      imports =
+        with builtins;
+        map (fn: ./modules/flake-parts/${fn}) (attrNames (readDir ./modules/flake-parts));
 
-      perSystem = { lib, system, ... }: {
-        _module.args.pkgs = import inputs.nixpkgs {
-          inherit system;
-          overlays = lib.attrValues self.overlays;
-          config.allowUnfree = true;
+      perSystem =
+        { lib, system, ... }:
+        {
+          _module.args.pkgs = import inputs.nixpkgs {
+            inherit system;
+            overlays = lib.attrValues self.overlays;
+            config.allowUnfree = true;
+          };
         };
-      };
 
       flake.om.ci.default.ROOT = {
         dir = ".";

@@ -1,7 +1,9 @@
 { lib, config, ... }:
 
 let
-  localAddress = (builtins.head (builtins.head (lib.attrValues config.networking.interfaces)).ipv4.addresses).address;
+  localAddress =
+    (builtins.head (builtins.head (lib.attrValues config.networking.interfaces)).ipv4.addresses)
+    .address;
 in
 {
   networking.nat = {
@@ -18,13 +20,15 @@ in
     inherit localAddress;
     autoStart = true;
     hostAddress = "192.168.100.10";
-    config = { config, pkgs, ... }: {
-      environment.systemPackages = with pkgs; [
-        hello
-      ];
-      #services.resolved.enable = true;
-      #networking.useHostResolvConf = lib.mkForce false;
-      system.stateVersion = "23.11";
-    };
+    config =
+      { config, pkgs, ... }:
+      {
+        environment.systemPackages = with pkgs; [
+          hello
+        ];
+        #services.resolved.enable = true;
+        #networking.useHostResolvConf = lib.mkForce false;
+        system.stateVersion = "23.11";
+      };
   };
 }

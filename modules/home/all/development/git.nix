@@ -70,7 +70,10 @@ in
         side-by-side = true;
       };
     };
-    ignores = [ "*~" "*.swp" ];
+    ignores = [
+      "*~"
+      "*.swp"
+    ];
   };
 
   programs.lazygit = {

@@ -1,8 +1,15 @@
-{ config, pkgs, lib, ... }:
+{
+  config,
+  pkgs,
+  lib,
+  ...
+}:
 {
   options = {
     my.helix = {
-      markdown.enable = lib.mkEnableOption "Enable markdown support" // { default = true; };
+      markdown.enable = lib.mkEnableOption "Enable markdown support" // {
+        default = true;
+      };
     };
   };
 
@@ -14,7 +21,10 @@
       keys = {
         insert.j.j = "normal_mode";
         # Shortcut to save file, in any mode.
-        insert."C-s" = [ ":write" "normal_mode" ];
+        insert."C-s" = [
+          ":write"
+          "normal_mode"
+        ];
         normal."C-s" = ":write";
       };
 

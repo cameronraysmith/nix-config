@@ -1,6 +1,7 @@
-{ lib
-, python3Packages
-, fetchPypi
+{
+  lib,
+  python3Packages,
+  fetchPypi,
 }:
 
 python3Packages.buildPythonApplication rec {
@@ -14,7 +15,10 @@ python3Packages.buildPythonApplication rec {
     hash = "sha256-3YXHYq2/biNf42VjByO0rOLX52DMrbomImM5A5DEmgY=";
   };
 
-  nativeBuildInputs = with python3Packages; [ hatchling hatch-vcs ];
+  nativeBuildInputs = with python3Packages; [
+    hatchling
+    hatch-vcs
+  ];
 
   propagatedBuildInputs = with python3Packages; [
     cachecontrol

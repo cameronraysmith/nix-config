@@ -8,12 +8,10 @@
 
     pinentryPackage = pkgs.pinentry-tty;
 
-    extraConfig = ''
-    '';
+    extraConfig = '''';
   };
 
   programs.gpg = {
     enable = true;
   };
 }
-

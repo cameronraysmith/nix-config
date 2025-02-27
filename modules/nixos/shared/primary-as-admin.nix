@@ -1,5 +1,10 @@
 # Make flake.config.me the admin of the machine
-{ flake, pkgs, lib, ... }:
+{
+  flake,
+  pkgs,
+  lib,
+  ...
+}:
 
 {
   # Login via SSH with SSH key
@@ -12,13 +17,15 @@
     in
     {
       root.openssh.authorizedKeys.keys = myKeys;
-      ${me.username} = {
-        openssh.authorizedKeys.keys = myKeys;
-        shell = pkgs.zsh;
-      } // lib.optionalAttrs pkgs.stdenv.isLinux {
-        isNormalUser = true;
-        extraGroups = [ "wheel" ];
-      };
+      ${me.username} =
+        {
+          openssh.authorizedKeys.keys = myKeys;
+          shell = pkgs.zsh;
+        }
+        // lib.optionalAttrs pkgs.stdenv.isLinux {
+          isNormalUser = true;
+          extraGroups = [ "wheel" ];
+        };
     };
 
   programs.zsh.enable = lib.mkIf pkgs.stdenv.isLinux true;

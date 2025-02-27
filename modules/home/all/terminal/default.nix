@@ -16,159 +16,160 @@ in
     ./zellij.nix
   ];
 
-  home.packages = with pkgs; [
-    # unix tools
-    b3sum
-    coreutils # many (non-)overlapping tools in toybox
-    fd
-    findutils # mostly covered by alternatives in toybox
-    gnugrep # alternative in toybox
-    gnupatch # alternative in toybox
-    gnupg
-    gnused # alternative in toybox
-    gum
-    moreutils
-    patchutils
-    pinentry-tty
-    pipe-rename
-    procps # mostly covered by alternatives in toybox
-    procs # alternative to ps
-    ripgrep
-    rsync
-    sd
-    sesh
-    # toybox # many (non-)overlapping tools in coreutils + grep/sed/find/xargs/ps
-    tree
-    unison
-    yazi
+  home.packages =
+    with pkgs;
+    [
+      # unix tools
+      b3sum
+      coreutils # many (non-)overlapping tools in toybox
+      fd
+      findutils # mostly covered by alternatives in toybox
+      gnugrep # alternative in toybox
+      gnupatch # alternative in toybox
+      gnupg
+      gnused # alternative in toybox
+      gum
+      moreutils
+      patchutils
+      pinentry-tty
+      pipe-rename
+      procps # mostly covered by alternatives in toybox
+      procs # alternative to ps
+      ripgrep
+      rsync
+      sd
+      sesh
+      # toybox # many (non-)overlapping tools in coreutils + grep/sed/find/xargs/ps
+      tree
+      unison
+      yazi
 
-    # io
-    aria2
-    curl
-    rclone
-    restic
-    autorestic
-    wget
+      # io
+      aria2
+      curl
+      rclone
+      restic
+      autorestic
+      wget
 
-    # nix dev
-    cachix
-    nil
-    nix-info
-    nix-prefetch-scripts
-    nixpkgs-fmt
-    omnix
+      # nix dev
+      cachix
+      nil
+      nix-info
+      nix-prefetch-scripts
+      nixpkgs-fmt
+      omnix
 
-    # publishing
-    asciinema
-    exiftool
-    ghostscript
-    poppler_utils
-    qpdf
-    quarto
-    repomix
-    svg2pdf
+      # publishing
+      asciinema
+      exiftool
+      ghostscript
+      poppler_utils
+      qpdf
+      quarto
+      repomix
+      svg2pdf
 
-    # compute    
-    argo
-    argocd
-    argocd-autopilot
-    crane
-    crossplane-cli
-    ctlptl
-    cue
-    dive
-    (google-cloud-sdk.withExtraComponents
-      [
+      # compute
+      argo
+      argocd
+      argocd-autopilot
+      crane
+      crossplane-cli
+      ctlptl
+      cue
+      dive
+      (google-cloud-sdk.withExtraComponents [
         google-cloud-sdk.components.gke-gcloud-auth-plugin
-      ]
-    )
-    holos
-    kcl
-    kind
-    krew
-    kubectl
-    kubectx
-    kubernetes-helm
-    kustomize
-    lazydocker
-    terraform
-    timoni
-    vcluster
-    # https://github.com/NixOS/nixpkgs/issues/381980
-    # ❯ yarn dlx wrangler ...
-    # wrangler
+      ])
+      holos
+      kcl
+      kind
+      krew
+      kubectl
+      kubectx
+      kubernetes-helm
+      kustomize
+      lazydocker
+      terraform
+      timoni
+      vcluster
+      # https://github.com/NixOS/nixpkgs/issues/381980
+      # ❯ yarn dlx wrangler ...
+      # wrangler
 
-    # db
-    duckdb
-    limbo
-    postgresql_16
-    sqlite
-    turso-cli
+      # db
+      duckdb
+      limbo
+      postgresql_16
+      sqlite
+      turso-cli
 
-    # dev
-    act
-    bazelisk
-    bazel-buildtools
-    dvcWithOptionalRemotes
-    gh
-    git-filter-repo
-    git-machete
-    graphite-cli
-    graphviz
-    jc
-    jqp
-    just
-    mkcert
-    plantuml-c4
-    pre-commit
-    proto # version manager NOT protobuf-related
-    ratchet
-    step-ca
-    tmate
-    yq
+      # dev
+      act
+      bazelisk
+      bazel-buildtools
+      dvcWithOptionalRemotes
+      gh
+      git-filter-repo
+      git-machete
+      graphite-cli
+      graphviz
+      jc
+      jqp
+      just
+      mkcert
+      plantuml-c4
+      pre-commit
+      proto # version manager NOT protobuf-related
+      ratchet
+      step-ca
+      tmate
+      yq
 
-    # compression
-    zstd
-    snzip
+      # compression
+      zstd
+      snzip
 
-    # fonts
-    noto-fonts-emoji
-    fira-code
-    cascadia-code
-    monaspace
-    nerd-fonts.inconsolata
+      # fonts
+      noto-fonts-emoji
+      fira-code
+      cascadia-code
+      monaspace
+      nerd-fonts.inconsolata
 
-    # Note: for quick experiments with different versions
-    # of language toolchains, use proto as a dynamic version manager
-    # versus a reproducible language-specific flake.
-    # Versions installed below will be latest stable from nixpkgs.
+      # Note: for quick experiments with different versions
+      # of language toolchains, use proto as a dynamic version manager
+      # versus a reproducible language-specific flake.
+      # Versions installed below will be latest stable from nixpkgs.
 
-    # rust
-    dioxus-cli
-    rustup
+      # rust
+      dioxus-cli
+      rustup
 
-    # typescript
-    bun
-    pnpm
-    tailwindcss_4
-    yarn-berry
+      # typescript
+      bun
+      pnpm
+      tailwindcss_4
+      yarn-berry
 
-    # go
-    go
+      # go
+      go
 
-    # python
-    dotnet-sdk_8 # for fable transpiler
-    micromamba
-    pixi
-    poethepoet
-    pydeps
-    pylint
-    pyright
-    python
-    uv
-  ] ++ lib.optionals pkgs.stdenv.isDarwin [
-    mactop
-  ];
+      # python
+      dotnet-sdk_8 # for fable transpiler
+      micromamba
+      pixi
+      poethepoet
+      pydeps
+      pylint
+      pyright
+      python
+      uv
+    ]
+    ++ lib.optionals pkgs.stdenv.isDarwin [
+      mactop
+    ];
 
   home.shellAliases = rec {
     b = "bat";

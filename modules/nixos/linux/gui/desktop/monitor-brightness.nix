@@ -1,17 +1,17 @@
 # TODO: GNOME support via https://extensions.gnome.org/extension/2645/brightness-control-using-ddcutil/
 
-{ pkgs, flake, ... }: {
+{ pkgs, flake, ... }:
+{
   # ddcutils requires i2c
   hardware.i2c.enable = true;
 
-  environment.systemPackages = with pkgs;
-    [
-      # ddcutil can manage *external* monitor's brightness
-      ddcutil
+  environment.systemPackages = with pkgs; [
+    # ddcutil can manage *external* monitor's brightness
+    ddcutil
 
-      # This can control the laptop display.
-      brightnessctl
-    ];
+    # This can control the laptop display.
+    brightnessctl
+  ];
 
   security.sudo.extraRules = [
     {

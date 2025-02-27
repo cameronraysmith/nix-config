@@ -1,8 +1,7 @@
 { config, pkgs, ... }:
 
 let
-  fixTrackpointAccelCli =
-    "${pkgs.xorg.xinput}/bin/xinput --set-prop 'TPPS/2 Elan TrackPoint' 'libinput Accel Speed' 0.7";
+  fixTrackpointAccelCli = "${pkgs.xorg.xinput}/bin/xinput --set-prop 'TPPS/2 Elan TrackPoint' 'libinput Accel Speed' 0.7";
 in
 {
   # NOTE: libinput changes require a reboot
@@ -33,10 +32,9 @@ in
 
   environment.systemPackages = with pkgs; [
     libinput # libinput CLI
-    (pkgs.writeScriptBin "fix-trackpoint-accel"
-      '' 
+    (pkgs.writeScriptBin "fix-trackpoint-accel" ''
       #!${pkgs.runtimeShell}
       ${fixTrackpointAccelCli}
-      '')
+    '')
   ];
 }

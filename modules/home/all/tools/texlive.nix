@@ -1,8 +1,7 @@
 { pkgs, ... }:
 let
   tex = pkgs.texlive.combine {
-    inherit
-      (pkgs.texlive)
+    inherit (pkgs.texlive)
       scheme-small
       algorithm2e
       algorithmicx

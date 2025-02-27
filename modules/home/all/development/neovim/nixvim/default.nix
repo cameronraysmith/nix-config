@@ -78,7 +78,10 @@
             theme = "auto";
             globalstatus = true;
             disabled_filetypes = {
-              statusline = [ "dashboard" "alpha" ];
+              statusline = [
+                "dashboard"
+                "alpha"
+              ];
             };
           };
           sections = {
@@ -163,15 +166,33 @@
           };
           groups = {
             mode = "n";
-            "<leader>f" = { name = "+file/find"; };
-            "<leader>b" = { name = "+buffer"; };
-            "<leader>c" = { name = "+code"; };
-            "<leader>g" = { name = "+git"; };
-            "<leader>q" = { name = "+quit/session"; };
-            "<leader>s" = { name = "+search"; };
-            "<leader>u" = { name = "+ui"; };
-            "<leader>w" = { name = "+windows"; };
-            "<leader>x" = { name = "+diagnostics/quickfix"; };
+            "<leader>f" = {
+              name = "+file/find";
+            };
+            "<leader>b" = {
+              name = "+buffer";
+            };
+            "<leader>c" = {
+              name = "+code";
+            };
+            "<leader>g" = {
+              name = "+git";
+            };
+            "<leader>q" = {
+              name = "+quit/session";
+            };
+            "<leader>s" = {
+              name = "+search";
+            };
+            "<leader>u" = {
+              name = "+ui";
+            };
+            "<leader>w" = {
+              name = "+windows";
+            };
+            "<leader>x" = {
+              name = "+diagnostics/quickfix";
+            };
           };
         };
       };
@@ -211,12 +232,24 @@
         enable = true;
         settings = {
           signs = {
-            add = { text = "▎"; };
-            change = { text = "▎"; };
-            delete = { text = ""; };
-            topdelete = { text = ""; };
-            changedelete = { text = "▎"; };
-            untracked = { text = "▎"; };
+            add = {
+              text = "▎";
+            };
+            change = {
+              text = "▎";
+            };
+            delete = {
+              text = "";
+            };
+            topdelete = {
+              text = "";
+            };
+            changedelete = {
+              text = "▎";
+            };
+            untracked = {
+              text = "▎";
+            };
           };
         };
       };
@@ -238,8 +271,12 @@
           lua_ls = {
             enable = true;
             settings.Lua = {
-              workspace = { checkThirdParty = false; };
-              completion = { callSnippet = "Replace"; };
+              workspace = {
+                checkThirdParty = false;
+              };
+              completion = {
+                callSnippet = "Replace";
+              };
             };
           };
           pyright = {

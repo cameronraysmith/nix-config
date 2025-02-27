@@ -1,4 +1,5 @@
-{ inputs, pkgs, ... }: {
+{ inputs, pkgs, ... }:
+{
   imports = [
     inputs.lazyvim.homeManagerModules.default
   ];
@@ -13,7 +14,7 @@
 
   programs.lazyvim = {
     enable = true;
-    # Apply minimal settings relative to our config in 
+    # Apply minimal settings relative to our config in
     # ./modules/home/all/development/neovim/lazyvim.nix
     extras = {
       coding = {

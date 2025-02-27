@@ -1,4 +1,5 @@
-{ flake, ... }: {
+{ flake, ... }:
+{
   # For no-prompt Ctrl+Shift+B in VSCode
   security.sudo.extraRules = [
     {

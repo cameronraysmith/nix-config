@@ -1,12 +1,12 @@
 # TODO: remove after https://github.com/NixOS/nixpkgs/pull/384434
-{ lib
-, buildGoModule
-, fetchFromGitHub
-, testers
-, kubectl
-, kustomize
-, kubernetes-helm
-,
+{
+  lib,
+  buildGoModule,
+  fetchFromGitHub,
+  testers,
+  kubectl,
+  kustomize,
+  kubernetes-helm,
 }:
 buildGoModule rec {
   pname = "holos";

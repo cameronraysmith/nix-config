@@ -1,4 +1,5 @@
-{ pkgs, ... }: {
+{ pkgs, ... }:
+{
   environment.systemPackages = [ pkgs.protonmail-bridge ];
   services.gnome.gnome-keyring.enable = true;
 

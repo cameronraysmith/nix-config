@@ -49,13 +49,26 @@
             todo-comments-nvim
             trouble-nvim
             which-key-nvim
-            { name = "catppuccin"; path = catppuccin-nvim; }
-            { name = "mini.ai"; path = mini-nvim; }
-            { name = "mini.pairs"; path = mini-nvim; }
+            {
+              name = "catppuccin";
+              path = catppuccin-nvim;
+            }
+            {
+              name = "mini.ai";
+              path = mini-nvim;
+            }
+            {
+              name = "mini.pairs";
+              path = mini-nvim;
+            }
           ];
-          mkEntryFromDrv = drv:
+          mkEntryFromDrv =
+            drv:
             if lib.isDerivation drv then
-              { name = "${lib.getName drv}"; path = drv; }
+              {
+                name = "${lib.getName drv}";
+                path = drv;
+              }
             else
               drv;
           lazyPath = pkgs.linkFarm "lazy-plugins" (builtins.map mkEntryFromDrv plugins);

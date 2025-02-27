@@ -1,4 +1,10 @@
-{ flake, pkgs, lib, modulesPath, ... }:
+{
+  flake,
+  pkgs,
+  lib,
+  modulesPath,
+  ...
+}:
 
 let
   inherit (flake) inputs;

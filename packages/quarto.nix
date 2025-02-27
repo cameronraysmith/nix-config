@@ -1,17 +1,18 @@
-{ stdenv
-, lib
-, esbuild
-, dart-sass
-, deno
-, pandoc
-, python3
-, fetchurl
-, makeWrapper
-, rWrapper
-, rPackages
-, autoPatchelfHook
-, extraRPackages ? [ ]
-, extraPythonPackages ? ps: with ps; [ ]
+{
+  stdenv,
+  lib,
+  esbuild,
+  dart-sass,
+  deno,
+  pandoc,
+  python3,
+  fetchurl,
+  makeWrapper,
+  rWrapper,
+  rPackages,
+  autoPatchelfHook,
+  extraRPackages ? [ ],
+  extraPythonPackages ? ps: with ps; [ ],
 }:
 
 let
@@ -47,8 +48,36 @@ stdenv.mkDerivation rec {
       --prefix QUARTO_DART_SASS : ${lib.getExe dart-sass} \
       --prefix QUARTO_DENO : ${lib.getExe deno} \
       --prefix QUARTO_PANDOC : ${lib.getExe pandoc} \
-      ${lib.optionalString (rWrapper != null) "--prefix QUARTO_R : ${rWrapper.override { packages = with rPackages; [ dplyr reticulate rmarkdown tidyr ] ++ extraRPackages; }}/bin/R"} \
-      # ${lib.optionalString (python3 != null) "--prefix QUARTO_PYTHON : ${python3.withPackages (ps: with ps; [ jupyter ipython ] ++ (extraPythonPackages ps))}/bin/python3"}
+      ${
+        lib.optionalString (rWrapper != null)
+          "--prefix QUARTO_R : ${
+            rWrapper.override {
+              packages =
+                with rPackages;
+                [
+                  dplyr
+                  reticulate
+                  rmarkdown
+                  tidyr
+                ]
+                ++ extraRPackages;
+            }
+          }/bin/R"
+      } \
+      # ${
+        lib.optionalString (python3 != null)
+          "--prefix QUARTO_PYTHON : ${
+            python3.withPackages (
+              ps:
+              with ps;
+              [
+                jupyter
+                ipython
+              ]
+              ++ (extraPythonPackages ps)
+            )
+          }/bin/python3"
+      }
   '';
 
   installPhase = ''
@@ -74,8 +103,18 @@ stdenv.mkDerivation rec {
     homepage = "https://quarto.org/";
     changelog = "https://github.com/quarto-dev/quarto-cli/releases/tag/v${version}";
     license = licenses.gpl2Plus;
-    maintainers = with maintainers; [ minijackson mrtarantoga ];
-    platforms = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
-    sourceProvenance = with sourceTypes; [ binaryNativeCode binaryBytecode ];
+    maintainers = with maintainers; [
+      minijackson
+      mrtarantoga
+    ];
+    platforms = [
+      "x86_64-linux"
+      "aarch64-linux"
+      "aarch64-darwin"
+    ];
+    sourceProvenance = with sourceTypes; [
+      binaryNativeCode
+      binaryBytecode
+    ];
   };
 }

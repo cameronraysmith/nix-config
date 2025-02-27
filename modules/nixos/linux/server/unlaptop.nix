@@ -7,7 +7,7 @@
       SCHED_POWERSAVE_ON_AC = 1;
     };
   };
-  # Uncomment this if leaving the laptop with lid closed at all times 
+  # Uncomment this if leaving the laptop with lid closed at all times
   # (currently I don't; I want lid close to suspend it)
   # services.logind.lidSwitch = "ignore";
 }

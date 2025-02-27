@@ -1,16 +1,15 @@
 { pkgs, config, ... }:
 let
-  tmux-sessionx = pkgs.tmuxPlugins.mkTmuxPlugin
-    {
-      pluginName = "tmux-sessionx";
-      version = "unstable-2025-01-07";
-      src = pkgs.fetchFromGitHub {
-        owner = "omerxx";
-        repo = "tmux-sessionx";
-        rev = "42c18389e73b80381d054dd1005b8c9a66942248";
-        sha256 = "sha256-SRKI4mliMSMp/Yd+oSn48ArbbRA+szaj70BQeTd8NhM=";
-      };
+  tmux-sessionx = pkgs.tmuxPlugins.mkTmuxPlugin {
+    pluginName = "tmux-sessionx";
+    version = "unstable-2025-01-07";
+    src = pkgs.fetchFromGitHub {
+      owner = "omerxx";
+      repo = "tmux-sessionx";
+      rev = "42c18389e73b80381d054dd1005b8c9a66942248";
+      sha256 = "sha256-SRKI4mliMSMp/Yd+oSn48ArbbRA+szaj70BQeTd8NhM=";
     };
+  };
 in
 {
   programs.tmux = {

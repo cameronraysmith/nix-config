@@ -1,4 +1,5 @@
-{ pkgs, flake, ... }: {
+{ pkgs, flake, ... }:
+{
   virtualisation.virtualbox.host = {
     enable = true;
     enableExtensionPack = true;

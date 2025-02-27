@@ -20,5 +20,8 @@
   };
 
   # 🤲
-  nix.settings.allowed-users = [ "root" "@users" ];
+  nix.settings.allowed-users = [
+    "root"
+    "@users"
+  ];
 }

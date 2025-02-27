@@ -13,11 +13,22 @@
     lazyvim.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = inputs @ { flake-parts, ... }:
+  outputs =
+    inputs@{ flake-parts, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
-      systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "aarch64-darwin"
+      ];
 
-      perSystem = { config, pkgs, system, ... }:
+      perSystem =
+        {
+          config,
+          pkgs,
+          system,
+          ...
+        }:
         let
           homeBase = if pkgs.stdenv.isDarwin then "/Users" else "/home";
           username = "test";
@@ -60,21 +71,21 @@
               export XDG_DATA_HOME="$HOME/.local/share"
               export XDG_STATE_HOME="$HOME/.local/state"
               export XDG_CACHE_HOME="$HOME/.cache"
-              
+
               # Create required directories
               mkdir -p $TEMP_HOME
               mkdir -p $XDG_CONFIG_HOME
               mkdir -p $XDG_DATA_HOME
               mkdir -p $XDG_STATE_HOME
               mkdir -p $XDG_CACHE_HOME
-              
+
               # Build and activate the configuration
               echo "Building and activating home-manager configuration..."
               ${config.packages.test-config}/activate
-              
+
               echo "Test environment ready at $TEMP_HOME"
               echo "Run 'nvim' to test LazyVim"
-              
+
               # Cleanup on exit
               cleanup() {
                 echo "Cleaning up temporary home directory..."
