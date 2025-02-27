@@ -19,7 +19,7 @@ in
   home.packages = with pkgs; [
     # unix tools
     b3sum
-    coreutils-full # many (non-)overlapping tools in toybox
+    coreutils # many (non-)overlapping tools in toybox
     fd
     findutils # mostly covered by alternatives in toybox
     gnugrep # alternative in toybox
@@ -37,7 +37,7 @@ in
     rsync
     sd
     sesh
-    # toybox # many (non-)overlapping tools in coreutils-full + grep/sed/find/xargs/ps
+    # toybox # many (non-)overlapping tools in coreutils + grep/sed/find/xargs/ps
     tree
     unison
     yazi
