@@ -25,7 +25,10 @@ in
       init.defaultBranch = "main";
       merge.conflictstyle = "diff3";
       push.autoSetupRemote = true;
-      rebase.autoStash = true;
+      rebase = {
+        autoStash = true;
+        updateRefs = true;
+      };
     };
 
     aliases = {
