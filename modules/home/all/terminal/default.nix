@@ -62,6 +62,7 @@ in
 
       # publishing
       asciinema
+      asciinema-agg
       exiftool
       ghostscript
       poppler_utils
