@@ -22,15 +22,15 @@ let
     "aarch64-darwin" = "macos";
   };
   shas = {
-    "x86_64-linux" = "sha256-yoL13Pz+6oDOg69KNAHhCWemIGTn8lbAp6Nl5hXkDYk=";
-    "aarch64-linux" = "sha256-ErvevFHfPn8lnksS4JACstTlXNaB0sHSVu/fv/Gw9zY=";
-    "aarch64-darwin" = "sha256-uz+5gTb2pEa4Jb5b7bWMikH81qCNg3FvNcpqf1gnSyY=";
+    "x86_64-linux" = "sha256-9mf1YfcfCWMZaYFlYyJN9WKlRHk8U2sq2ESb4mqz3sY=";
+    "aarch64-linux" = "sha256-PDvYgw/QXSMh7hcONcij12r2ymHI986n3FDMphOHNr0=";
+    "aarch64-darwin" = "sha256-IE80DQ+amz6dJSmlbvbZYXrwR0wPC915NZW/Xr+iW+4=";
   };
   inherit (stdenv.hostPlatform) system;
 in
 stdenv.mkDerivation rec {
   pname = "quarto";
-  version = "1.6.4";
+  version = "1.6.42";
   src = fetchurl {
     url = "https://github.com/quarto-dev/quarto-cli/releases/download/v${version}/quarto-${version}-${platforms.${system}}.tar.gz";
     sha256 = shas.${system};
