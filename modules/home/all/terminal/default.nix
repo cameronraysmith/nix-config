@@ -67,7 +67,7 @@ in
       ghostscript
       poppler_utils
       qpdf
-      quarto
+      (quarto.override { python3 = null; })
       repomix
       svg2pdf
 
