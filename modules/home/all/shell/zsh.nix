@@ -45,7 +45,7 @@
       get_nix_hash() {
         url="$1";
         nix_hash=$(nix-prefetch-url "$url");
-        nix hash to-sri --type sha256 "$nix_hash";
+        nix hash convert --to sri --hash-algo sha256 "$nix_hash";
       }
 
       # Shell function to alias nnn to n
