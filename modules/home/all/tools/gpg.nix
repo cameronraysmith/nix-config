@@ -3,8 +3,8 @@
   services.gpg-agent = {
     enable = true;
 
-    defaultCacheTtl = 600; # 10 minutes for normal cache
-    maxCacheTtl = 7200; # 2 hours maximum cache lifetime
+    defaultCacheTtl = 43200; # 12 hours for normal cache
+    maxCacheTtl = 86400; # 1 day maximum cache lifetime
 
     pinentryPackage = pkgs.pinentry-tty;
 
