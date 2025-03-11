@@ -23,9 +23,6 @@
       url = "github:nix-community/nixvim";
       inputs = {
         flake-parts.follows = "flake-parts";
-        home-manager.follows = "home-manager";
-        nix-darwin.follows = "nix-darwin";
-        treefmt-nix.follows = "";
       };
     };
     lazyvim = {
