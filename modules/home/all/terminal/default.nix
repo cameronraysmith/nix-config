@@ -13,6 +13,7 @@ in
     ./atuin.nix
     ./starship.nix
     ./tmux.nix
+    ./yazi.nix
     ./zellij.nix
   ];
 
@@ -42,7 +43,6 @@ in
       # toybox # many (non-)overlapping tools in coreutils + grep/sed/find/xargs/ps
       tree
       unison
-      yazi
 
       # io
       aria2
