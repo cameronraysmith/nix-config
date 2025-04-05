@@ -13,6 +13,11 @@ in
       signByDefault = true;
     };
 
+    lfs = {
+      enable = true;
+      skipSmudge = false;
+    };
+
     extraConfig = {
       core.editor = "nvim";
       credential.helper = "store --file ~/.git-credentials";
