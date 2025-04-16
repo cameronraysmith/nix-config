@@ -150,6 +150,7 @@ in
 
       # typescript
       bun
+      nodejs_22
       pnpm
       tailwindcss_4
       yarn-berry
