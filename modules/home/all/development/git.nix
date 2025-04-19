@@ -29,7 +29,10 @@ in
       format.signoff = true;
       init.defaultBranch = "main";
       merge.conflictstyle = "diff3";
-      push.autoSetupRemote = true;
+      push = {
+        autoSetupRemote = true;
+        useForceIfIncludes = true;
+      };
       rebase = {
         autoStash = true;
         updateRefs = true;
