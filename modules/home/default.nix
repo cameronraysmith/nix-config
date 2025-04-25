@@ -6,7 +6,7 @@ in
 {
   imports = [
     # Core home-manager modules from flake inputs
-    inputs.catppuccin.homeManagerModules.catppuccin
+    inputs.catppuccin.homeModules.catppuccin
     inputs.lazyvim.homeManagerModules.default
     inputs.nixvim.homeManagerModules.nixvim
     inputs.nix-index-database.hmModules.nix-index
