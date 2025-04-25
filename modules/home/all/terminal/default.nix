@@ -167,6 +167,7 @@ in
       pylint
       pyright
       python
+      ruff
       uv
     ]
     ++ lib.optionals pkgs.stdenv.isDarwin [
