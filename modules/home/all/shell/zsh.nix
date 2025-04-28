@@ -122,6 +122,18 @@
         local lines="''${1:-1}"
         nu -c "git log | jc --git-log | from json | take $lines | transpose"
       }
+
+      # Clean up filenames by removing spaces, special characters, and standardizing format
+      # Usage: cleanfn "messy filename with spaces.and.dots.pdf"
+      cleanfn() {
+        if [ -z "$1" ]; then
+          echo "Usage: cleanfn <filename>"
+          echo "Cleans up filenames by removing spaces, special characters, and standardizing format"
+          return 1
+        fi
+
+        rename -bf 's/(\.[^.]+)$//; s/\s+/-/g; s/\./-/g; s/[^a-zA-Z0-9\-]/-/g; s/-{2,}/-/g; s/$/$1/' "$1"
+      }
     '';
 
     oh-my-zsh = {

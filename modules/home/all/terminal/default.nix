@@ -36,6 +36,7 @@ in
       pipe-rename
       procps # mostly covered by alternatives in toybox
       procs # alternative to ps
+      rename
       ripgrep
       rsync
       sd
@@ -211,6 +212,7 @@ in
     nix-hash = "get_nix_hash";
     s = "sesh connect \"$(sesh list -i | gum filter --limit 1 --placeholder 'Pick a sesh' --prompt='⚡')\"";
     y = "yazi";
+    cfn = "cleanfn";
   };
 
   home.sessionVariables = {
