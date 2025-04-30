@@ -185,6 +185,7 @@ in
     dr = "docker container run --interactive --rm --tty";
     g = "git";
     ghe = "github_email";
+    gbc = "git branch --sort=-committerdate | grep -v '^\*\|main' | fzf --multi | xargs git branch -d";
     gmach = "git machete";
     gu = "git machete traverse --fetch --start-from=first-root";
     gts = "check_github_token_scopes";
