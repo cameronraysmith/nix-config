@@ -66,6 +66,7 @@ in
       asciinema-agg
       exiftool
       ghostscript
+      imagemagick
       poppler_utils
       qpdf
       (quarto.override { python3 = null; })
