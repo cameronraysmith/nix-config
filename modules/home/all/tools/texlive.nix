@@ -19,6 +19,8 @@ let
       latexpand
       multirow
       ncctools
+      pdfcrop
+      pdfjam
       placeins
       rsfs
       sttools
