@@ -247,7 +247,8 @@ in
     jq.enable = true;
     lsd = {
       enable = true;
-      enableAliases = true;
+      enableBashIntegration = true;
+      enableZshIntegration = true;
     };
     nix-index = {
       enable = true;
