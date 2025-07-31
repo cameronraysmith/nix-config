@@ -60,7 +60,8 @@ in
       bind s split-window -v -c "#{pane_current_path}"
       bind v split-window -h -c "#{pane_current_path}"
 
-      bind '"' choose-window
+      # bind '"' choose-window
+      bind -n M-"'" choose-window
       bind h select-pane -L
       bind j select-pane -D
       bind k select-pane -U
@@ -77,7 +78,7 @@ in
       bind S choose-session
       bind R source-file ~/.config/tmux/tmux.conf
       bind ^R send-keys "clear"\; send-keys "Enter"
-      bind-key "K" display-popup -E -w 80% -h 80% "sesh connect \"$(sesh list -i | gum filter --limit 1 --placeholder 'Pick a sesh' --prompt='⚡')\""      
+      bind-key "K" display-popup -E -w 80% -h 80% "sesh connect \"$(sesh list -i | gum filter --limit 1 --placeholder 'Pick a sesh' --prompt='⚡')\""
       bind-key -T copy-mode-vi v send-keys -X begin-selection
 
       set -g default-terminal "xterm-256color"
