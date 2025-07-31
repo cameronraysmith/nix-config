@@ -26,7 +26,7 @@
       };
     };
     lazyvim = {
-      url = "github:cameronraysmith/LazyVim-module/dev";
+      url = "github:cameronraysmith/LazyVim-module/main";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     omnix.url = "github:juspay/omnix";
