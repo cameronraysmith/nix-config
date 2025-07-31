@@ -14,7 +14,7 @@
       export PATH="$PATH:$HOME/.krew/bin:/opt/homebrew/bin"
     '';
 
-    initExtra = ''
+    initContent = ''
       # Initialize micromamba for zsh
       eval "$(micromamba shell hook --shell zsh)"
 
