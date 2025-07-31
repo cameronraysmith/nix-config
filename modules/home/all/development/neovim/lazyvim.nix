@@ -20,7 +20,7 @@
         # nushell.enable = true;
         # ocaml.enable = true;
         python.enable = true;
-        rust.enable = true;
+        # rust.enable = true;
         # scala.enable = true;
         # sql.enable = true;
         # terraform.enable = true;
