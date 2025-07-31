@@ -9,7 +9,7 @@ in
     inputs.catppuccin.homeModules.catppuccin
     inputs.lazyvim.homeManagerModules.default
     inputs.nixvim.homeManagerModules.nixvim
-    inputs.nix-index-database.hmModules.nix-index
+    inputs.nix-index-database.homeModules.nix-index
 
     # Our local modules
     ./all/development
