@@ -52,7 +52,7 @@
     ];
     pluginsFile = {
       "lazyvim.lua".source = ./lazyvim/lazyvim.lua;
-      "avante.lua".source = ./lazyvim/avante.lua;
+      # "avante.lua".source = ./lazyvim/avante.lua;
     };
   };
 }
