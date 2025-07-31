@@ -4,5 +4,6 @@
     ./helix.nix
     ./neovim
     ./wezterm
+    ./zed
   ];
 }
