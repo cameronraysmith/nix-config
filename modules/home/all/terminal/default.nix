@@ -58,7 +58,8 @@ in
       nil
       nix-info
       nix-prefetch-scripts
-      nixpkgs-fmt
+      nixd
+      nixfmt
       omnix
 
       # publishing
