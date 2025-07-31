@@ -132,7 +132,7 @@ in
 
       # compression
       zstd
-      snzip
+      # snzip
 
       # fonts
       noto-fonts-emoji
