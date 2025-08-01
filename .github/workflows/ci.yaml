@@ -34,7 +34,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Maximize build space
-        uses: cameronraysmith/maximize-build-space@fdf0c06b18d92be98aa64cb68ae4ea4c9bc4794d # ratchet:cameronraysmith/maximize-build-space@print-usage
+        uses: cameronraysmith/maximize-build-space@c28619d8999a147d5e09c1199f84ff6af6ad5794 # ratchet:cameronraysmith/maximize-build-space@print-usage
         with:
           build-mount-path: /nix
           build-mount-path-ownership: root:root
