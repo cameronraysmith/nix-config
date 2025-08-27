@@ -113,6 +113,7 @@ in
       act
       bazelisk
       bazel-buildtools
+      claude-code
       dvcWithOptionalRemotes
       gh
       git-filter-repo
