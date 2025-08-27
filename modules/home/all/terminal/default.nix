@@ -87,7 +87,7 @@ in
         google-cloud-sdk.components.gke-gcloud-auth-plugin
       ])
       holos
-      kcl
+      # kcl
       kind
       krew
       kubectl
