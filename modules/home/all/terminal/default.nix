@@ -123,6 +123,7 @@ in
       jc
       jqp
       just
+      markdown-tree-parser
       mkcert
       plantuml-c4
       pre-commit
