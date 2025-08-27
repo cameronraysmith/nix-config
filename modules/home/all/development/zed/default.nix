@@ -1,6 +1,11 @@
 # https://github.com/nix-community/home-manager/blob/master/modules/programs/zed-editor.nix
+{ pkgs, ... }:
+let
+  package = pkgs.zed-editor-fhs;
+in
 {
   programs.zed-editor = {
+    inherit package;
     enable = true;
 
     # https://github.com/zed-industries/extensions/tree/main/extensions
