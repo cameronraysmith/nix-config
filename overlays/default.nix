@@ -12,6 +12,7 @@ self: super: {
   omnix = inputs.omnix.packages.${self.system}.default;
   # quarto = self.callPackage "${packages}/quarto.nix" { };
   # star = self.callPackage "${packages}/star.nix" { };
+  starship-jj = self.callPackage "${packages}/starship-jj.nix" { };
   # teller = self.callPackage "${packages}/teller.nix" { };
 
   # Temporary fix for LazyVim catppuccin integration issue
