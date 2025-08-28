@@ -122,6 +122,8 @@ in
       graphviz
       jc
       jqp
+      jjui
+      lazyjj
       just
       markdown-tree-parser
       mkcert
