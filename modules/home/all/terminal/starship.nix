@@ -4,7 +4,7 @@
     # catppuccin.enable = true;
     settings = {
       format = ''
-        $all${custom.jj}$character
+        $all''${custom.jj}$character
       '';
       command_timeout = 2000;
       aws.disabled = true;
