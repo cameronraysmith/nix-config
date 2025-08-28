@@ -343,16 +343,16 @@
         "systems": "systems_2"
       },
       "locked": {
-        "lastModified": 1747869710,
-        "narHash": "sha256-wRtTHjK95qatXDRpN/gYMPNIUR8mtHdO514T2ntyoQE=",
+        "lastModified": 1756397928,
+        "narHash": "sha256-qyWLLFrk335/lnXIWQCKOpOJi46Sech6onoj9lPMwEc=",
         "owner": "cameronraysmith",
         "repo": "LazyVim-module",
-        "rev": "4dea56bba3d6623320295e6cacd4af4ba351c6d5",
+        "rev": "0250a7292493fb3baf75ab33e6e8ae9522eec7eb",
         "type": "github"
       },
       "original": {
         "owner": "cameronraysmith",
-        "ref": "main",
+        "ref": "35-venv",
         "repo": "LazyVim-module",
         "type": "github"
       }
