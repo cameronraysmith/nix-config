@@ -131,6 +131,7 @@ in
       pre-commit
       proto # version manager NOT protobuf-related
       ratchet
+      starship-jj
       step-ca
       tmate
       yq
