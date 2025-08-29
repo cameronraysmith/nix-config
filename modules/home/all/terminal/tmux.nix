@@ -53,6 +53,8 @@ in
       bind ^A last-window
       bind ^W list-windows
       bind w list-windows
+      # swap-window -s SOURCE -t TARGET
+      bind M move-window -t 0
       bind z resize-pane -Z
       bind ^L refresh-client
       bind l refresh-client
