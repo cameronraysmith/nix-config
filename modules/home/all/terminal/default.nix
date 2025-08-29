@@ -206,6 +206,7 @@ in
     l = "ll";
     ld = "lazydocker";
     lg = "lazygit";
+    lsdir = "ls -d1 */";
     nr = "nix run";
     p = "procs --tree";
     py = "poetry run python";
