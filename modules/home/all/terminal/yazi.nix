@@ -6,7 +6,7 @@
     enableZshIntegration = true;
     settings = {
       preview.tab_size = 2;
-      manager = {
+      mgr = {
         show_hidden = true;
         show_symlink = true;
         sort_by = "natural";
