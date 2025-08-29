@@ -198,6 +198,7 @@ in
     gts = "check_github_token_scopes";
     i = "macchina";
     j = "just";
+    jg = "jj git";
     k = "kubectl";
     kns = "kubectl config unset contexts.$(kubectl config current-context).namespace";
     ks = "kubens";
