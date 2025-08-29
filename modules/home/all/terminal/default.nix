@@ -182,7 +182,7 @@ in
       mactop
     ];
 
-  home.shellAliases = rec {
+  home.shellAliases = {
     b = "bat";
     bt = "btop";
     bm = "btm";
