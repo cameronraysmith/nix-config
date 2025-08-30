@@ -127,6 +127,7 @@ in
       just
       markdown-tree-parser
       mkcert
+      opencode
       plantuml-c4
       pre-commit
       proto # version manager NOT protobuf-related
@@ -210,6 +211,7 @@ in
     lg = "lazygit";
     lsdir = "ls -d1 */";
     nr = "nix run";
+    oc = "pnpm --package=opencode-ai@latest -c dlx opencode";
     p = "procs --tree";
     py = "poetry run python";
     rn = "fd -d 1 -t f '.*' | renamer";
