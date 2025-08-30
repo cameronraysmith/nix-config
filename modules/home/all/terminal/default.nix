@@ -196,6 +196,7 @@ in
     g = "git";
     ghe = "github_email";
     gbc = "git branch --sort=-committerdate | grep -v '^\*\|main' | fzf --multi | xargs git branch -d";
+    gls = "PAGER=cat git log --oneline --name-status --pretty=format:'%C(auto)%h %s'";
     gmach = "git machete";
     gu = "git machete traverse --fetch --start-from=first-root";
     gts = "check_github_token_scopes";
