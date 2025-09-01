@@ -134,6 +134,51 @@
 
         rename -bf 's/(\.[^.]+)$//; s/\s+/-/g; s/\./-/g; s/[^a-zA-Z0-9\-]/-/g; s/-{2,}/-/g; s/$/$1/' "$1"
       }
+
+      # Create a private fork of the current repository
+      # Renames origin to upstream and creates a private GitHub repo as the new origin
+      gfork() {
+        if ! command -v gh &> /dev/null; then
+          echo "GitHub CLI (gh) is not installed. Please install it first."
+          return 1
+        fi
+
+        if ! git rev-parse --is-inside-work-tree &> /dev/null; then
+          echo "Error: Not inside a git repository"
+          return 1
+        fi
+
+        echo "Current remotes:"
+        git remote -v
+
+        echo
+        echo "Renaming origin to upstream..."
+        git remote rename origin upstream 2>/dev/null || echo "Note: No 'origin' remote to rename"
+
+        local repo_name=$(basename $(git rev-parse --show-toplevel))
+        local gh_username=$(gh api user --jq .login 2>/dev/null)
+
+        if [ -z "$gh_username" ]; then
+          echo "Error: Could not get GitHub username. Please ensure you're logged in with 'gh auth login'"
+          return 1
+        fi
+
+        echo "Creating repo: $gh_username/$repo_name"
+        printf "Press enter to continue or type new name: "
+        read new_name
+
+        local final_name=''${new_name:-$repo_name}
+        echo "Creating private repository: $gh_username/$final_name"
+
+        if gh repo create "$gh_username/$final_name" --private --push -r origin -s .; then
+          echo "Successfully created and pushed to private repository: $gh_username/$final_name"
+          echo "Updated remotes:"
+          git remote -v
+        else
+          echo "Error: Failed to create repository"
+          return 1
+        fi
+      }
     '';
 
     oh-my-zsh = {
