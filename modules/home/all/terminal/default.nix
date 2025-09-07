@@ -123,7 +123,7 @@ in
       jc
       jqp
       jjui
-      lazyjj
+      # lazyjj
       just
       markdown-tree-parser
       mkcert
