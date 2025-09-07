@@ -6,3 +6,4 @@ result
 external-references
 .pre-commit-config.yaml
 .*rules*
+node_modules/
