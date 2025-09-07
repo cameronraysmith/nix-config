@@ -6,7 +6,7 @@
     ./bottom.nix
     ./tealdeer.nix
     ./macchina.nix
-    ./poetry.nix
+    # ./poetry.nix
     ./k9s.nix
     ./awscli.nix
     ./pandoc.nix
