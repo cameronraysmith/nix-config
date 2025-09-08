@@ -10,6 +10,7 @@ in
     inputs.lazyvim.homeManagerModules.default
     inputs.nixvim.homeModules.nixvim
     inputs.nix-index-database.homeModules.nix-index
+    inputs.sops-nix.homeManagerModules.sops
 
     # Our local modules
     ./all/development
