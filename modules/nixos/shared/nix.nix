@@ -33,7 +33,7 @@ in
         "root"
         (if pkgs.stdenv.isDarwin then flake.config.me.username else "@wheel")
       ];
-      download-buffer-size = 1024 * 1024 * 500;
+      # download-buffer-size = 1024 * 1024 * 500;
     };
   };
 }
