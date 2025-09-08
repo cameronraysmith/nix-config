@@ -137,11 +137,7 @@
 
       # Add flags to permissive cc
       ccds() {
-        local cmd="claude --dangerously-skip-permissions"
-        for arg in "''$@"; do
-          cmd="''$cmd '''$arg'"
-        done
-        eval "pnpm --package=@anthropic-ai/claude-code -c dlx ''$cmd"
+        pnpm --package=@anthropic-ai/claude-code dlx claude --dangerously-skip-permissions "''$@"
       }
 
       # Create a private fork of the current repository
