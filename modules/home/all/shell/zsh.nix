@@ -135,6 +135,15 @@
         rename -bf 's/(\.[^.]+)$//; s/\s+/-/g; s/\./-/g; s/[^a-zA-Z0-9\-]/-/g; s/-{2,}/-/g; s/$/$1/' "$1"
       }
 
+      # Add flags to permissive cc
+      ccds() {
+        local cmd="claude --dangerously-skip-permissions"
+        for arg in "''$@"; do
+          cmd="''$cmd '''$arg'"
+        done
+        eval "pnpm --package=@anthropic-ai/claude-code -c dlx ''$cmd"
+      }
+
       # Create a private fork of the current repository
       # Renames origin to upstream and creates a private GitHub repo as the new origin
       gfork() {
