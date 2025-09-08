@@ -95,12 +95,21 @@ in
       kubernetes-helm
       kustomize
       lazydocker
+      step-cli
       terraform
       timoni
       vcluster
       # https://github.com/NixOS/nixpkgs/issues/381980
       # ❯ yarn dlx wrangler ...
       # wrangler
+
+      # sec
+      age
+      libfido2
+      openssh
+      sops
+      ssh-to-age
+      yubikey-manager
 
       # db
       duckdb
