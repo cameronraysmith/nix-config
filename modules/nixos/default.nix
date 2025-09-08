@@ -20,6 +20,7 @@ in
     }
     self.nixosModules.common
     inputs.agenix.nixosModules.default
+    inputs.sops-nix.nixosModules.sops
     ./linux/current-location.nix
     ./linux/self-ide.nix
   ];
