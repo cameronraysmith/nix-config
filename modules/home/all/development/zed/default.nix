@@ -2,6 +2,7 @@
 {
   programs.zed-editor = {
     enable = true;
+    package = null;
 
     # https://github.com/zed-industries/extensions/tree/main/extensions
     extensions = [
