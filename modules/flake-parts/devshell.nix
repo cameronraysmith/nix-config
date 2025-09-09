@@ -21,7 +21,10 @@
           nix-output-monitor
           omnix
           ratchet
-          teller
+          teller # migrating to sops-nix
+          sops
+          age
+          ssh-to-age
           inputs'.agenix.packages.default
         ];
       };
