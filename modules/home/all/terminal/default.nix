@@ -105,6 +105,8 @@ in
 
       # sec
       age
+      # bitwarden-cli <- see bw alias
+      bws
       libfido2
       openssh
       sops
@@ -198,6 +200,7 @@ in
     bt = "btop";
     bm = "btm";
     bazel = "bazelisk";
+    bw = "pnpm --package=@bitwarden/cli -c dlx bw";
     ccd = "pnpm --package=@anthropic-ai/claude-code -c dlx claude --dangerously-skip-permissions";
     e = "nvim";
     dl = "aria2c -x 16 -s 16 -k 1M";
