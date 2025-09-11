@@ -5,5 +5,6 @@
     ./shared/caches.nix
     ./shared/nix.nix
     ./shared/primary-as-admin.nix
+    ./shared/tailscale.nix
   ];
 }
