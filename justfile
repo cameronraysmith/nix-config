@@ -209,10 +209,14 @@ update-primary-inputs:
 # Define the project variable
 gcp_project_id := env_var_or_default('GCP_PROJECT_ID', 'development')
 
-# Show existing secrets
+# Show existing secrets using sops
 [group('secrets')]
 show:
-  @teller show
+  @echo "=== Shared secrets (secrets/shared.yaml) ==="
+  @sops -d secrets/shared.yaml
+  @echo
+  @echo "=== Test secrets (secrets/test.yaml) ==="
+  @sops -d secrets/test.yaml
 
 # Create a secret with the given name
 [group('secrets')]
@@ -255,21 +259,23 @@ get-secret name:
 seed-dotenv:
   @cp .template.env .env
 
-# Export unique secrets to dotenv format
+# Export unique secrets to dotenv format using sops
 [group('secrets')]
 export:
-  @teller export env | sort | uniq | grep -v '^$' > .secrets.env
+  @echo "# Exported from sops secrets" > .secrets.env
+  @sops exec-env secrets/shared.yaml 'env | grep -E "CACHIX_AUTH_TOKEN|GITHUB_TOKEN"' >> .secrets.env
+  @sort -u .secrets.env -o .secrets.env
 
-# Check secrets are available in teller shell.
+# Check secrets are available in sops environment.
 [group('secrets')]
 check-secrets:
-  @printf "Check teller environment for secrets\n\n"
-  @teller run -s -- env | grep -E 'GITHUB|CACHIX' | teller redact
+  @printf "Check sops environment for secrets\n\n"
+  @sops exec-env secrets/shared.yaml 'env | grep -E "GITHUB|CACHIX" | sed "s/=.*$/=***REDACTED***/"'
 
-# Save KUBECONFIG to file
+# Save KUBECONFIG to file (using sops - requires KUBECONFIG secret to be added)
 [group('secrets')]
 get-kubeconfig:
-  @teller run -s -- printenv KUBECONFIG > kubeconfig.yaml
+  @sops exec-env secrets/shared.yaml 'echo "$KUBECONFIG"' > kubeconfig.yaml || echo "KUBECONFIG not found in secrets/shared.yaml"
 
 # Hash-encrypt a file: copy to secrets directory with content-based name and encrypt with sops
 [group('secrets')]
@@ -351,6 +357,35 @@ verify-hash original_file secret_file:
   
   echo "All verification checks passed!"
 
+# Edit a sops encrypted file 
+[group('secrets')]
+edit-secret file:
+  @sops {{ file }}
+
+# Create a new sops encrypted file
+[group('secrets')]
+new-secret file:
+  @sops {{ file }}
+
+# Show specific secret value from shared secrets  
+[group('secrets')]
+get-shared-secret key:
+  @sops -d --extract '["{{ key }}"]' secrets/shared.yaml
+
+# Run command with all shared secrets as environment variables
+[group('secrets')]
+run-with-secrets +command:
+  @sops exec-env secrets/shared.yaml '{{ command }}'
+
+# Validate all sops encrypted files can be decrypted
+[group('secrets')]
+validate-secrets:
+  @echo "Validating sops encrypted files..."
+  @for file in $(find secrets -name "*.yaml" -not -name ".sops.yaml"); do \
+    echo "Testing: $file"; \
+    sops -d "$file" > /dev/null && echo "  ✅ Valid" || echo "  ❌ Failed"; \
+  done
+
 ## CI/CD
 
 # Update github secrets for repo from environment variables
@@ -360,8 +395,7 @@ ghsecrets repo="cameronraysmith/nix-config":
   @echo
   PAGER=cat gh secret list --repo={{ repo }}
   @echo
-  eval "$(teller sh)" && \
-  gh secret set CACHIX_AUTH_TOKEN --repo={{ repo }} --body="$CACHIX_AUTH_TOKEN"
+  sops exec-env secrets/shared.yaml 'gh secret set CACHIX_AUTH_TOKEN --repo={{ repo }} --body="$CACHIX_AUTH_TOKEN"'
   @echo
   @echo secrets after updates:
   @echo
@@ -375,13 +409,12 @@ list-workflows:
 # Execute flake.yaml workflow.
 [group('CI/CD')]
 test-flake-workflow:
-  @teller run -s -- \
-  act workflow_dispatch \
-  -W '.github/workflows/ci.yaml' \
+  @sops exec-env secrets/shared.yaml 'act workflow_dispatch \
+  -W ".github/workflows/ci.yaml" \
   -j nixci \
   -s GITHUB_TOKEN -s CACHIX_AUTH_TOKEN \
   --matrix os:ubuntu-latest \
-  --container-architecture linux/amd64
+  --container-architecture linux/amd64'
 
 # Command to run sethvargo/ratchet to pin GitHub Actions workflows version tags to commit hashes
 # If not installed, you can use docker to run the command
