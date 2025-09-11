@@ -1,4 +1,10 @@
-{ pkgs, flake, ... }:
+{
+  pkgs,
+  flake,
+  config,
+  lib,
+  ...
+}:
 let
   package = pkgs.gitAndTools.git;
 in
@@ -9,7 +15,8 @@ in
     userName = flake.config.me.fullname;
     userEmail = flake.config.me.email;
     signing = {
-      key = "FF043B368811DD1C";
+      key = "~/.ssh/id_ed25519.pub";
+      format = "ssh";
       signByDefault = true;
     };
 
@@ -23,7 +30,6 @@ in
       credential.helper = "store --file ~/.git-credentials";
       github.user = "cameronraysmith";
       color.ui = true;
-      commit.gpgsign = true;
       diff.colorMoved = "zebra";
       fetch.prune = true;
       format.signoff = true;
@@ -37,6 +43,8 @@ in
         autoStash = true;
         updateRefs = true;
       };
+      gpg.ssh.allowedSignersFile = "${config.home.homeDirectory}/.config/git/allowed_signers";
+      log.showSignature = true;
     };
 
     aliases = {
@@ -103,4 +111,8 @@ in
       };
     };
   };
+
+  home.file.".config/git/allowed_signers".text = ''
+    ${flake.config.me.email} namespaces="git" ${flake.config.me.sshKey}
+  '';
 }
