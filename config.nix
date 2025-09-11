@@ -4,7 +4,7 @@ rec {
     username = "crs58";
     fullname = "Cameron Smith";
     email = "cameron.ray.smith@gmail.com";
-    sshKey = "ecdsa-sha2-nistp384 AAAAE2VjZHNhLXNoYTItbmlzdHAzODQAAAAIbmlzdHAzODQAAABhBELOIffrlKEev80oL/azuYjR9rvgAgeDassoqpx+XL0DwwVNl0dMLNLGZN3elXrDrumagUhJOnRveQ8mmaPPxgnjpZ4KQEdtgE4ayf2wtrXQZ+KUADRKV9LzLtZYF18UZA==";
+    sshKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINdO9rInDa9HvdtZZxmkgeEdAlTupCy3BgA/sqSGyUH+";
   };
   jovyan = me // {
     username = "jovyan";
