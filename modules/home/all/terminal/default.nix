@@ -144,7 +144,7 @@ in
       proto # version manager NOT protobuf-related
       ratchet
       starship-jj
-      step-ca
+      # step-ca
       tmate
       yq
 
@@ -157,7 +157,11 @@ in
       fira-code
       cascadia-code
       monaspace
+      nerd-fonts.monaspace
+      inconsolata
       nerd-fonts.inconsolata
+      jetbrains-mono
+      nerd-fonts.jetbrains-mono
 
       # Note: for quick experiments with different versions
       # of language toolchains, use proto as a dynamic version manager
