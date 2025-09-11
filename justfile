@@ -271,6 +271,86 @@ check-secrets:
 get-kubeconfig:
   @teller run -s -- printenv KUBECONFIG > kubeconfig.yaml
 
+# Hash-encrypt a file: copy to secrets directory with content-based name and encrypt with sops
+[group('secrets')]
+hash-encrypt source_file user="crs58":
+  #!/usr/bin/env bash
+  set -euo pipefail
+  
+  # Generate content-based hash for filename
+  HASH=$(nix hash file --type sha256 --base64 "{{source_file}}" | cut -d'-' -f2 | head -c 32)
+  
+  # Extract base filename without extension
+  BASE_NAME=$(basename "{{source_file}}" .yaml)
+  BASE_NAME=$(basename "$BASE_NAME" .yml)
+  
+  # Create target path
+  TARGET_DIR="secrets/users/{{user}}"
+  TARGET_FILE="${TARGET_DIR}/${HASH}-${BASE_NAME}.yaml"
+  
+  # Ensure target directory exists
+  mkdir -p "$TARGET_DIR"
+  
+  # Copy file with hash-based name
+  cp "{{source_file}}" "$TARGET_FILE"
+  echo "Copied {{source_file}} → $TARGET_FILE"
+  
+  # Encrypt in place with sops
+  sops encrypt --in-place "$TARGET_FILE"
+  echo "Encrypted $TARGET_FILE with sops"
+  
+  # Display verification info
+  echo "Hash: $HASH"
+  echo "Final path: $TARGET_FILE"
+
+# Verify hash integrity: decrypt secret file and compare hash with original file
+[group('secrets')]
+verify-hash original_file secret_file:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  
+  # Extract hash from secret filename
+  SECRET_BASENAME=$(basename "{{secret_file}}")
+  EXPECTED_HASH=$(echo "$SECRET_BASENAME" | cut -d'-' -f1)
+  
+  # Generate hash of original file
+  ACTUAL_HASH=$(nix hash file --type sha256 --base64 "{{original_file}}" | cut -d'-' -f2 | head -c 32)
+  
+  # Create temporary file for decrypted content
+  TEMP_FILE=$(mktemp)
+  trap "rm -f $TEMP_FILE" EXIT
+  
+  # Decrypt secret file to temp location
+  sops decrypt "{{secret_file}}" > "$TEMP_FILE"
+  
+  # Generate hash of decrypted content
+  DECRYPTED_HASH=$(nix hash file --type sha256 --base64 "$TEMP_FILE" | cut -d'-' -f2 | head -c 32)
+  
+  echo "Original file: {{original_file}}"
+  echo "Secret file: {{secret_file}}"
+  echo "Expected hash (from filename): $EXPECTED_HASH"
+  echo "Actual hash (from original): $ACTUAL_HASH"
+  echo "Decrypted hash: $DECRYPTED_HASH"
+  echo
+  
+  # Verify original matches filename hash
+  if [ "$ACTUAL_HASH" = "$EXPECTED_HASH" ]; then
+    echo "Original file hash matches secret filename hash"
+  else
+    echo "Original file hash does NOT match secret filename hash"
+    exit 1
+  fi
+  
+  # Verify decrypted content matches original
+  if [ "$DECRYPTED_HASH" = "$ACTUAL_HASH" ]; then
+    echo "Decrypted content matches original file"
+  else
+    echo "Decrypted content does NOT match original file"
+    exit 1
+  fi
+  
+  echo "All verification checks passed!"
+
 ## CI/CD
 
 # Update github secrets for repo from environment variables
