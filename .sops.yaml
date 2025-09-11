@@ -1,0 +1,51 @@
+keys:
+  # admin recovery key
+  - &admin age1vy7wsnf8eg5229evq3ywup285jzk9cntsx5hhddjtwsjh0kf4c6s9fmalv
+  
+  # user key conventionally stored in
+  # ~/.config/sops/age/keys.txt
+  # "$HOME/Library/Application Support/sops/age/keys.txt"
+  - &crs58 age1whsxa8rlfm8c9hgjc2yafq5dvuvkz58pfd85nyuzdcjndufgfucs7ll3ke
+  
+  # Host key (from ssh-to-age)
+  # cat /etc/ssh/ssh_host_ed25519_key.pub | ssh-to-age
+  - &MGB033059 age18rgyca7ptr6djqn5h7rhgu4yuv9258v5wflg7tefgvxr06nz7cgsw7qgmy
+  # Generated age key for orb-nixos at /var/lib/sops-nix/key.txt
+  - &orb-nixos age1609ngcyxj8x5fyjkdctkzxdws9e38yy28l88lvs0echtv0kdy5aslcqm3w
+
+creation_rules: 
+  - path_regex: users/crs58/.*\.yaml$
+    key_groups:
+      - age:
+        - *admin
+        - *crs58
+
+  - path_regex: hosts/orb-nixos/.*\.yaml$
+    key_groups:
+      - age:
+        - *admin
+        - *crs58
+        - *orb-nixos
+  
+  - path_regex: hosts/MGB033059/.*\.yaml$
+    key_groups:
+      - age:
+        - *admin
+        - *crs58
+        - *MGB033059
+  
+  - path_regex: services/.*\.yaml$
+    key_groups:
+      - age:
+        - *admin
+        - *crs58
+        - *orb-nixos
+        - *MGB033059
+
+  - path_regex: .*\.yaml$
+    key_groups:
+      - age:
+        - *admin
+        - *crs58
+        - *orb-nixos
+        - *MGB033059
