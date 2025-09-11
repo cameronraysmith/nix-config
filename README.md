@@ -140,7 +140,7 @@ Available recipes:
     nixos-switch profile="aarch64"                 # Switch nixos from flake
 
     [secrets]
-    show                                           # Show existing secrets
+    show                                           # Show existing secrets using sops
     create-secret name                             # Create a secret with the given name
     populate-single-secret name path               # Populate a single secret with the contents of a dotenv-formatted file
     populate-separate-secrets path                 # Populate each line of a dotenv-formatted file as a separate secret
@@ -148,9 +148,16 @@ Available recipes:
     create-and-populate-separate-secrets path      # Complete process: Create and populate separate secrets for each line in the dotenv file
     get-secret name                                # Retrieve the contents of a given secret
     seed-dotenv                                    # Create empty dotenv from template
-    export                                         # Export unique secrets to dotenv format
-    check-secrets                                  # Check secrets are available in teller shell.
-    get-kubeconfig                                 # Save KUBECONFIG to file
+    export                                         # Export unique secrets to dotenv format using sops
+    check-secrets                                  # Check secrets are available in sops environment.
+    get-kubeconfig                                 # Save KUBECONFIG to file (using sops - requires KUBECONFIG secret to be added)
+    hash-encrypt source_file user="crs58"          # Hash-encrypt a file: copy to secrets directory with content-based name and encrypt with sops
+    verify-hash original_file secret_file          # Verify hash integrity: decrypt secret file and compare hash with original file
+    edit-secret file                               # Edit a sops encrypted file
+    new-secret file                                # Create a new sops encrypted file
+    get-shared-secret key                          # Show specific secret value from shared secrets
+    run-with-secrets +command                      # Run command with all shared secrets as environment variables
+    validate-secrets                               # Validate all sops encrypted files can be decrypted
 
     [CI/CD]
     ghsecrets repo="cameronraysmith/nix-config"    # Update github secrets for repo from environment variables
