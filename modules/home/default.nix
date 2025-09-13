@@ -13,6 +13,7 @@ in
     inputs.sops-nix.homeManagerModules.sops
 
     # Our local modules
+    ./all/core
     ./all/development
     ./all/terminal
     ./all/tools
