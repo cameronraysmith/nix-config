@@ -1,13 +1,10 @@
 {
   config,
   pkgs,
-  self,
   ...
 }:
 {
-  sops.secrets."BITWARDEN_EMAIL" = {
-    sopsFile = "${self}/secrets/shared.yaml";
-  };
+  sops.secrets."BITWARDEN_EMAIL" = { };
 
   programs.rbw = {
     enable = true;
