@@ -14,5 +14,5 @@
   sops.age.keyFile = "${config.xdg.configHome}/sops/age/keys.txt";
 
   # Set the default sops file location
-  sops.defaultSopsFile = "${self.outPath}/secrets/shared.yaml";
+  sops.defaultSopsFile = ../../../../secrets/shared.yaml;
 }
