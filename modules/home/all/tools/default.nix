@@ -11,6 +11,7 @@
     ./awscli.nix
     ./pandoc.nix
     ./gpg.nix
+    ./rbw.nix
     ./texlive.nix
   ];
 }
