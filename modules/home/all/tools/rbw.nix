@@ -16,9 +16,9 @@
       identity_url = null;
       ui_url = null;
       notifications_url = null;
-      lock_timeout = 3600;
-      sync_interval = 3600;
-      pinentry = "pinentry";
+      lock_timeout = 86400;
+      sync_interval = 900;
+      pinentry = lib.getExe pkgs.pinentry-tty;
       client_cert_path = null;
     };
 
