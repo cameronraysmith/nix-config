@@ -4,6 +4,15 @@
   lib,
   ...
 }:
+let
+  xdgRuntimeDir =
+    if pkgs.stdenv.isDarwin then
+      # macOS: use a user-specific directory
+      "${config.home.homeDirectory}/.local/run"
+    else
+      # linux: systemd-managed runtime dir
+      "/run/user/\${UID}";
+in
 {
   sops.secrets."BITWARDEN_EMAIL" = { };
 
@@ -34,4 +43,24 @@
     # nullify home-manager settings since we're using the sops template
     settings = null;
   };
+
+  # set XDG_RUNTIME_DIR and SSH_AUTH_SOCK for rbw-agent
+  home.sessionVariables = lib.mkMerge [
+    # set XDG_RUNTIME_DIR on macOS
+    (lib.mkIf pkgs.stdenv.isDarwin {
+      XDG_RUNTIME_DIR = xdgRuntimeDir;
+    })
+    # set SSH_AUTH_SOCK for rbw-agent on all platforms
+    {
+      SSH_AUTH_SOCK = "\${XDG_RUNTIME_DIR:-${xdgRuntimeDir}}/rbw/ssh-agent-socket";
+    }
+  ];
+
+  # ensure the runtime directory exists on macOS
+  home.activation.createRbwRuntimeDir = lib.mkIf pkgs.stdenv.isDarwin (
+    lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      $DRY_RUN_CMD mkdir -p "${xdgRuntimeDir}/rbw"
+      $DRY_RUN_CMD chmod 700 "${xdgRuntimeDir}"
+    ''
+  );
 }
