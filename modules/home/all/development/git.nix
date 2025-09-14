@@ -44,7 +44,7 @@ in
         updateRefs = true;
       };
       gpg.ssh.allowedSignersFile = "${config.home.homeDirectory}/.config/git/allowed_signers";
-      log.showSignature = false; # --[no-]show-signature
+      log.showSignature = true; # --[no-]show-signature
     };
 
     aliases = {
