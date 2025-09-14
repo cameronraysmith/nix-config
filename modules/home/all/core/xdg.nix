@@ -1,12 +1,7 @@
 { config, pkgs, ... }:
 {
-  # Enable XDG base directories for cross-platform compatibility
+  # https://github.com/nix-community/home-manager/blob/master/modules/misc/xdg.nix
+  # ~/.config, ~/.cache, ~/.local/share, ~/.local/state
   xdg.enable = true;
   # xdg.configHome = "${config.home.homeDirectory}/.config";
-
-  # This will set:
-  # https://github.com/nix-community/home-manager/blob/master/modules/misc/xdg.nix
-  # - Linux: ~/.config, ~/.cache, ~/.local/share, ~/.local/state
-  # - macOS: ~/Library/Application Support, ~/Library/Caches, etc.
-  # Following the XDG Base Directory Specification
 }
