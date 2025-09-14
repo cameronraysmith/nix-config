@@ -106,6 +106,7 @@ in
       # sec
       age
       # bitwarden-cli <- see bw alias
+      bitwarden-desktop
       bws
       libfido2
       openssh
