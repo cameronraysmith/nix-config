@@ -1,7 +1,7 @@
 { config, pkgs, ... }:
 {
   # Enable XDG base directories for cross-platform compatibility
-  xdg.enable = false;
+  xdg.enable = true;
   # xdg.configHome = "${config.home.homeDirectory}/.config";
 
   # This will set:
