@@ -112,7 +112,7 @@ in
     };
   };
 
-  home.file.".config/git/allowed_signers".text = ''
+  home.file."${config.xdg.configHome}/git/allowed_signers".text = ''
     ${flake.config.me.email} namespaces="git" ${flake.config.me.sshKey}
   '';
 }
