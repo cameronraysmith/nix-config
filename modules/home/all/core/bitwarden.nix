@@ -12,6 +12,7 @@ in
 {
   # Set SSH_AUTH_SOCK for the bitwarden-desktop SSH agent
   # only if bitwarden-desktop is installed
+  # https://bitwarden.com/help/ssh-agent/#configure-bitwarden-ssh-agent
   home.sessionVariables = lib.mkIf bitwardenEnabled {
     SSH_AUTH_SOCK = socketPath;
   };
