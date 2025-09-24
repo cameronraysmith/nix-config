@@ -62,9 +62,11 @@ in
       cachix
       nil
       nix-info
+      nix-output-monitor
       nix-prefetch-scripts
       nixd
       nixfmt
+      nixpkgs-reviewFull
       omnix
 
       # publishing
