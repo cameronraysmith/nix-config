@@ -1,6 +1,11 @@
 { pkgs, ... }:
 let
-  python = pkgs.python311.withPackages (ps: with ps; [ pip ]);
+  python = pkgs.python312.withPackages (
+    ps: with ps; [
+      pip
+      huggingface-hub
+    ]
+  );
   dvcWithOptionalRemotes = pkgs.dvc.override {
     enableGoogle = true;
     enableAWS = true;
