@@ -11,9 +11,11 @@
     nix-darwin.inputs.nixpkgs.follows = "nixpkgs";
     nixos-unified.url = "github:srid/nixos-unified";
     omnix.url = "github:juspay/omnix";
-    omnix.inputs.nixpkgs.follows = "nixpkgs";
-    omnix.inputs.flake-parts.follows = "flake-parts";
-    omnix.inputs.git-hooks.follows = "git-hooks";
+    # TODO: error: darwin.apple_sdk_11_0 has been removed
+    # <https://nixos.org/manual/nixpkgs/stable/#sec-darwin-legacy-frameworks>
+    # omnix.inputs.nixpkgs.follows = "nixpkgs";
+    # omnix.inputs.flake-parts.follows = "flake-parts";
+    # omnix.inputs.git-hooks.follows = "git-hooks";
     omnix.inputs.systems.follows = "systems";
 
     agenix.url = "github:ryantm/agenix";
