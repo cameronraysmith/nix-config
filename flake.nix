@@ -11,8 +11,15 @@
     nix-darwin.inputs.nixpkgs.follows = "nixpkgs";
     nixos-unified.url = "github:srid/nixos-unified";
     omnix.url = "github:juspay/omnix";
+    omnix.inputs.nixpkgs.follows = "nixpkgs";
+    omnix.inputs.flake-parts.follows = "flake-parts";
+    omnix.inputs.git-hooks.follows = "git-hooks";
+    omnix.inputs.systems.follows = "systems";
 
     agenix.url = "github:ryantm/agenix";
+    agenix.inputs.nixpkgs.follows = "nixpkgs";
+    agenix.inputs.home-manager.follows = "home-manager";
+    agenix.inputs.systems.follows = "systems";
     sops-nix.url = "github:mic92/sops-nix";
     sops-nix.inputs.nixpkgs.follows = "nixpkgs";
 
@@ -26,11 +33,14 @@
     nixvim.inputs.flake-parts.follows = "flake-parts";
     lazyvim.url = "github:cameronraysmith/LazyVim-module/35-venv";
     lazyvim.inputs.nixpkgs.follows = "nixpkgs";
+    lazyvim.inputs.systems.follows = "systems";
     catppuccin.url = "github:catppuccin/nix";
+    catppuccin.inputs.nixpkgs.follows = "nixpkgs";
 
     git-hooks.url = "github:cachix/git-hooks.nix";
     git-hooks.flake = false;
     nuenv.url = "github:hallettj/nuenv/writeShellApplication";
+    nuenv.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs =
