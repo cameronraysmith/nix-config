@@ -17,6 +17,9 @@ in
   custom.homebrew = {
     enable = true;
     additionalCasks = [
+      "dbeaver-community"
+      "inkscape"
+      "postgres-unofficial"
       "zoom"
     ];
     additionalMasApps = {
