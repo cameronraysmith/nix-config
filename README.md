@@ -175,11 +175,18 @@ This message is printed by 'just help' and just 'just'.
 
 ## credits
 
+### flake-parts
+
+- [hercules-ci/flake-parts](https://github.com/hercules-ci/flake-parts)
 - [srid/nixos-unified](https://github.com/srid/nixos-unified)
 - [srid/nixos-config](https://github.com/srid/nixos-config)
 - [mirkolenz/nixos](https://github.com/mirkolenz/nixos)
+- [ehllie/dotfiles](https://github.com/ehllie/dotfiles)
+
+### other
+
+- [NickCao/flakes](https://github.com/NickCao/flakes)
+- [EmergentMind/nix-config](https://github.com/EmergentMind/nix-config)
 - [wegank/nixos-config](https://github.com/wegank/nixos-config)
 - [MatthiasBenaets/nixos-config](https://github.com/MatthiasBenaets/nixos-config)
-- [ehllie/dotfiles](https://github.com/ehllie/dotfiles)
 - [Misterio77/nix-config](https://github.com/Misterio77/nix-config)
-- [hercules-ci/flake-parts](https://github.com/hercules-ci/flake-parts)
