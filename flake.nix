@@ -2,41 +2,34 @@
   description = "Nix configuration";
 
   inputs = {
-    # Principle inputs
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     flake-parts.url = "github:hercules-ci/flake-parts";
-    nix-darwin.url = "github:LnL7/nix-darwin";
-    nix-darwin.inputs.nixpkgs.follows = "nixpkgs";
     home-manager.url = "github:nix-community/home-manager";
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
-    nixos-hardware.url = "github:NixOS/nixos-hardware";
+    nix-darwin.url = "github:LnL7/nix-darwin";
+    nix-darwin.inputs.nixpkgs.follows = "nixpkgs";
     nixos-unified.url = "github:srid/nixos-unified";
-    disko.url = "github:nix-community/disko";
-    disko.inputs.nixpkgs.follows = "nixpkgs";
+    omnix.url = "github:juspay/omnix";
+
+    agenix.url = "github:ryantm/agenix";
     sops-nix.url = "github:mic92/sops-nix";
     sops-nix.inputs.nixpkgs.follows = "nixpkgs";
-    agenix.url = "github:ryantm/agenix";
-    nuenv.url = "github:hallettj/nuenv/writeShellApplication";
 
-    # Software inputs
+    disko.url = "github:nix-community/disko";
+    disko.inputs.nixpkgs.follows = "nixpkgs";
+    nixos-hardware.url = "github:NixOS/nixos-hardware";
     nix-index-database.url = "github:nix-community/nix-index-database";
     nix-index-database.inputs.nixpkgs.follows = "nixpkgs";
-    nixvim = {
-      url = "github:nix-community/nixvim";
-      inputs = {
-        flake-parts.follows = "flake-parts";
-      };
-    };
-    lazyvim = {
-      url = "github:cameronraysmith/LazyVim-module/35-venv";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-    omnix.url = "github:juspay/omnix";
+
+    nixvim.url = "github:nix-community/nixvim";
+    nixvim.inputs.flake-parts.follows = "flake-parts";
+    lazyvim.url = "github:cameronraysmith/LazyVim-module/35-venv";
+    lazyvim.inputs.nixpkgs.follows = "nixpkgs";
     catppuccin.url = "github:catppuccin/nix";
 
-    # Development inputs
     git-hooks.url = "github:cachix/git-hooks.nix";
     git-hooks.flake = false;
+    nuenv.url = "github:hallettj/nuenv/writeShellApplication";
   };
 
   outputs =
