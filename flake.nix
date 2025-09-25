@@ -2,6 +2,7 @@
   description = "Nix configuration";
 
   inputs = {
+    systems.url = "github:nix-systems/default";
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     flake-parts.url = "github:hercules-ci/flake-parts";
     home-manager.url = "github:nix-community/home-manager";
@@ -35,11 +36,12 @@
   outputs =
     inputs@{ self, ... }:
     inputs.flake-parts.lib.mkFlake { inherit inputs; } {
-      systems = [
+      systems = builtins.filter (s: builtins.elem s (import inputs.systems)) [
         "x86_64-linux"
         "aarch64-linux"
         "aarch64-darwin"
       ];
+
       imports =
         with builtins;
         map (fn: ./modules/flake-parts/${fn}) (attrNames (readDir ./modules/flake-parts));
