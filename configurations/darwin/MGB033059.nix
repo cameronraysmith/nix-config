@@ -12,6 +12,8 @@ in
   nixpkgs.hostPlatform = "aarch64-darwin";
   nixpkgs.config.allowUnfree = true;
 
+  system.primaryUser = flake.config.me.username;
+
   custom.homebrew = {
     enable = true;
     additionalCasks = [
