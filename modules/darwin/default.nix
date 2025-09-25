@@ -21,5 +21,6 @@ in
     inputs.agenix.darwinModules.default
     inputs.sops-nix.darwinModules.sops
     ./all/zsh-completion-fix.nix
+    ./all/homebrew.nix
   ];
 }
