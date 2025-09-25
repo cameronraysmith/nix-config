@@ -8,7 +8,7 @@ in
     # Core home-manager modules from flake inputs
     inputs.catppuccin.homeModules.catppuccin
     inputs.lazyvim.homeManagerModules.default
-    inputs.nixvim.homeModules.nixvim
+    # inputs.nixvim.homeModules.nixvim  # defer to LazyVim-module
     inputs.nix-index-database.homeModules.nix-index
     inputs.sops-nix.homeManagerModules.sops
 

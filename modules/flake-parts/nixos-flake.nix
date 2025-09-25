@@ -19,7 +19,7 @@
           "nix-darwin"
           "nixos-unified"
           "nix-index-database"
-          "nixvim"
+          # "nixvim"  # defer to LazyVim-module
           "omnix"
         ];
       };
