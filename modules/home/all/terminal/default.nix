@@ -113,7 +113,7 @@ in
       # sec
       age
       # bitwarden-cli <- see bw alias
-      bitwarden-desktop
+      # bitwarden-desktop <- via homebrew MAS on Darwin
       bws
       libfido2
       openssh
