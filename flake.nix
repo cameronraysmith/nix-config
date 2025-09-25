@@ -23,14 +23,9 @@
     sops-nix.url = "github:mic92/sops-nix";
     sops-nix.inputs.nixpkgs.follows = "nixpkgs";
 
-    disko.url = "github:nix-community/disko";
-    disko.inputs.nixpkgs.follows = "nixpkgs";
-    nixos-hardware.url = "github:NixOS/nixos-hardware";
     nix-index-database.url = "github:nix-community/nix-index-database";
     nix-index-database.inputs.nixpkgs.follows = "nixpkgs";
 
-    nixvim.url = "github:nix-community/nixvim";
-    nixvim.inputs.flake-parts.follows = "flake-parts";
     lazyvim.url = "github:cameronraysmith/LazyVim-module/35-venv";
     lazyvim.inputs.nixpkgs.follows = "nixpkgs";
     lazyvim.inputs.systems.follows = "systems";
