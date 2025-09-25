@@ -5,25 +5,28 @@
   ...
 }:
 let
-  # Check if bitwarden-desktop is in the user packages
-  bitwardenEnabled = builtins.elem pkgs.bitwarden-desktop config.home.packages;
-  socketPath = "${config.home.homeDirectory}/.bitwarden-ssh-agent.sock";
+  isDarwin = pkgs.stdenv.isDarwin;
+
+  # On Darwin, bitwarden is installed via homebrew MAS
+  # On other platforms, check if bitwarden-desktop is in packages
+  bitwardenEnabled =
+    if isDarwin then
+      true # TODO: check if bitwarden is installed via homebrew MAS
+    else
+      builtins.elem pkgs.bitwarden-desktop config.home.packages;
+
+  # Set socket paths for macOS MAS vs linux system
+  # https://bitwarden.com/help/ssh-agent/#tab-macos-6VN1DmoAVFvm7ZWD95curS
+  socketPath =
+    if isDarwin then
+      "${config.home.homeDirectory}/Library/Containers/com.bitwarden.desktop/Data/.bitwarden-ssh-agent.sock"
+    else
+      "${config.home.homeDirectory}/.bitwarden-ssh-agent.sock";
 in
 {
-  # Set SSH_AUTH_SOCK for the bitwarden-desktop SSH agent
-  # only if bitwarden-desktop is installed
+  # Set SSH_AUTH_SOCK for the Bitwarden SSH agent
   # https://bitwarden.com/help/ssh-agent/#configure-bitwarden-ssh-agent
   home.sessionVariables = lib.mkIf bitwardenEnabled {
     SSH_AUTH_SOCK = socketPath;
   };
-
-  # Clean up stale socket on activation
-  home.activation.cleanBitwardenSshSocket = lib.mkIf bitwardenEnabled (
-    lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-      # Remove stale socket if it exists and is not active
-      if [ -e "${socketPath}" ] && [ ! -S "${socketPath}" ]; then
-        $DRY_RUN_CMD rm -f "${socketPath}"
-      fi
-    ''
-  );
 }
