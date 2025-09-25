@@ -11,9 +11,23 @@ in
 
   nixpkgs.hostPlatform = "aarch64-darwin";
 
+  custom.homebrew = {
+    enable = true;
+    additionalCasks = [
+      # Host-specific GUI apps
+      # "cleanshot"
+      # "incus"
+    ];
+    additionalMasApps = {
+      # Host-specific Mac App Store apps with IDs
+      # pdf-expert = 1055273043;
+      # raindrop-io-safari = 1549370672;
+    };
+  };
+
   environment.systemPackages = with pkgs; [
-    # macOS GUI programs
-    # wezterm
+    # Globally installed CLI tools
+    # Most GUI apps should probably be managed via homebrew module
   ];
 
   security.pam.services.sudo_local.touchIdAuth = true;
