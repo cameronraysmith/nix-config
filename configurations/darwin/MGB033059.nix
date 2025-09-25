@@ -12,6 +12,17 @@ in
   nixpkgs.hostPlatform = "aarch64-darwin";
   nixpkgs.config.allowUnfree = true;
 
+  custom.homebrew = {
+    enable = true;
+    additionalCasks = [
+      "zoom"
+    ];
+    additionalMasApps = {
+      save-to-raindrop-io = 1549370672;
+    };
+    manageFonts = false;
+  };
+
   security.pam.services.sudo_local.touchIdAuth = true;
 
   # Used for backwards compatibility, please read the changelog before changing.
