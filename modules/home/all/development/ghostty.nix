@@ -15,7 +15,7 @@
       cursor-click-to-move = true;
       font-family = "Monaspace Neon Nerd Font";
       font-size = if pkgs.stdenv.isDarwin then 13 else 11;
-      font-thicken = true;
+      font-thicken = false;
       quick-terminal-position = "center";
       quick-terminal-size = "1000px,600px";
       shell-integration = "none";
