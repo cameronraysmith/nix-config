@@ -88,8 +88,7 @@ in
         autoUpdate = true;
         upgrade = true;
         # https://nix-darwin.github.io/nix-darwin/manual/#opt-homebrew.onActivation.cleanup
-        # TODO: set to "uninstall" after Brewfile generation is complete
-        cleanup = "none";
+        cleanup = "uninstall";
       };
 
       # apply --no-quarantine to all casks
