@@ -12,6 +12,7 @@ let
     "aldente"
     "alt-tab"
     "betterdisplay"
+    "cyberduck"
     "ghostty"
     "neohtop"
     "orbstack"
