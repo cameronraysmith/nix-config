@@ -92,8 +92,18 @@ in
         cleanup = "none";
       };
 
-      taps = [ ];
-      brews = [ ];
+      # apply --no-quarantine to all casks
+      caskArgs = {
+        no_quarantine = true;
+      };
+
+      taps = [
+        "humanlayer/humanlayer"
+      ];
+      brews = [
+        "mas" # masApps cli
+        "pinentry-mac" # GPG pinentry on macOS
+      ];
 
       casks = baseCaskApps ++ cfg.additionalCasks ++ (lib.optionals cfg.manageFonts caskFonts);
 
