@@ -102,6 +102,8 @@ in
       kubernetes-helm
       kustomize
       lazydocker
+      ngrok
+      skopeo
       step-cli
       terraform
       timoni
@@ -112,6 +114,7 @@ in
 
       # sec
       age
+      aws-vault
       # bitwarden-cli <- see bw alias
       # bitwarden-desktop <- via homebrew MAS on Darwin
       bws
@@ -124,6 +127,7 @@ in
       # db
       duckdb
       limbo
+      pgcli
       postgresql_16
       sqlite
       turso-cli
@@ -132,6 +136,7 @@ in
       act
       bazelisk
       bazel-buildtools
+      buf
       claude-code
       dvcWithOptionalRemotes
       gh
