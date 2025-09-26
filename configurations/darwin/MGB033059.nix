@@ -17,8 +17,13 @@ in
   custom.homebrew = {
     enable = true;
     additionalCasks = [
+      "codelayer-nightly"
       "dbeaver-community"
+      "docker-desktop"
+      "gpg-suite"
       "inkscape"
+      "keycastr"
+      "meld"
       "postgres-unofficial"
       "zoom"
     ];
