@@ -18,39 +18,11 @@
       # Initialize micromamba for zsh
       eval "$(micromamba shell hook --shell zsh)"
 
-      # Shell function to create a kind cluster
-      kindc () {
-        cat <<EOF | kind create cluster --config=-
-      kind: Cluster
-      apiVersion: kind.x-k8s.io/v1alpha4
-      nodes:
-      - role: control-plane
-        kubeadmConfigPatches:
-        - |
-          kind: InitConfiguration
-          nodeRegistration:
-            kubeletExtraArgs:
-              node-labels: "ingress-ready=true"
-        extraPortMappings:
-        - containerPort: 80
-          hostPort: 8080
-          protocol: TCP
-        - containerPort: 443
-          hostPort: 8443
-          protocol: TCP
-      EOF
-      }
-
-      # Shell function to compute the sha256 nix hash of a file from a url.
-      get_nix_hash() {
-        url="$1";
-        nix_hash=$(nix-prefetch-url "$url");
-        nix hash convert --to sri --hash-algo sha256 "$nix_hash";
-      }
-
-      # Shell function to alias nnn to n
-      n () {
-        if [ -n $NNNLVL ] && [ "$NNNLVL" -ge 1 ]; then
+      # Special handling for nnn's cd-on-quit functionality
+      # This needs to be a shell function to change the current shell's directory
+      n() {
+        # Block nesting of nnn
+        if [ -n "$NNNLVL" ] && [ "$NNNLVL" -ge 1 ]; then
           echo "nnn is already running"
           return
         fi
@@ -62,126 +34,6 @@
         if [ -f "$NNN_TMPFILE" ]; then
           . "$NNN_TMPFILE"
           rm -f "$NNN_TMPFILE" > /dev/null
-        fi
-      }
-
-      # Shell function to check differences between the current branch and the
-      # upstream branch prior to merge.
-      pmc() {
-        export PAGER=cat
-        branch=''${1:-upstream/main}
-        echo 'Commit Summary:'
-        git log HEAD..$branch --oneline
-        echo
-        echo 'Detailed Commit Logs:'
-        git log HEAD..$branch
-        echo
-        echo 'Files Changed (Name Status):'
-        git diff --name-status HEAD...$branch
-        unset PAGER
-      }
-
-      # List the active scopes of a GitHub legacy PAT provided as argument.
-      check_github_token_scopes() {
-        if [ -z "$1" ]; then
-          echo "Usage: check_github_token_scopes <your_github_token>"
-          return 1
-        fi
-
-        token=$1
-        curl -sS -f -I -H "Authorization: token $token" https://api.github.com | grep -i x-oauth-scopes
-      }
-
-      # GET the GitHub noreply email address for a given username.
-      github_email() {
-        local username=$1
-        local user_id
-
-        if ! command -v gh &> /dev/null; then
-          echo "GitHub CLI (gh) is not installed. Please install it first."
-          return 1
-        fi
-
-        user_id=$(gh api "users/''${username}" --jq ".id")
-
-        if [ -z "$user_id" ]; then
-          echo "Failed to retrieve user ID for username: ''${username}"
-          return 1
-        fi
-
-        echo "''${user_id}+''${username}@users.noreply.github.com"
-      }
-
-      # Print the git log as a json object using nushell.
-      gitjson() {
-        nu -c "git log | jc --git-log | from json"
-      }
-
-      # Print specified number of lines of the git log as a json object using nushell.
-      gitjsonl() {
-        local lines="''${1:-1}"
-        nu -c "git log | jc --git-log | from json | take $lines | transpose"
-      }
-
-      # Clean up filenames by removing spaces, special characters, and standardizing format
-      # Usage: cleanfn "messy filename with spaces.and.dots.pdf"
-      cleanfn() {
-        if [ -z "$1" ]; then
-          echo "Usage: cleanfn <filename>"
-          echo "Cleans up filenames by removing spaces, special characters, and standardizing format"
-          return 1
-        fi
-
-        rename -bf 's/(\.[^.]+)$//; s/\s+/-/g; s/\./-/g; s/[^a-zA-Z0-9\-]/-/g; s/-{2,}/-/g; s/$/$1/' "$1"
-      }
-
-      # Add flags to permissive cc
-      ccds() {
-        pnpm --package=@anthropic-ai/claude-code dlx claude --dangerously-skip-permissions "''$@"
-      }
-
-      # Create a private fork of the current repository
-      # Renames origin to upstream and creates a private GitHub repo as the new origin
-      gfork() {
-        if ! command -v gh &> /dev/null; then
-          echo "GitHub CLI (gh) is not installed. Please install it first."
-          return 1
-        fi
-
-        if ! git rev-parse --is-inside-work-tree &> /dev/null; then
-          echo "Error: Not inside a git repository"
-          return 1
-        fi
-
-        echo "Current remotes:"
-        git remote -v
-
-        echo
-        echo "Renaming origin to upstream..."
-        git remote rename origin upstream 2>/dev/null || echo "Note: No 'origin' remote to rename"
-
-        local repo_name=$(basename $(git rev-parse --show-toplevel))
-        local gh_username=$(gh api user --jq .login 2>/dev/null)
-
-        if [ -z "$gh_username" ]; then
-          echo "Error: Could not get GitHub username. Please ensure you're logged in with 'gh auth login'"
-          return 1
-        fi
-
-        echo "Creating repo: $gh_username/$repo_name"
-        printf "Press enter to continue or type new name: "
-        read new_name
-
-        local final_name=''${new_name:-$repo_name}
-        echo "Creating private repository: $gh_username/$final_name"
-
-        if gh repo create "$gh_username/$final_name" --private --push -r origin -s .; then
-          echo "Successfully created and pushed to private repository: $gh_username/$final_name"
-          echo "Updated remotes:"
-          git remote -v
-        else
-          echo "Error: Failed to create repository"
-          return 1
         fi
       }
     '';
