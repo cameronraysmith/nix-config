@@ -4,6 +4,7 @@
     ./nixpkgs.nix
     ./bat.nix
     ./bottom.nix
+    ./commands.nix
     ./tealdeer.nix
     ./macchina.nix
     # ./poetry.nix
