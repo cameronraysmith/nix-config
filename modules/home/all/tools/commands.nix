@@ -183,5 +183,30 @@
     dev = ''
       exec nix develop "$@"
     '';
+
+    # save staged changes to stash while keeping them staged
+    stash-staged = ''
+      if [ "$#" -eq 0 ]; then
+        echo "Usage: $0 <stash-message>"
+        echo "Saves staged changes to a stash while keeping them staged"
+        exit 1
+      fi
+
+      message="$1"
+
+      echo "Stashing staged changes: $message"
+      git stash push --staged -m "$message"
+
+      echo "Reapplying staged changes..."
+      git stash apply --index
+
+      echo
+      echo "Current stash list:"
+      git stash list
+
+      echo
+      echo "To view this stash later, run:"
+      echo "PAGER=cat git stash show -p stash@{0}"
+    '';
   };
 }
