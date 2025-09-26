@@ -45,6 +45,7 @@ let
     "inter"
     "jetbrains-mono"
     "jetbrains-mono-nerd-font"
+    "latin-modern"
     "monaspace"
     "roboto"
     "roboto-mono"
