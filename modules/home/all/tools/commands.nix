@@ -36,8 +36,7 @@
 
     # nnn file manager launcher (without cd-on-quit)
     n-launcher = ''
-      # shellcheck disable=SC2086
-      if [ -n ''${NNNLVL:-} ] && [ "$NNNLVL" -ge 1 ]; then
+      if [ -n "''${NNNLVL:-}" ] && [ "''${NNNLVL:-0}" -ge 1 ]; then
         echo "nnn is already running"
         exit 0
       fi
@@ -167,7 +166,7 @@
     '';
 
     # nix garbage collection for both system and user
-    gc = ''
+    ngc = ''
       set -x
       sudo nix-collect-garbage --delete-older-than 7d
       nix-collect-garbage --delete-older-than 7d
