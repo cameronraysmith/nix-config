@@ -129,12 +129,14 @@
     };
 
     # Universal Access settings
-    universalaccess = {
-      closeViewScrollWheelToggle = false;
-      closeViewZoomFollowsFocus = false;
-      reduceTransparency = false;
-      mouseDriverCursorSize = 1.0;
-    };
+    # NOTE: domain write permission failure during build
+    # Could not write domain com.apple.universalaccess;
+    # universalaccess = {
+    #   closeViewScrollWheelToggle = false;
+    #   closeViewZoomFollowsFocus = false;
+    #   reduceTransparency = false;
+    #   mouseDriverCursorSize = 1.0;
+    # };
 
     # Software Update settings
     SoftwareUpdate = {
