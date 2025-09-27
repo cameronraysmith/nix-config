@@ -519,5 +519,44 @@
 
       exec nix develop "$@"
     '';
+
+    # nix shell app reference
+    nsa-ref = ''
+      case "''${1:-}" in
+        -h|--help)
+          cat <<'HELP'
+      List all nix shell applications with descriptions
+
+      Usage: nsa-ref
+
+      Displays a reference list of all available shell commands
+      defined in this configuration with brief descriptions.
+
+      Example:
+        nsa-ref    # Show all commands and descriptions
+      HELP
+          exit 0
+          ;;
+      esac
+
+      cat <<'EOF'
+      kindc                         Create kind Kubernetes cluster with ingress support
+      get-nix-hash                  Compute SHA256 Nix hash of a file from URL
+      n-launcher                    Launch nnn file manager with preset options
+      pmc                          Pre-merge check for git branches
+      check-github-token-scopes    Check GitHub personal access token scopes
+      github-email                 Get GitHub noreply email address for a user
+      gitjson                      Display git log as JSON
+      gitjsonl                     Display git log lines as JSON
+      cleanfn                      Clean up filenames by removing special characters
+      ccds                         Claude code with dangerous skip permissions
+      gfork                        Create a private GitHub fork of current repository
+      stash-staged                 Save staged changes to stash while keeping them staged
+      ngc                          Nix garbage collection for system and user
+      flakeup                      Update Nix flake and commit lock file
+      dev                          Enter Nix development shell
+      nsa-ref                      List all nix shell applications with descriptions
+      EOF
+    '';
   };
 }
