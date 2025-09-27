@@ -58,7 +58,35 @@
       wvous-br-corner = 5;
       wvous-tl-corner = 1;
       wvous-tr-corner = 1;
-      # Don't set persistent-apps here - let users customize via home-manager or per-configuration
+      # TODO: add persistent-apps config to module to allow per-machine customization
+      persistent-apps = [
+        "/Applications/NeoHtop.app"
+        "/Applications/Ghostty.app"
+        "/Applications/Fork.app"
+        "/Applications/Zed.app"
+        "/Applications/Visual Studio Code.app"
+        "/Applications/Zen.app"
+        "/Applications/Raindrop.io.app"
+        "/Applications/Skim.app"
+        # "/Applications/Preview.app"
+        "/Applications/calibre.app"
+        "/Applications/Zotero.app"
+        "/Applications/Cyberduck.app"
+        "/Applications/TablePlus.app"
+        "/Applications/DBeaver.app"
+        "/Applications/Codelayer-Nightly.app"
+        "/Applications/Claude.app"
+        "/Applications/Logseq.app"
+        "/Applications/Bitwarden.app"
+        "/Applications/OrbStack.app"
+        "/Applications/OBS.app"
+        "/Applications/Discord.app"
+        "/Applications/zoom.us.app"
+        "/Applications/WhatsApp.app"
+        "/Applications/Slack.app"
+        # "/Applications/Utilities/Audio MIDI Setup.app"
+        "/System/Applications/System Settings.app"
+      ];
     };
 
     # Finder settings
