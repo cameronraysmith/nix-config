@@ -25,7 +25,6 @@ in
       "keycastr"
       "meld"
       "postgres-unofficial"
-      "zoom"
     ];
     additionalMasApps = {
       save-to-raindrop-io = 1549370672;
