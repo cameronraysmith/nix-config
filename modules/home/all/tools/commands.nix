@@ -314,29 +314,7 @@
 
     # claude code with dangerous skip permissions
     ccds = ''
-      case "''${1:-}" in
-        -h|--help)
-          cat <<'HELP'
-      Run Claude Code with dangerous skip permissions
-
-      Usage: ccds [CLAUDE_ARGS...]
-
-      Wrapper for Claude Code CLI that automatically adds the
-      --dangerously-skip-permissions flag.
-
-      Arguments:
-        CLAUDE_ARGS    Any arguments to pass to Claude
-
-      Examples:
-        ccds                     # Run Claude with skip permissions
-        ccds --help              # Show Claude's help
-        ccds "Fix this bug"      # Pass prompt to Claude
-      HELP
-          exit 0
-          ;;
-      esac
-
-      exec pnpm --package=@anthropic-ai/claude-code dlx claude --dangerously-skip-permissions "$@"
+      exec ${pkgs.pnpm}/bin/pnpm --package=@anthropic-ai/claude-code dlx claude --dangerously-skip-permissions "$@"
     '';
 
     # create a private github fork
