@@ -21,7 +21,6 @@ let
     "skim"
     "soundsource"
     "stats"
-    "tailscale-app"
     "tableplus"
     "visual-studio-code"
     "wezterm@nightly"
@@ -101,8 +100,10 @@ in
         "humanlayer/humanlayer"
       ];
       brews = [
-        "mas" # masApps cli
-        "pinentry-mac" # GPG pinentry on macOS
+        "mas"
+        "pinentry-mac"
+        # https://github.com/tailscale/tailscale/wiki/Tailscaled-on-macOS#installing-tailscaled-from-homebrew
+        # "tailscale"
       ];
 
       casks = baseCaskApps ++ cfg.additionalCasks ++ (lib.optionals cfg.manageFonts caskFonts);
