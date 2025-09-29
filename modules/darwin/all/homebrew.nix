@@ -18,6 +18,7 @@ let
     "discord"
     "fork"
     "ghostty"
+    "helium-browser"
     "logseq"
     "neohtop"
     "obs"

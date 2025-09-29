@@ -64,11 +64,12 @@
         "/Applications/Ghostty.app"
         "/Applications/Fork.app"
         "/Applications/Zed.app"
+        "/Applications/Helium.app"
         "/Applications/Visual Studio Code.app"
         "/Applications/Zen.app"
         "/Applications/Raindrop.io.app"
         "/Applications/Skim.app"
-        # "/Applications/Preview.app"
+        "/Applications/Preview.app"
         "/Applications/calibre.app"
         "/Applications/Zotero.app"
         "/Applications/Cyberduck.app"
@@ -84,7 +85,7 @@
         "/Applications/zoom.us.app"
         "/Applications/WhatsApp.app"
         "/Applications/Slack.app"
-        # "/Applications/Utilities/Audio MIDI Setup.app"
+        "/Applications/Utilities/Audio MIDI Setup.app"
         "/System/Applications/System Settings.app"
       ];
     };
