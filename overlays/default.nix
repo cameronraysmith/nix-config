@@ -8,6 +8,7 @@ in
 self: super: {
   # conda-lock = self.callPackage "${packages}/conda-lock.nix" { };
   # holos = self.callPackage "${packages}/holos.nix" { };
+  claude-code-bin = self.callPackage "${packages}/claude-code-bin.nix" { };
   markdown-tree-parser = self.callPackage "${packages}/markdown-tree-parser.nix" { };
   omnix = inputs.omnix.packages.${self.system}.default;
   # quarto = self.callPackage "${packages}/quarto.nix" { };
