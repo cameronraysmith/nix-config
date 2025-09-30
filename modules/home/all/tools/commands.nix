@@ -312,8 +312,8 @@
       ${pkgs.rename}/bin/rename -bf 's/(\.[^.]+)$//; s/\s+/-/g; s/\./-/g; s/[^a-zA-Z0-9\-]/-/g; s/-{2,}/-/g; s/$/$1/' "$1"
     '';
 
-    # claude code with dangerous skip permissions
-    ccds = ''
+    # npm claude code with dangerously skip permissions
+    npmccds = ''
       exec ${pkgs.pnpm}/bin/pnpm --package=@anthropic-ai/claude-code dlx claude --dangerously-skip-permissions "$@"
     '';
 
@@ -540,16 +540,16 @@
       esac
 
       cat <<'EOF'
-      kindc                         Create kind Kubernetes cluster with ingress support
-      get-nix-hash                  Compute SHA256 Nix hash of a file from URL
-      n-launcher                    Launch nnn file manager with preset options
+      kindc                        Create kind Kubernetes cluster with ingress support
+      get-nix-hash                 Compute SHA256 Nix hash of a file from URL
+      n-launcher                   Launch nnn file manager with preset options
       pmc                          Pre-merge check for git branches
       check-github-token-scopes    Check GitHub personal access token scopes
       github-email                 Get GitHub noreply email address for a user
       gitjson                      Display git log as JSON
       gitjsonl                     Display git log lines as JSON
       cleanfn                      Clean up filenames by removing special characters
-      ccds                         Claude code with dangerous skip permissions
+      npmccds                      Claude code with dangerous skip permissions
       gfork                        Create a private GitHub fork of current repository
       stash-staged                 Save staged changes to stash while keeping them staged
       ngc                          Nix garbage collection for system and user
