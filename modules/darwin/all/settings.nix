@@ -40,8 +40,8 @@
       autohide-time-modifier = 0.15;
       dashboard-in-overlay = false;
       enable-spring-load-actions-on-all-items = false;
-      expose-animation-duration = 0.2;
-      expose-group-apps = false;
+      expose-animation-duration = 0.1;
+      expose-group-apps = true;
       launchanim = true;
       mineffect = "scale";
       minimize-to-application = false;
@@ -153,7 +153,7 @@
       FirstClickThreshold = 1;
       SecondClickThreshold = 2;
       TrackpadRightClick = true;
-      TrackpadThreeFingerDrag = true;
+      TrackpadThreeFingerDrag = false;
       TrackpadThreeFingerTapGesture = 0;
     };
 
