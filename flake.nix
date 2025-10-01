@@ -34,6 +34,15 @@
     catppuccin.url = "github:catppuccin/nix";
     catppuccin.inputs.nixpkgs.follows = "nixpkgs";
 
+    # mirkolenz's nixos config for agents-md module
+    mirkolenz-nixos.url = "github:mirkolenz/nixos";
+    mirkolenz-nixos.inputs.nixpkgs.follows = "nixpkgs";
+    mirkolenz-nixos.inputs.flake-parts.follows = "flake-parts";
+    mirkolenz-nixos.inputs.home-manager.follows = "home-manager";
+    mirkolenz-nixos.inputs.nix-darwin.follows = "nix-darwin";
+    mirkolenz-nixos.inputs.nix-index-database.follows = "nix-index-database";
+    mirkolenz-nixos.inputs.systems.follows = "systems";
+
     git-hooks.url = "github:cachix/git-hooks.nix";
     git-hooks.flake = false;
     nuenv.url = "github:hallettj/nuenv/writeShellApplication";
