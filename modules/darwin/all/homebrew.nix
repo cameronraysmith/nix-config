@@ -22,6 +22,7 @@ let
     "logseq"
     "neohtop"
     "obs"
+    "opcode"
     "orbstack"
     "raindropio"
     "raycast"
