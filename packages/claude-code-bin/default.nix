@@ -6,18 +6,12 @@
   versionCheckHook,
   makeWrapper,
   installShellFiles,
+  writeScript,
 }:
 let
   inherit (stdenvNoCC.hostPlatform) system;
-  version = "2.0.1";
   gcsBucket = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases";
-
-  hashes = {
-    x86_64-linux = "sha256-8i1i0NCJP+m+RyosgIE2lxrM+0M/PudNPImACBTBlsw=";
-    aarch64-linux = "sha256-HdEKTc6eZpB0dr4wz+X4D3eMBNkQhuHaBoVYl93WJt8=";
-    x86_64-darwin = "sha256-6llFZiSmeBVdXkLVw43BXDlxw9EWInIFYMVQYGB5Ilw=";
-    aarch64-darwin = "sha256-e7hvhM8+8/3G0s031sFQGY+jepdOlOoy7CFQYGOYXSU=";
-  };
+  manifest = lib.importJSON ./manifest.json;
 
   platforms = {
     x86_64-linux = "linux-x64";
@@ -27,23 +21,26 @@ let
   };
   platform = platforms.${system};
 in
-stdenvNoCC.mkDerivation {
+stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "claude-code-bin";
-  inherit version;
+  version = manifest.version or "unstable";
 
   src = fetchurl {
-    url = "${gcsBucket}/${version}/${platform}/claude";
-    hash = hashes.${system};
+    url = "${gcsBucket}/${finalAttrs.version}/${platform}/claude";
+    hash = manifest.hashes.${platform} or lib.fakeHash;
   };
 
   dontUnpack = true;
   dontBuild = true;
 
+  # otherwise the bun runtime is executed instead of the binary
+  dontStrip = true;
+
   nativeBuildInputs = [
     installShellFiles
     makeWrapper
   ]
-  ++ (lib.optional (!stdenvNoCC.isDarwin) autoPatchelfHook);
+  ++ lib.optionals (!stdenvNoCC.isDarwin) [ autoPatchelfHook ];
 
   installPhase = ''
     runHook preInstall
@@ -60,7 +57,26 @@ stdenvNoCC.mkDerivation {
   versionCheckProgramArg = "--version";
   doInstallCheck = false;
 
-  passthru.updateScript = ./update-claude-code.sh;
+  passthru.updateScript = writeScript "update-claude-code" ''
+    #!/usr/bin/env nix-shell
+    #!nix-shell --pure -i bash -p curl jq cacert
+
+    set -euo pipefail
+
+    # https://claude.ai/install.sh
+    version="$(curl -fsSL "${gcsBucket}/stable")"
+    output="$(
+      curl -fsSL "${gcsBucket}/$version/manifest.json" \
+      | jq '{
+        version: .version,
+        hashes: .platforms | with_entries(
+          select(.key | test("^(darwin|linux)-(x64|arm64)$"))
+          | .value = "sha256:\(.value.checksum)"
+        )
+      }'
+    )"
+    echo "$output" > "packages/claude-code-bin/manifest.json"
+  '';
 
   meta = {
     description = "Agentic coding tool that lives in your terminal, understands your codebase, and helps you code faster";
@@ -73,4 +89,4 @@ stdenvNoCC.mkDerivation {
     mainProgram = "claude";
     platforms = lib.attrNames platforms;
   };
-}
+})
