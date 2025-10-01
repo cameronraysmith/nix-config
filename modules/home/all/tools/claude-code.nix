@@ -16,7 +16,7 @@
       };
 
       theme = "dark";
-      cleanupPeriodDays = 30;
+      cleanupPeriodDays = 1100;
       includeCoAuthoredBy = false;
       enableAllProjectMcpServers = false;
       alwaysThinkingEnabled = true;
