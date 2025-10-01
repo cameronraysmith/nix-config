@@ -204,6 +204,16 @@ update:
 update-primary-inputs:
   nix run .#update
 
+# Update a package using its updateScript
+[group('nix')]
+update-package package="claude-code-bin":
+  #!/usr/bin/env bash
+  set -euo pipefail
+  UPDATE_SCRIPT=$(nix build .#{{ package }}.updateScript --no-link --print-out-paths)
+  echo "Running updateScript for {{ package }}..."
+  $UPDATE_SCRIPT
+  echo "Update complete. Review changes with: git diff packages/{{ package }}/manifest.json"
+
 ## secrets
 
 # Define the project variable
