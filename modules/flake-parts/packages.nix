@@ -7,10 +7,15 @@
       packagesDir = self + /packages;
       packageFiles = builtins.readDir packagesDir;
 
-      # extract package names from files (remove .nix extension)
+      # extract package names from files (remove .nix extension) and directories
       packageNames = lib.mapAttrsToList (
         name: type:
-        if type == "regular" && lib.hasSuffix ".nix" name then lib.removeSuffix ".nix" name else null
+        if type == "regular" && lib.hasSuffix ".nix" name then
+          lib.removeSuffix ".nix" name
+        else if type == "directory" then
+          name
+        else
+          null
       ) packageFiles;
 
       # filter out nulls and build attribute set
