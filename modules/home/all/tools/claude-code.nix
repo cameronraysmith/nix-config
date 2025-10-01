@@ -113,4 +113,7 @@
   home.shellAliases = {
     ccds = "claude --dangerously-skip-permissions";
   };
+
+  # symlink in .local/bin to satisfy claude doctor
+  home.file.".local/bin/claude".source = lib.getExe config.programs.claude-code.finalPackage;
 }
