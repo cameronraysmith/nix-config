@@ -114,6 +114,7 @@
     ccds = "claude --dangerously-skip-permissions";
   };
 
-  # symlink in .local/bin to satisfy claude doctor
-  home.file.".local/bin/claude".source = lib.getExe config.programs.claude-code.finalPackage;
+  # symlink .local/bin to satisfy claude doctor
+  home.file.".local/bin/claude".source =
+    config.lib.file.mkOutOfStoreSymlink "${config.programs.claude-code.finalPackage}/bin/claude";
 }
