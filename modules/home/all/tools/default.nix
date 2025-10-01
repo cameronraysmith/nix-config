@@ -2,6 +2,7 @@
   imports = [
     ./nix.nix
     ./nixpkgs.nix
+    ./agents-md.nix
     ./bat.nix
     ./bottom.nix
     ./claude-code.nix
