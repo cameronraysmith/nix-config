@@ -1,7 +1,6 @@
 {
   config,
   pkgs,
-  lib,
   ...
 }:
 {
@@ -9,6 +8,7 @@
     enable = true;
     package = pkgs.claude-code-bin;
 
+    # https://schemastore.org/claude-code-settings.json
     settings = {
       statusLine = {
         type = "command";
@@ -16,6 +16,8 @@
       };
 
       theme = "dark";
+      autoCompactEnabled = false;
+      spinnerTipsEnabled = false;
       cleanupPeriodDays = 1100;
       includeCoAuthoredBy = false;
       enableAllProjectMcpServers = false;
