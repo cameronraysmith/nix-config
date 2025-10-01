@@ -4,6 +4,7 @@
     ./nixpkgs.nix
     ./bat.nix
     ./bottom.nix
+    ./claude-code.nix
     ./commands.nix
     ./tealdeer.nix
     ./macchina.nix
