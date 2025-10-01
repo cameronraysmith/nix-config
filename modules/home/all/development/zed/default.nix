@@ -45,9 +45,9 @@
         "!nil"
       ];
 
-      ui_font_size = 16;
+      ui_font_size = 14;
       ui_font_family = "Cascadia Code";
-      buffer_font_size = 14;
+      buffer_font_size = 12;
       icon_theme = "Catppuccin Mocha";
 
       theme = {
@@ -56,11 +56,14 @@
         dark = "Catppuccin Mocha";
       };
 
+      agent_panel = {
+        dock = "right";
+      };
       outline_panel = {
-        dock = "left";
+        dock = "right";
       };
       project_panel = {
-        dock = "right";
+        dock = "left";
       };
       tab_bar = {
         show = false;
