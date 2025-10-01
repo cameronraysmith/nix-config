@@ -12,7 +12,7 @@
       export PATH="/run/wrappers/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:$PATH"
       export PATH="$PATH:$HOME/.nix-profile/bin:/etc/profiles/per-user/$USER/bin"
       export PATH="$PATH:$HOME/.krew/bin:/opt/homebrew/bin"
-      export PATH="$PATH:$HOME/.local/bin"
+      # export PATH="$PATH:$HOME/.local/bin"
     '';
 
     initContent = ''
