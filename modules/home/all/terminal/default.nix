@@ -137,7 +137,7 @@ in
       bazelisk
       bazel-buildtools
       buf
-      # claude-code
+      claude-monitor
       dvcWithOptionalRemotes
       gh
       git-filter-repo
