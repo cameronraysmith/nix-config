@@ -9,7 +9,7 @@ self: super: {
   # conda-lock = self.callPackage "${packages}/conda-lock.nix" { };
   # holos = self.callPackage "${packages}/holos.nix" { };
   cc-statusline-rs = self.callPackage "${packages}/cc-statusline-rs.nix" { };
-  claude-code-bin = self.callPackage "${packages}/claude-code-bin.nix" { };
+  claude-code-bin = self.callPackage "${packages}/claude-code-bin" { };
   markdown-tree-parser = self.callPackage "${packages}/markdown-tree-parser.nix" { };
   # omnix = inputs.omnix.packages.${self.system}.default;
   # quarto = self.callPackage "${packages}/quarto.nix" { };
