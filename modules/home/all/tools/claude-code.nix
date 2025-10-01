@@ -10,6 +10,11 @@
     package = pkgs.claude-code-bin;
 
     settings = {
+      statusLine = {
+        type = "command";
+        command = "${pkgs.cc-statusline-rs}/bin/statusline";
+      };
+
       theme = "dark";
       cleanupPeriodDays = 30;
       includeCoAuthoredBy = false;
