@@ -76,12 +76,12 @@ install-nix: ## Install Nix using the Determinate Systems installer
 	fi
 
 .PHONY: install-direnv
-install-direnv: ## Install direnv using the official installation script
+install-direnv: ## Install direnv (requires nix to be installed first)
 	@echo "Installing direnv..."
 	@if command -v direnv >/dev/null 2>&1; then \
 		echo "direnv is already installed."; \
 	else \
-		curl -sfL https://direnv.net/install.sh | bash; \
+		. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh && nix-env -iA nixpkgs.direnv; \
 	fi
 	@echo ""
 	@echo "See https://direnv.net/docs/hook.html if you would like to add direnv to your shell"
