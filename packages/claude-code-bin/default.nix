@@ -64,7 +64,8 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     set -euo pipefail
 
     # https://claude.ai/install.sh
-    version="$(curl -fsSL "${gcsBucket}/stable")"
+    # version="$(curl -fsSL "${gcsBucket}/stable")"
+    version="2.0.3"
     output="$(
       curl -fsSL "${gcsBucket}/$version/manifest.json" \
       | jq '{
@@ -84,6 +85,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     downloadPage = "https://www.npmjs.com/package/@anthropic-ai/claude-code";
     changelog = "https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md";
     license = lib.licenses.unfree;
+    # https://github.com/mirkolenz/nixos/blob/c500ada/overlay/packages/claude-code-bin/package.nix#L93
     maintainers = [ ];
     sourceProvenance = with lib.sourceTypes; [ binaryNativeCode ];
     mainProgram = "claude";
