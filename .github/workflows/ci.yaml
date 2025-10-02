@@ -86,13 +86,13 @@ jobs:
       inputs.job == 'config-validation'
     runs-on: ubuntu-latest
     steps:
+      - name: checkout repository
+        uses: actions/checkout@v4
+
       - name: setup nix
         uses: ./.github/actions/setup-nix
         with:
           system: x86_64-linux
-
-      - name: checkout repository
-        uses: actions/checkout@v4
 
       - name: setup cachix
         uses: cachix/cachix-action@v16
