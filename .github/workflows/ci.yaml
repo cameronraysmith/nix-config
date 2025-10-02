@@ -75,7 +75,8 @@ jobs:
             exit 1
           fi
           echo "age key generated successfully"
-          age-keygen -y ~/.config/sops/age/keys.txt
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh && \
+          nix shell nixpkgs#age -c age-keygen -y ~/.config/sops/age/keys.txt
 
   # job 2: config-validation
   # tests config.nix user definitions (phase 1)
