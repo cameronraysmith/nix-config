@@ -6,12 +6,13 @@
 
     # https://github.com/zed-industries/extensions/tree/main/extensions
     extensions = [
-      "just"
       "catppuccin"
       "catppuccin-icons"
+      "just"
       "nix"
       "rainbow-csv"
       "toml"
+      "xml"
     ];
 
     # userKeymaps = {
