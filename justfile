@@ -398,6 +398,53 @@ validate-secrets:
 
 ## CI/CD
 
+# Trigger CI workflow and wait for result (blocking)
+[group('CI/CD')]
+test-ci-blocking workflow="ci.yaml":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    echo "triggering workflow: {{workflow}} on branch: $(git branch --show-current)"
+    gh workflow run {{workflow}} --ref $(git branch --show-current)
+
+    # wait a moment for run to start
+    sleep 5
+
+    # get the latest run ID
+    RUN_ID=$(gh run list --workflow={{workflow}} --limit 1 --json databaseId --jq '.[0].databaseId')
+
+    echo "watching run: $RUN_ID"
+    gh run watch "$RUN_ID" --exit-status
+
+# View latest CI run status and details
+[group('CI/CD')]
+ci-status workflow="ci.yaml":
+    @gh run list --workflow={{workflow}} --limit 1
+
+# View latest CI run logs
+[group('CI/CD')]
+ci-logs workflow="ci.yaml":
+    @RUN_ID=$(gh run list --workflow={{workflow}} --limit 1 --json databaseId --jq '.[0].databaseId'); \
+    gh run view "$RUN_ID" --log
+
+# View only failed logs from latest CI run
+[group('CI/CD')]
+ci-logs-failed workflow="ci.yaml":
+    @RUN_ID=$(gh run list --workflow={{workflow}} --limit 1 --json databaseId --jq '.[0].databaseId'); \
+    gh run view "$RUN_ID" --log-failed
+
+# Validate latest CI run comprehensively
+[group('CI/CD')]
+ci-validate workflow="ci.yaml":
+    @./scripts/ci/validate-run.sh $(gh run list --workflow={{workflow}} --limit 1 --json databaseId --jq '.[0].databaseId')
+
+# Debug specific failed job from latest CI run
+[group('CI/CD')]
+ci-debug-job workflow="ci.yaml" job_name="build-matrix":
+    @RUN_ID=$(gh run list --workflow={{workflow}} --limit 1 --json databaseId --jq '.[0].databaseId'); \
+    JOB_ID=$(gh run view "$RUN_ID" --json jobs --jq ".jobs[] | select(.name == \"{{job_name}}\") | .databaseId"); \
+    gh run view --job "$JOB_ID" --log
+
 # Update github secrets for repo from environment variables
 [group('CI/CD')]
 ghsecrets repo="cameronraysmith/nix-config":
