@@ -1,0 +1,69 @@
+name: setup-nix
+description: setup nix using nothing-but-nix pattern with space reclamation
+
+inputs:
+  system:
+    description: nix system to configure (e.g., x86_64-linux, aarch64-darwin)
+    type: string
+    required: true
+  sandbox:
+    description: enable nix sandbox builds
+    type: string
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: reclaim space (linux)
+      if: runner.os == 'Linux'
+      uses: wimpysworld/nothing-but-nix@main
+      with:
+        hatchet-protocol: rampage
+
+    - name: reclaim space (darwin)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        echo "::group::disk space (before)"
+        sudo df -h
+        echo "::endgroup::"
+
+        echo "::group::disable mds"
+        sudo mdutil -i off -a || echo "mdutil failed"
+        sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.metadata.mds.plist \
+         || echo "launchctl unload failed"
+        echo "::endgroup::"
+
+        echo "Background space expansion started. /nix will grow as space becomes available."
+        sudo rm -rf \
+          /Applications/Xcode_* \
+          /Library/Developer/CoreSimulator \
+          /Library/Frameworks \
+          /Users/runner/.dotnet \
+          /Users/runner/.rustup \
+          /Users/runner/Library/Android \
+          /Users/runner/Library/Caches \
+          /Users/runner/Library/Developer/CoreSimulator \
+          /Users/runner/hostedtoolcache &
+
+    - name: install nix
+      uses: cachix/install-nix-action@v31
+      with:
+        extra_nix_config: |
+          build-dir = /nix/build
+          sandbox = ${{ inputs.sandbox }}
+          system = ${{ inputs.system }}
+
+    - name: create build-dir
+      shell: bash
+      run: sudo mkdir -p /nix/build
+
+    - name: post setup-nix
+      if: runner.os == 'macOS'
+      uses: srz-zumix/post-run-action@v2
+      with:
+        shell: bash -e {0}
+        post-run: |
+          echo "::group::disk space (after)"
+          sudo df -h
+          echo "::endgroup::"
