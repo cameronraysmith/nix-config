@@ -18,9 +18,7 @@ in
   # - custom.homebrew (nix-darwin only)
   # - security.pam.services.sudo_local.touchIdAuth (macOS-specific)
   # - system.stateVersion (nix-darwin versioning)
-
-  # primary user configuration
-  system.primaryUser = flake.config.me.username;
+  # - system.primaryUser (nix-darwin option, not available in nixos)
 
   # nixos-specific required settings for CI
   boot.loader.systemd-boot.enable = true;
