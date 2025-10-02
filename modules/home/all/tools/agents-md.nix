@@ -30,11 +30,14 @@
 
       - Avoid using emojis in code, comments, documentation, markdown files,
         etc unless explicitly requested to do so.
-      - Prefer lowercase except when replicating code conventions like
-        PascalCase or camelCase, in acronyms, in proper nouns, or complete sentences.
+      - Prefer lowercase text except when replicating code conventions like
+        PascalCase or camelCase, in acronyms, or in proper nouns.
+      - Do prefer to capitalize the first letter of the first word of
+          - complete sentences that end with punctuation marks
+          - section headings
       - Do not use uppercase words for emphasis or notification purposes like
         "IMPORTANT", "URGENT", "WARNING", etc except in relevant situations
-        like error handling or logging.
+        like error handling, logging, or quoting usage by other sources.
     '';
   };
 }
