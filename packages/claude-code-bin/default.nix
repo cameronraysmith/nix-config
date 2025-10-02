@@ -64,8 +64,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     set -euo pipefail
 
     # https://claude.ai/install.sh
-    # version="$(curl -fsSL "${gcsBucket}/stable")"
-    version="2.0.3"
+    version="$(curl -fsSL "${gcsBucket}/stable")"
     output="$(
       curl -fsSL "${gcsBucket}/$version/manifest.json" \
       | jq '{
