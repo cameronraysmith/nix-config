@@ -5,6 +5,149 @@ you'd like to experiment with nix in a containerized environment, consider
 trying [nixpod](https://github.com/cameronraysmith/nixpod) before attempting to
 use something like this repository or one of the credited examples below.
 
+## quick start
+
+### bootstrapping a new machine
+
+Start on a clean macOS or NixOS system:
+
+```bash
+# bootstrap nix and essential tools
+make bootstrap && exec $SHELL
+
+# verify installation
+make verify
+
+# setup secrets (generate age keys for sops-nix)
+make setup-user
+
+# activate configuration
+nix run . hostname       # admin user (darwin/nixos with integrated home-manager)
+nix run . user@hostname  # non-admin user (standalone home-manager, no sudo required)
+```
+
+### multi-user architecture
+
+This config supports two user patterns:
+
+1. **admin users** (darwin/nixos): Integrated home-manager configuration
+   - Define user in `config.nix` and `configurations/{darwin,nixos}/${hostname}.nix`
+   - Activate with `nix run . hostname` (requires sudo for system changes)
+   - Full system and home-manager configuration
+
+2. **non-admin users**: Standalone home-manager configuration
+   - Define user in `config.nix` and `configurations/home/${user}@${host}.nix`
+   - Activate with `nix run . user@hostname` (no sudo required)
+   - Home environment only, independent of system config
+
+### example: two machines with shared and unique users
+
+**machine 1: stibnite (darwin)**
+
+```bash
+# admin user (crs58) on stibnite
+cd /path/to/nix-config
+
+# define user in config.nix
+# create configurations/darwin/stibnite.nix with:
+#   home-manager.users.crs58 = { ... };
+
+make setup-user  # generate age key
+# update .sops.yaml with crs58's age public key
+
+nix run . stibnite  # activate darwin + home-manager for crs58
+```
+
+**add non-admin user (runner) on stibnite**
+
+```bash
+# runner sets up their environment
+make bootstrap && exec $SHELL
+make setup-user  # generates ~/.config/sops/age/keys.txt
+
+# admin (crs58) adds runner's configuration
+# 1. add runner to config.nix
+# 2. create configurations/home/runner@stibnite.nix
+# 3. update .sops.yaml with runner's age public key
+# 4. run: sops updatekeys secrets/*
+
+# runner activates (no sudo required)
+nix run . runner@stibnite
+```
+
+**machine 2: blackphos (darwin)**
+
+```bash
+# admin user (cameron) on blackphos
+# similar process to stibnite/crs58
+# create configurations/darwin/blackphos.nix
+
+nix run . blackphos  # activate for cameron
+
+# add runner on blackphos (same user, different machine)
+# create configurations/home/runner@blackphos.nix
+# runner can have different config than runner@stibnite
+
+nix run . runner@blackphos
+
+# add raquel (unique to blackphos)
+# create configurations/home/raquel@blackphos.nix
+
+nix run . raquel@blackphos
+```
+
+This demonstrates:
+- Multiple admin users across machines (crs58, cameron)
+- Same user on multiple machines (runner@stibnite, runner@blackphos)
+- Machine-specific users (raquel@blackphos)
+- Shared configuration via `modules/home/default.nix`
+- Per-user, per-machine customization
+
+### scaling to more machines
+
+1. **add new darwin host:**
+   - Create `configurations/darwin/${hostname}.nix`
+   - Define admin user with integrated home-manager
+   - Activate: `nix run . hostname`
+
+2. **add new nixos host:**
+   - Create `configurations/nixos/${hostname}.nix`
+   - Define admin user with integrated home-manager
+   - Activate: `nix run . hostname`
+
+3. **add non-admin user to any host:**
+   - Create `configurations/home/${user}@${host}.nix`
+   - User runs `make bootstrap && make setup-user`
+   - Admin updates `.sops.yaml` and runs `sops updatekeys`
+   - User activates: `nix run . user@hostname`
+
+### secrets management
+
+All secrets use sops-nix with age encryption:
+
+```bash
+# verify secrets access
+make check-secrets
+
+# create content-addressed encrypted file
+just hash-encrypt /path/to/file.txt
+
+# edit existing secret
+just edit-secret secrets/encrypted-file.yaml
+
+# validate all secrets decrypt correctly
+just validate-secrets
+```
+
+See [docs/sops-quick-reference.md](docs/sops-quick-reference.md) for comprehensive secrets workflow.
+
+### documentation
+
+- **architecture design:** [docs/nix-config-architecture-analysis.md](docs/nix-config-architecture-analysis.md)
+- **detailed onboarding:** [docs/new-user-host.md](docs/new-user-host.md)
+- **secrets workflow:** [docs/sops-quick-reference.md](docs/sops-quick-reference.md)
+- **team collaboration:** [docs/sops-team-onboarding.md](docs/sops-team-onboarding.md)
+
 <details>
 <summary>organization</summary>
 
