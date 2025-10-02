@@ -1,11 +1,15 @@
+# nix-config bootstrap makefile
+#
 # tl;dr:
 #
 # 1. Run 'make bootstrap' to install nix and direnv
-# 2. Run 'nix develop' to enter the development environment
-# 3. Use 'just ...' to run tasks
+# 2. Run 'make verify' to check your installation
+# 3. Run 'make setup-user' to generate age keys for secrets (first time only)
+# 4. Run 'nix develop' to enter the development environment
+# 5. Use 'just ...' to run configuration tasks
 #
 # This Makefile helps bootstrap a development environment with nix and direnv.
-# After this is complete, see the justfile for running development tasks.
+# After bootstrap is complete, see the justfile for managing configurations.
 
 .DEFAULT_GOAL := help
 
@@ -47,15 +51,20 @@ help-targets: ## eval "$(make help-targets HELP_TARGETS_PATTERN=bootstrap | sed 
 .PHONY: bootstrap
 bootstrap: ## Main bootstrap target that runs all necessary setup steps
 bootstrap: install-nix install-direnv
-	@printf "\nBootstrap of nix and direnv complete! Please note:\n\n"
-	@echo "- Start a new shell session before continuing"
-	@echo "- Run 'nix develop' to enter the development environment"
+	@printf "\n✅ Bootstrap of nix and direnv complete!\n\n"
+	@printf "Next steps:\n"
+	@echo "1. Start a new shell session (to load nix in PATH)"
+	@echo "2. Run 'make verify' to check your installation"
+	@echo "3. Run 'make setup-user' to generate age keys (first time setup)"
+	@echo "4. Run 'nix develop' to enter the development environment"
 	@echo ""
-	@echo "- If you would like to automatically activate the development environment when you enter the project directory"
-	@echo "  - see https://direnv.net/docs/hook.html to add direnv to your shell"
-	@echo "  - start a new shell session"
-	@echo "  - 'cd' out and back into the project directory"
-	@echo "  - allow direnv by running 'direnv allow'"
+	@printf "Optional: Auto-activate development environment with direnv\n"
+	@echo "  - See https://direnv.net/docs/hook.html to add direnv to your shell"
+	@echo "  - Start a new shell session"
+	@echo "  - cd out and back into the project directory"
+	@echo "  - Run 'direnv allow' to activate"
+	@echo ""
+	@printf "For detailed documentation, see docs/new-user-host.md\n"
 
 .PHONY: install-nix
 install-nix: ## Install Nix using the Determinate Systems installer
@@ -78,6 +87,99 @@ install-direnv: ## Install direnv using the official installation script
 	@echo "See https://direnv.net/docs/hook.html if you would like to add direnv to your shell"
 
 #-------
+##@ verify
+#-------
+
+.PHONY: verify
+verify: ## Verify nix installation and environment setup
+	@printf "\nVerifying installation...\n\n"
+	@printf "Checking nix installation: "
+	@if command -v nix >/dev/null 2>&1; then \
+		printf "✅ nix found at %s\n" "$$(command -v nix)"; \
+		nix --version; \
+	else \
+		printf "❌ nix not found\n"; \
+		printf "Run 'make install-nix' to install nix\n"; \
+		exit 1; \
+	fi
+	@printf "\nChecking nix flakes support: "
+	@if nix flake --help >/dev/null 2>&1; then \
+		printf "✅ flakes enabled\n"; \
+	else \
+		printf "❌ flakes not enabled\n"; \
+		exit 1; \
+	fi
+	@printf "\nChecking direnv installation: "
+	@if command -v direnv >/dev/null 2>&1; then \
+		printf "✅ direnv found\n"; \
+	else \
+		printf "⚠️  direnv not found (optional but recommended)\n"; \
+		printf "Run 'make install-direnv' to install\n"; \
+	fi
+	@printf "\nChecking flake validity: "
+	@if nix flake metadata . >/dev/null 2>&1; then \
+		printf "✅ flake is valid\n"; \
+	else \
+		printf "❌ flake has errors\n"; \
+		exit 1; \
+	fi
+	@printf "\nChecking required tools in devShell: "
+	@if nix develop --command bash -c 'command -v age-keygen && command -v ssh-to-age && command -v sops && command -v just' >/dev/null 2>&1; then \
+		printf "✅ age-keygen, ssh-to-age, sops, just available\n"; \
+	else \
+		printf "❌ some tools missing from devShell\n"; \
+		exit 1; \
+	fi
+	@printf "\n✅ All verification checks passed!\n\n"
+
+#-------
+##@ setup
+#-------
+
+.PHONY: setup-user
+setup-user: ## Generate age key for sops-nix secrets (first time user setup)
+	@printf "\nGenerating age key for secrets management...\n\n"
+	@if [ -f ~/.config/sops/age/keys.txt ]; then \
+		printf "⚠️  Age key already exists at ~/.config/sops/age/keys.txt\n"; \
+		printf "To regenerate, manually delete the file first\n"; \
+		printf "\nYour public key is:\n"; \
+		age-keygen -y ~/.config/sops/age/keys.txt 2>/dev/null || printf "Error reading existing key\n"; \
+	else \
+		mkdir -p ~/.config/sops/age; \
+		age-keygen -o ~/.config/sops/age/keys.txt; \
+		chmod 600 ~/.config/sops/age/keys.txt; \
+		printf "\n✅ Age key generated successfully!\n\n"; \
+		printf "Your public key is:\n"; \
+		age-keygen -y ~/.config/sops/age/keys.txt; \
+		printf "\n⚠️  IMPORTANT: Back up your private key to Bitwarden!\n"; \
+		printf "1. Copy the content of ~/.config/sops/age/keys.txt\n"; \
+		printf "2. Store in Bitwarden as secure note: 'age-key-<username>'\n"; \
+		printf "3. Send your PUBLIC key (shown above) to the admin\n"; \
+		printf "\nSee docs/new-user-host.md for complete setup instructions\n"; \
+	fi
+
+.PHONY: check-secrets
+check-secrets: ## Check if you can decrypt shared secrets (requires age key and admin setup)
+	@printf "\nChecking secrets access...\n\n"
+	@if [ ! -f ~/.config/sops/age/keys.txt ]; then \
+		printf "❌ No age key found. Run 'make setup-user' first\n"; \
+		exit 1; \
+	fi
+	@if nix develop --command sops -d secrets/shared.yaml >/dev/null 2>&1; then \
+		printf "✅ Successfully decrypted shared secrets!\n"; \
+		printf "You have proper access to the secrets system\n"; \
+	else \
+		printf "❌ Cannot decrypt shared secrets\n"; \
+		printf "Possible reasons:\n"; \
+		printf "1. Admin hasn't added your key to .sops.yaml yet\n"; \
+		printf "2. Admin hasn't run 'sops updatekeys' after adding you\n"; \
+		printf "3. Your age key is incorrect\n"; \
+		printf "\nSend your public key to admin:\n"; \
+		age-keygen -y ~/.config/sops/age/keys.txt; \
+		exit 1; \
+	fi
+
+#-------
 ##@ clean
 #-------
 
@@ -85,5 +187,3 @@ install-direnv: ## Install direnv using the official installation script
 clean: ## Clean any temporary files or build artifacts
 	@echo "Cleaning up..."
 	@rm -rf result result-*
-	@find . -type d -name "__pycache__" -exec rm -rf {} +
-	@find . -type f -name "*.pyc" -delete
