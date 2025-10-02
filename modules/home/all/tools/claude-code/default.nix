@@ -8,6 +8,10 @@
     enable = true;
     package = pkgs.claude-code-bin;
 
+    # symlink commands and agents directory trees
+    commandsDir = ./commands;
+    agentsDir = ./agents;
+
     # https://schemastore.org/claude-code-settings.json
     settings = {
       statusLine = {
@@ -91,25 +95,6 @@
       #   ];
       # };
     };
-
-    # agents = {
-    #   example = ''
-    #     ---
-    #     name: example
-    #     description: Example agent
-    #     ---
-    #     Agent content here
-    #   '';
-    # };
-
-    # commands = {
-    #   example = ''
-    #     ---
-    #     description: Example command
-    #     ---
-    #     Command content here
-    #   '';
-    # };
   };
 
   home.shellAliases = {
