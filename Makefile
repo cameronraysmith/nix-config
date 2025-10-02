@@ -144,14 +144,14 @@ setup-user: ## Generate age key for sops-nix secrets (first time user setup)
 		printf "⚠️  Age key already exists at ~/.config/sops/age/keys.txt\n"; \
 		printf "To regenerate, manually delete the file first\n"; \
 		printf "\nYour public key is:\n"; \
-		nix run nixpkgs#rage -- -y ~/.config/sops/age/keys.txt 2>/dev/null || printf "Error reading existing key\n"; \
+		nix shell nixpkgs#age -c age-keygen -y ~/.config/sops/age/keys.txt 2>/dev/null || printf "Error reading existing key\n"; \
 	else \
 		mkdir -p ~/.config/sops/age; \
-		nix run nixpkgs#rage -- -keygen -o ~/.config/sops/age/keys.txt; \
+		nix shell nixpkgs#age -c age-keygen -o ~/.config/sops/age/keys.txt; \
 		chmod 600 ~/.config/sops/age/keys.txt; \
 		printf "\n✅ Age key generated successfully!\n\n"; \
 		printf "Your public key is:\n"; \
-		nix run nixpkgs#rage -- -y ~/.config/sops/age/keys.txt; \
+		nix shell nixpkgs#age -c age-keygen -y ~/.config/sops/age/keys.txt; \
 		printf "\n⚠️  IMPORTANT: Back up your private key to Bitwarden!\n"; \
 		printf "1. Copy the content of ~/.config/sops/age/keys.txt\n"; \
 		printf "2. Store in Bitwarden as secure note: 'age-key-<username>'\n"; \
