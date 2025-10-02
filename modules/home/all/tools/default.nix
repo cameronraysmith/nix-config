@@ -5,7 +5,7 @@
     ./agents-md.nix
     ./bat.nix
     ./bottom.nix
-    ./claude-code.nix
+    ./claude-code
     ./commands.nix
     ./tealdeer.nix
     ./macchina.nix
