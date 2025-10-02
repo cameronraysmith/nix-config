@@ -317,7 +317,7 @@ jobs:
         run: |
           cat > test-secrets/.sops.yaml <<EOF
           creation_rules:
-            - path_regex: test-secrets/.*\.yaml$
+            - path_regex: .*\.yaml$
               key_groups:
                 - age:
                   - $TEST_AGE_PUBLIC
@@ -326,15 +326,16 @@ jobs:
 
       - name: create and encrypt test secret
         run: |
-          echo "test_secret: test-value-12345" > test-secrets/test.yaml
-          SOPS_AGE_KEY_FILE=test-secrets/test-key.txt \
-            nix develop --command sops -e -i test-secrets/test.yaml
+          cd test-secrets
+          echo "test_secret: test-value-12345" > test.yaml
+          nix develop --command sops -e -i test.yaml
           echo "encrypted test secret"
 
       - name: verify decryption
         run: |
-          SOPS_AGE_KEY_FILE=test-secrets/test-key.txt \
-            nix develop --command sops -d test-secrets/test.yaml | grep -q "test_secret: test-value-12345"
+          cd test-secrets
+          SOPS_AGE_KEY_FILE=test-key.txt \
+            nix develop --command sops -d test.yaml | grep -q "test_secret: test-value-12345"
           echo "✅ test secret decryption successful"
 
       - name: validate sops structure
