@@ -73,18 +73,84 @@ nix-config/
 
 ## prerequisites
 
-### essential tools
+### bootstrapping nix installation
 
-ensure you have the following installed and configured:
+**this is the crucial first step before anything else.**
+
+the repository includes a `Makefile` that handles installing nix and essential tools, even on systems without nix.
+
+#### initial bootstrap (no nix installed)
 
 ```bash
-# verify nix with flakes enabled
-nix --version
-nix flake --help
+# clone the repository
+git clone <repo-url> ~/nix-config
+cd ~/nix-config
 
-# verify required tools in dev shell
+# run bootstrap to install nix and direnv
+make bootstrap
+
+# start a new shell session (to load nix in PATH)
+exec $SHELL
+
+# verify installation
+make verify
+
+# generate age keys for secrets management
+make setup-user
+```
+
+#### on systems with nix already installed
+
+if nix is already installed, you can skip directly to verification:
+
+```bash
+# clone the repository
+git clone <repo-url> ~/nix-config
+cd ~/nix-config
+
+# verify nix installation and flake validity
+make verify
+
+# generate age keys (if not already done)
+make setup-user
+
+# OR manually verify:
+nix --version
+nix flake check
+```
+
+### makefile targets reference
+
+the `Makefile` provides these bootstrap and verification targets:
+
+```bash
+make help              # show all available targets
+make bootstrap         # install nix and direnv (idempotent)
+make install-nix       # install nix only
+make install-direnv    # install direnv only
+make verify            # verify installation and environment
+make setup-user        # generate age key for sops-nix
+make check-secrets     # verify secrets access (after admin adds you)
+make clean             # remove build artifacts
+```
+
+**key features**:
+- **idempotent**: safe to run multiple times, checks if already installed
+- **determinate systems installer**: uses modern nix installer with flakes enabled by default
+- **comprehensive verification**: checks nix, flakes, required tools, and flake validity
+
+### essential tools verification
+
+after bootstrap, verify you have required tools:
+
+```bash
+# enter development environment
 nix develop
-which age-keygen ssh-to-age sops
+
+# verify required tools
+which age-keygen ssh-to-age sops just
+
+# these should all be available in the devShell
 ```
 
 ### bitwarden ssh agent setup
@@ -155,7 +221,22 @@ rec {
 
 ### step 2: generate age key for user
 
-the admin user needs an age key for sops secret decryption:
+the admin user needs an age key for sops secret decryption.
+
+**using makefile (recommended)**:
+
+```bash
+# generate age key and get setup instructions
+make setup-user
+
+# this will:
+# 1. create ~/.config/sops/age/keys.txt
+# 2. set correct permissions (600)
+# 3. display your public key
+# 4. remind you to back up to bitwarden
+```
+
+**OR manually**:
 
 ```bash
 # as the new admin user
@@ -168,7 +249,7 @@ age-keygen -y ~/.config/sops/age/keys.txt
 # example output: age1whsxa8rlfm8c9hgjc2yafq5dvuvkz58pfd85nyuzdcjndufgfucs7ll3ke
 ```
 
-**store private key securely:**
+**store private key securely (critical)**:
 1. copy private key content: `cat ~/.config/sops/age/keys.txt`
 2. save in bitwarden as secure note: "age-key-{username}"
 3. verify backup: delete local key, restore from bitwarden, test decryption
@@ -248,6 +329,9 @@ find secrets -name "*.yaml" -not -name ".sops.yaml" -exec sops updatekeys {} \;
 
 # verify new admin can decrypt
 sops -d secrets/shared.yaml
+
+# OR using makefile
+make check-secrets  # provides helpful diagnostics if it fails
 ```
 
 ### step 6: activation
@@ -299,6 +383,18 @@ rec {
 ```
 
 ### step 2: generate age key for user
+
+**using makefile (recommended)**:
+
+```bash
+# as the new non-admin user
+make setup-user
+
+# note your public key and send to admin
+# back up private key to bitwarden as instructed
+```
+
+**OR manually**:
 
 ```bash
 # as the new non-admin user
@@ -430,6 +526,9 @@ sops updatekeys secrets/users/bob/*.yaml  # bob's secrets
 
 # verify bob can decrypt
 sops -d secrets/shared.yaml
+
+# OR using makefile for better diagnostics
+make check-secrets
 ```
 
 ### step 6: activation
@@ -574,7 +673,17 @@ sops secrets/hosts/newhostname/config.yaml
 git clone <repo-url> ~/nix-config
 cd ~/nix-config
 
-# bootstrap darwin (first time only)
+# FIRST: bootstrap nix if not installed
+make bootstrap
+exec $SHELL  # restart shell
+
+# verify installation
+make verify
+
+# setup age keys
+make setup-user
+
+# THEN: activate darwin configuration
 just darwin-bootstrap newhostname
 
 # OR using nixos-unified
@@ -708,9 +817,19 @@ sudo nixos-generate-config --show-hardware-config > hardware-configuration.nix
 rsync -avz --exclude='.direnv' --exclude='result' \
   ~/nix-config/ newhost:/tmp/nix-config/
 
-# ssh to new host and activate
+# ssh to new host
 ssh newhost
 cd /tmp/nix-config
+
+# bootstrap nix if needed
+make bootstrap
+exec $SHELL
+
+# verify and setup
+make verify
+make setup-user
+
+# activate nixos configuration
 sudo nixos-rebuild switch --flake .#newhostname
 ```
 
@@ -719,7 +838,14 @@ sudo nixos-rebuild switch --flake .#newhostname
 ```bash
 # from dev machine
 just nixos-vm-sync user newhost
-ssh user@newhost "cd ~/nix-config && sudo nixos-rebuild switch --flake .#newhostname"
+
+# on newhost
+ssh user@newhost
+cd ~/nix-config
+make bootstrap  # if nix not installed
+make verify
+make setup-user
+sudo nixos-rebuild switch --flake .#newhostname
 ```
 
 ### step 5: configure sops-nix for nixos
@@ -989,26 +1115,68 @@ sudo cat /etc/ssh/ssh_host_ed25519_key
 
 ## troubleshooting
 
+### nix not found after bootstrap
+
+**symptom**: `command not found: nix` after `make bootstrap`
+
+**solution**: start a new shell session
+
+```bash
+# restart your shell
+exec $SHELL
+
+# OR explicitly source nix
+source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh  # multi-user
+# OR
+source ~/.nix-profile/etc/profile.d/nix.sh  # single-user
+
+# verify
+make verify
+```
+
+### flake evaluation fails
+
+**symptom**: `error: getting status of '/nix/store/...'` or similar
+
+**solution**: verify flake inputs and run checks
+
+```bash
+# check flake validity
+nix flake check
+
+# update flake inputs if needed
+nix flake update
+
+# verify with makefile
+make verify
+```
+
 ### sops decryption fails
 
 **symptom**: `error: no key found`
 
 **solutions:**
 
-1. verify age key exists and has correct permissions:
+1. **use makefile diagnostics**:
+```bash
+make check-secrets
+# provides specific error messages and next steps
+```
+
+2. verify age key exists and has correct permissions:
 ```bash
 ls -la ~/.config/sops/age/keys.txt
 # should be: -rw------- (600)
 chmod 600 ~/.config/sops/age/keys.txt
 ```
 
-2. verify your public key is in `.sops.yaml`:
+3. verify your public key is in `.sops.yaml`:
 ```bash
 age-keygen -y ~/.config/sops/age/keys.txt
 grep $(age-keygen -y ~/.config/sops/age/keys.txt) .sops.yaml
 ```
 
-3. verify admin updated keys after adding you:
+4. verify admin updated keys after adding you:
 ```bash
 # admin should run:
 sops updatekeys secrets/shared.yaml
@@ -1204,15 +1372,51 @@ when removing users:
 
 ## quick reference
 
+### complete new machine setup (from scratch)
+
+```bash
+# 0. BOOTSTRAP (on new machine without nix)
+git clone <repo-url> ~/nix-config
+cd ~/nix-config
+make bootstrap
+exec $SHELL
+
+# 1. VERIFY
+make verify
+
+# 2. SETUP USER
+make setup-user  # generates age key, shows public key
+
+# 3. GET HOST KEY
+sudo cat /etc/ssh/ssh_host_ed25519_key.pub | ssh-to-age
+
+# 4. SEND TO ADMIN
+# - send your age public key (from step 2)
+# - send host age public key (from step 3)
+
+# 5. WAIT FOR ADMIN
+# admin adds you to config.nix and .sops.yaml
+# admin runs: sops updatekeys secrets/*.yaml
+
+# 6. VERIFY SECRETS ACCESS
+make check-secrets
+
+# 7. ACTIVATE
+nix run . hostname  # admin on darwin/nixos
+# OR
+nix run . user@hostname  # non-admin standalone home-manager
+```
+
 ### adding admin user on new darwin host
 
 ```bash
 # 1. define in config.nix
 # newadmin = { username = "newadmin"; ... }
 
-# 2. generate age key
-age-keygen -o ~/.config/sops/age/keys.txt
-age-keygen -y ~/.config/sops/age/keys.txt  # note public key
+# 2. bootstrap and generate age key
+make bootstrap && exec $SHELL
+make verify
+make setup-user  # note public key
 
 # 3. backup to bitwarden
 # store private key as "age-key-newadmin"
@@ -1234,24 +1438,30 @@ nix run . newhostname
 ### adding non-admin user on existing host
 
 ```bash
-# 1. define in config.nix
-# bob = { username = "bob"; isAdmin = false; ... }
+# 0. BOOTSTRAP (if nix not installed)
+make bootstrap && exec $SHELL
 
-# 2. generate age key
-age-keygen -o ~/.config/sops/age/keys.txt
-age-keygen -y ~/.config/sops/age/keys.txt  # note public key
+# 1. verify and setup
+make verify
+make setup-user  # note public key, send to admin
 
-# 3. backup to bitwarden
+# 2. backup to bitwarden
 # store private key as "age-key-bob"
+
+# 3. define in config.nix (admin does this)
+# bob = { username = "bob"; isAdmin = false; ... }
 
 # 4. admin updates .sops.yaml with user key
 
-# 5. create configurations/home/bob@hostname.nix
+# 5. admin creates configurations/home/bob@hostname.nix
 
 # 6. admin re-encrypts relevant secrets
 sops updatekeys secrets/shared.yaml
 
-# 7. activate (as bob, no sudo)
+# 7. verify access
+make check-secrets
+
+# 8. activate (as bob, no sudo)
 nix run . bob@hostname
 ```
 
@@ -1273,24 +1483,27 @@ sops rotate -i secrets/shared.yaml
 ### useful commands
 
 ```bash
-# verify configuration
-nix flake check
+# bootstrap and verification
+make bootstrap          # install nix and direnv
+make verify            # verify installation
+make setup-user        # generate age keys
+make check-secrets     # verify secrets access
 
-# list all configurations
-nix flake show
+# nix configuration
+nix flake check        # verify configuration
+nix flake show         # list all configurations
 
 # test build without activation
 nix build .#darwinConfigurations.hostname.system
 nix build .#homeConfigurations."user@hostname".activationPackage
 
-# validate all secrets
-just validate-secrets
+# secrets management
+just validate-secrets  # validate all secrets
+make check-secrets     # check your secrets access
 
-# show all users in config.nix
-nix eval .#flake.config --apply builtins.attrNames
-
-# check who can decrypt a secret
-sops -d --verbose secrets/shared.yaml 2>&1 | grep "age"
+# introspection
+nix eval .#flake.config --apply builtins.attrNames  # all users
+sops -d --verbose secrets/shared.yaml 2>&1 | grep "age"  # who can decrypt
 ```
 
 ---
