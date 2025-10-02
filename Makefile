@@ -72,7 +72,7 @@ install-nix: ## Install Nix using the Determinate Systems installer
 	@if command -v nix >/dev/null 2>&1; then \
 		echo "Nix is already installed."; \
 	else \
-		curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install; \
+		curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install --no-confirm; \
 	fi
 
 .PHONY: install-direnv
