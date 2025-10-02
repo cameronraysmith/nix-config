@@ -589,7 +589,397 @@ list-ci:
 - Enable workflow_dispatch for manual triggers
 - Provide commands for monitoring CI progress
 
-### 3. CI documentation
+### 3. monitoring and debugging workflow runs
+
+Comprehensive guidance for using `gh` CLI to inspect workflow execution logs and identify issues.
+
+#### triggering workflows
+
+```bash
+# trigger CI workflow on current branch
+gh workflow run ci.yaml --ref $(git branch --show-current)
+
+# trigger with specific inputs (if workflow supports workflow_dispatch inputs)
+gh workflow run ci.yaml --ref 00-multi -f job=build-matrix
+
+# trigger on specific branch
+gh workflow run ci.yaml --ref main
+```
+
+#### monitoring runs in real-time
+
+```bash
+# watch the most recent run until completion
+gh run watch
+
+# watch specific run by ID
+gh run watch 12345678
+
+# watch in compact mode (only show relevant/failed steps)
+gh run watch --compact
+
+# watch with custom refresh interval (default: 3 seconds)
+gh run watch --interval 5
+
+# exit with non-zero status if run fails (useful for scripts)
+gh run watch --exit-status
+
+# chain commands to run after completion
+gh run watch && notify-send "CI run completed!"
+```
+
+#### listing and finding runs
+
+```bash
+# list recent runs for ci.yaml workflow
+gh run list --workflow=ci.yaml --limit 10
+
+# list runs for current branch only
+gh run list --branch $(git branch --show-current) --limit 20
+
+# list runs by status
+gh run list --status=failure --limit 10
+gh run list --status=in_progress
+gh run list --status=completed
+
+# list runs by specific commit
+gh run list --commit abc123def --limit 5
+
+# list runs triggered by specific user
+gh run list --user crs58
+
+# list runs from specific event type
+gh run list --event workflow_dispatch
+gh run list --event push
+
+# combine filters for precise queries
+gh run list --workflow=ci.yaml --branch=00-multi --status=failure --limit 5
+```
+
+#### viewing run details and logs
+
+```bash
+# view summary of most recent run (interactive selection)
+gh run view
+
+# view specific run by ID
+gh run view 12345678
+
+# view with verbose output (show all job steps)
+gh run view 12345678 --verbose
+
+# view specific run attempt (for re-runs)
+gh run view 12345678 --attempt 2
+
+# open run in browser
+gh run view 12345678 --web
+
+# exit with non-zero if run failed (useful for validation)
+gh run view 12345678 --exit-status && echo "Run passed!"
+```
+
+#### inspecting job logs
+
+```bash
+# view specific job within a run
+gh run view 12345678 --job 987654321
+
+# view full log for entire run
+gh run view 12345678 --log
+
+# view full log for specific job
+gh run view 12345678 --job 987654321 --log
+
+# view only failed steps' logs (critical for debugging)
+gh run view 12345678 --log-failed
+
+# view failed logs for specific job
+gh run view 12345678 --job 987654321 --log-failed
+```
+
+#### json output for scripting
+
+```bash
+# get run details as JSON
+gh run view 12345678 --json status,conclusion,jobs,url
+
+# get all runs as JSON
+gh run list --workflow=ci.yaml --json databaseId,status,conclusion,headBranch --limit 5
+
+# filter JSON with jq
+gh run view 12345678 --json jobs --jq '.jobs[] | select(.conclusion == "failure") | {name, conclusion}'
+
+# list all failed jobs across recent runs
+gh run list --workflow=ci.yaml --status=failure --limit 10 --json databaseId,conclusion,url \
+  --jq '.[] | {id: .databaseId, status: .conclusion, url: .url}'
+
+# check if specific job passed in latest run
+gh run list --workflow=ci.yaml --limit 1 --json jobs \
+  --jq '.[] | .jobs[] | select(.name == "build-matrix") | .conclusion'
+```
+
+#### downloading artifacts
+
+```bash
+# download all artifacts from a run
+gh run download 12345678
+
+# download specific artifact by name
+gh run download 12345678 --name build-logs
+
+# download multiple specific artifacts
+gh run download 12345678 --name build-logs --name test-results
+
+# download artifacts matching pattern
+gh run download 12345678 --pattern "test-*"
+
+# download to specific directory
+gh run download 12345678 --dir ./ci-artifacts/
+```
+
+#### debugging CI failures workflow
+
+When a CI run fails, use this systematic approach:
+
+```bash
+# 1. list recent failed runs
+gh run list --workflow=ci.yaml --status=failure --limit 5
+
+# 2. view summary of failed run
+gh run view <run-id> --verbose
+
+# 3. identify which job(s) failed
+gh run view <run-id> --json jobs --jq '.jobs[] | select(.conclusion == "failure") | {name, conclusion, steps: [.steps[] | select(.conclusion == "failure") | .name]}'
+
+# 4. view logs for failed steps only
+gh run view <run-id> --log-failed
+
+# 5. view full log for specific failed job
+gh run view <run-id> --job <job-id> --log
+
+# 6. download artifacts if available (for deeper inspection)
+gh run download <run-id>
+
+# 7. check if issue persists across multiple runs
+gh run list --workflow=ci.yaml --status=failure --json databaseId,headBranch,conclusion --limit 10 \
+  --jq '.[] | {run: .databaseId, branch: .headBranch, status: .conclusion}'
+```
+
+#### practical examples for multi-user CI
+
+**example 1: debug build-matrix job failure**
+
+```bash
+# trigger run
+gh workflow run ci.yaml --ref 00-multi
+
+# watch it (will exit when done or failed)
+gh run watch --exit-status
+
+# if it failed, find the run ID
+RUN_ID=$(gh run list --workflow=ci.yaml --limit 1 --json databaseId --jq '.[0].databaseId')
+
+# view which matrix configuration failed
+gh run view $RUN_ID --json jobs \
+  --jq '.jobs[] | select(.name | contains("build-matrix")) | {name, conclusion, matrix: .strategy}'
+
+# view logs for failed build-matrix job
+gh run view $RUN_ID --log-failed | grep -A 20 "build-matrix"
+
+# get specific job ID for detailed inspection
+JOB_ID=$(gh run view $RUN_ID --json jobs \
+  --jq '.jobs[] | select(.name | contains("build-matrix") and .conclusion == "failure") | .databaseId' \
+  | head -1)
+
+# view full log for that specific job
+gh run view --job $JOB_ID --log
+```
+
+**example 2: validate all architecture phases passed**
+
+```bash
+# get latest run
+RUN_ID=$(gh run list --workflow=ci.yaml --limit 1 --json databaseId --jq '.[0].databaseId')
+
+# check all jobs succeeded
+gh run view $RUN_ID --json jobs --jq '.jobs[] | {name, conclusion}' | grep -v success && echo "Some jobs failed!" || echo "All jobs passed!"
+
+# verify specific phase jobs
+for job in "bootstrap-verification" "config-validation" "build-matrix" "autowiring-validation" "secrets-workflow" "justfile-activation" "integration-tests" "existing-ci-integration"; do
+  CONCLUSION=$(gh run view $RUN_ID --json jobs --jq ".jobs[] | select(.name == \"$job\") | .conclusion")
+  echo "$job: $CONCLUSION"
+done
+```
+
+**example 3: compare runs across branches**
+
+```bash
+# compare main vs 00-multi CI status
+echo "main branch:"
+gh run list --branch=main --workflow=ci.yaml --limit 1 --json status,conclusion,url
+
+echo "00-multi branch:"
+gh run list --branch=00-multi --workflow=ci.yaml --limit 1 --json status,conclusion,url
+
+# identify differences in job outcomes
+gh run list --branch=main --workflow=ci.yaml --limit 1 --json jobs \
+  --jq '.[] | .jobs[] | {name, conclusion}' > /tmp/main-jobs.json
+
+gh run list --branch=00-multi --workflow=ci.yaml --limit 1 --json jobs \
+  --jq '.[] | .jobs[] | {name, conclusion}' > /tmp/00-multi-jobs.json
+
+diff /tmp/main-jobs.json /tmp/00-multi-jobs.json
+```
+
+**example 4: track CI performance over time**
+
+```bash
+# get build times for recent runs
+gh run list --workflow=ci.yaml --limit 10 --json databaseId,createdAt,updatedAt,conclusion \
+  --jq '.[] | {run: .databaseId, duration: (.updatedAt | fromdateiso8601) - (.createdAt | fromdateiso8601), status: .conclusion}'
+
+# find slowest job in latest run
+RUN_ID=$(gh run list --workflow=ci.yaml --limit 1 --json databaseId --jq '.[0].databaseId')
+
+gh run view $RUN_ID --json jobs \
+  --jq '.jobs | sort_by(.completedAt - .startedAt) | reverse | .[] | {name, duration_seconds: (.completedAt | fromdateiso8601) - (.startedAt | fromdateiso8601)}'
+```
+
+**example 5: automated CI validation script**
+
+```bash
+#!/usr/bin/env bash
+# scripts/ci/validate-run.sh
+# Validate CI run completed successfully with all required jobs
+
+set -euo pipefail
+
+RUN_ID="${1:-$(gh run list --workflow=ci.yaml --limit 1 --json databaseId --jq '.[0].databaseId')}"
+
+echo "Validating CI run: $RUN_ID"
+
+# check overall status
+STATUS=$(gh run view "$RUN_ID" --json status --jq '.status')
+CONCLUSION=$(gh run view "$RUN_ID" --json conclusion --jq '.conclusion')
+
+echo "Status: $STATUS"
+echo "Conclusion: $CONCLUSION"
+
+if [[ "$CONCLUSION" != "success" ]]; then
+  echo "❌ Run failed or incomplete"
+
+  # show failed jobs
+  echo "Failed jobs:"
+  gh run view "$RUN_ID" --json jobs \
+    --jq '.jobs[] | select(.conclusion != "success") | {name, conclusion}'
+
+  # show failed logs
+  echo "Failed steps:"
+  gh run view "$RUN_ID" --log-failed
+
+  exit 1
+fi
+
+# verify all required jobs present and passed
+REQUIRED_JOBS=(
+  "bootstrap-verification"
+  "config-validation"
+  "build-matrix"
+  "autowiring-validation"
+  "secrets-workflow"
+  "justfile-activation"
+  "integration-tests"
+  "existing-ci-integration"
+)
+
+MISSING_JOBS=()
+FAILED_JOBS=()
+
+for job in "${REQUIRED_JOBS[@]}"; do
+  JOB_CONCLUSION=$(gh run view "$RUN_ID" --json jobs \
+    --jq ".jobs[] | select(.name == \"$job\") | .conclusion" || echo "missing")
+
+  if [[ "$JOB_CONCLUSION" == "missing" ]]; then
+    MISSING_JOBS+=("$job")
+  elif [[ "$JOB_CONCLUSION" != "success" ]]; then
+    FAILED_JOBS+=("$job")
+  fi
+done
+
+if [[ ${#MISSING_JOBS[@]} -gt 0 ]]; then
+  echo "❌ Missing required jobs: ${MISSING_JOBS[*]}"
+  exit 1
+fi
+
+if [[ ${#FAILED_JOBS[@]} -gt 0 ]]; then
+  echo "❌ Failed required jobs: ${FAILED_JOBS[*]}"
+  exit 1
+fi
+
+echo "✅ All required jobs passed successfully"
+
+# check performance requirement (< 15 min)
+CREATED=$(gh run view "$RUN_ID" --json createdAt --jq '.createdAt | fromdateiso8601')
+UPDATED=$(gh run view "$RUN_ID" --json updatedAt --jq '.updatedAt | fromdateiso8601')
+DURATION=$((UPDATED - CREATED))
+
+echo "Total duration: $((DURATION / 60)) minutes $((DURATION % 60)) seconds"
+
+if [[ $DURATION -gt 900 ]]; then  # 15 minutes
+  echo "⚠️  Warning: Run exceeded 15-minute target ($((DURATION / 60))m)"
+fi
+
+echo "✅ CI validation complete"
+```
+
+#### integration with justfile
+
+Add these enhanced recipes to the justfile:
+
+```just
+# trigger CI and wait for result
+test-ci-blocking workflow="ci.yaml":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    echo "Triggering workflow: {{workflow}} on branch: $(git branch --show-current)"
+    gh workflow run {{workflow}} --ref $(git branch --show-current)
+
+    # wait a moment for run to start
+    sleep 5
+
+    # get the latest run ID
+    RUN_ID=$(gh run list --workflow={{workflow}} --limit 1 --json databaseId --jq '.[0].databaseId')
+
+    echo "Watching run: $RUN_ID"
+    gh run watch "$RUN_ID" --exit-status
+
+# view latest CI run details
+ci-status workflow="ci.yaml":
+    @gh run list --workflow={{workflow}} --limit 1 --json status,conclusion,url
+
+# view latest CI run logs
+ci-logs workflow="ci.yaml":
+    @RUN_ID=$(gh run list --workflow={{workflow}} --limit 1 --json databaseId --jq '.[0].databaseId'); \
+    gh run view "$RUN_ID" --log
+
+# view only failed logs from latest run
+ci-logs-failed workflow="ci.yaml":
+    @RUN_ID=$(gh run list --workflow={{workflow}} --limit 1 --json databaseId --jq '.[0].databaseId'); \
+    gh run view "$RUN_ID" --log-failed
+
+# validate latest CI run comprehensively
+ci-validate workflow="ci.yaml":
+    @./scripts/ci/validate-run.sh $(gh run list --workflow={{workflow}} --limit 1 --json databaseId --jq '.[0].databaseId')
+
+# debug specific failed job
+ci-debug-job workflow="ci.yaml" job_name="build-matrix":
+    @RUN_ID=$(gh run list --workflow={{workflow}} --limit 1 --json databaseId --jq '.[0].databaseId'); \
+    JOB_ID=$(gh run view "$RUN_ID" --json jobs --jq ".jobs[] | select(.name == \"{{job_name}}\") | .databaseId"); \
+    gh run view --job "$JOB_ID" --log
+```
+
+### 4. CI documentation
 
 Create or update `docs/ci-testing.md` with:
 - Overview of CI structure and jobs
