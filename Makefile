@@ -81,7 +81,7 @@ install-direnv: ## Install direnv (requires nix to be installed first)
 	@if command -v direnv >/dev/null 2>&1; then \
 		echo "direnv is already installed."; \
 	else \
-		. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh && nix-env -iA nixpkgs.direnv; \
+		. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh && nix profile install nixpkgs#direnv; \
 	fi
 	@echo ""
 	@echo "See https://direnv.net/docs/hook.html if you would like to add direnv to your shell"
