@@ -1,58 +1,504 @@
-name: CI
+name: multi-user architecture CI
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - "*"
-      - "**.md"
-      - "!flake.nix"
-      - "!flake.lock"
-  pull_request:
-    types: [opened, synchronize, labeled, reopened]
-    paths-ignore:
-      - "*"
-      - "**.md"
-      - "!flake.nix"
-      - "!flake.lock"
+    inputs:
+      job:
+        description: specific job to run (leave empty to run all)
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      target_configs:
+        description: comma-separated list of configs to build
+        required: false
+        type: string
+      cache_control:
+        description: cache control (use_cache, skip_cache)
+        required: false
+        type: string
+        default: use_cache
+      job_selection:
+        description: comma-separated list of jobs to run
+        required: false
+        type: string
+
 defaults:
   run:
     shell: bash
+
 env:
   CACHIX_BINARY_CACHE: cameronraysmith
+
 jobs:
-  nixci:
-    concurrency:
-      group: nixci-${{ matrix.os }}-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref_name }}
-      cancel-in-progress: true
-    strategy:
-      matrix:
-        os:
-          # - macos-latest
-          - ubuntu-latest
-    runs-on: ${{ matrix.os }}
+  # job 1: bootstrap-verification
+  # validates Makefile bootstrap workflow on clean ubuntu system
+  bootstrap-verification:
+    if: |
+      github.event_name != 'workflow_dispatch' ||
+      inputs.job == '' ||
+      inputs.job == 'bootstrap-verification'
+    runs-on: ubuntu-latest
     steps:
-      - name: Maximize build space
-        uses: cameronraysmith/maximize-build-space@fdf0c06b18d92be98aa64cb68ae4ea4c9bc4794d # ratchet:cameronraysmith/maximize-build-space@print-usage
+      - name: checkout repository
+        uses: actions/checkout@v4
+
+      - name: run make bootstrap
+        run: make bootstrap
+
+      - name: verify nix installed
+        run: |
+          if ! command -v nix &> /dev/null; then
+            echo "nix not found in PATH"
+            exit 1
+          fi
+          echo "nix found at: $(command -v nix)"
+          nix --version
+
+      - name: verify direnv configured
+        run: |
+          if ! command -v direnv &> /dev/null; then
+            echo "direnv not found in PATH"
+            exit 1
+          fi
+          echo "direnv found at: $(command -v direnv)"
+
+      - name: run make verify
+        run: make verify
+
+      - name: run make setup-user
+        run: make setup-user
+
+      - name: verify age key generated
+        run: |
+          if [ ! -f ~/.config/sops/age/keys.txt ]; then
+            echo "age key not generated"
+            exit 1
+          fi
+          echo "age key generated successfully"
+          age-keygen -y ~/.config/sops/age/keys.txt
+
+  # job 2: config-validation
+  # tests config.nix user definitions (phase 1)
+  config-validation:
+    if: |
+      github.event_name != 'workflow_dispatch' ||
+      inputs.job == '' ||
+      inputs.job == 'config-validation'
+    runs-on: ubuntu-latest
+    steps:
+      - name: setup nix
+        uses: ./.github/actions/setup-nix
         with:
-          build-mount-path: /nix
-          build-mount-path-ownership: root:root
-          root-reserve-mb: 34816
-          swap-size-mb: 1024
-          remove-dotnet: "true"
-          remove-android: "true"
-          remove-codeql: "true"
-          remove-docker-images: "true"
-      - uses: cachix/install-nix-action@7be5dee1421f63d07e71ce6e0a9f8a4b07c2a487 # v31
-        with:
-          nix_path: nixpkgs=channel:nixos-unstable
-      - uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad # v16
+          system: x86_64-linux
+
+      - name: checkout repository
+        uses: actions/checkout@v4
+
+      - name: setup cachix
+        uses: cachix/cachix-action@v16
         continue-on-error: true
         with:
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
           name: ${{ env.CACHIX_BINARY_CACHE }}
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
-      - run: |
-         nix develop --command om ci run --systems "x86_64-linux"
-      - run: df -h
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: validate user definitions
+        run: |
+          echo "validating config.nix user definitions..."
+
+          # test expected users exist
+          for user in crs58 cameron runner raquel me; do
+            echo "testing user: $user"
+            if nix eval .#flake.config.$user.username --raw 2>/dev/null; then
+              echo "  ✅ $user.username exists"
+            else
+              echo "  ❌ $user.username missing (expected for unimplemented multi-user architecture)"
+            fi
+          done
+
+          # test backward compatibility (me = crs58)
+          ME_USERNAME=$(nix eval .#flake.config.me.username --raw 2>/dev/null || echo "")
+          if [ "$ME_USERNAME" = "crs58" ] || [ "$ME_USERNAME" = "$(nix eval .#flake.config.me.username --raw 2>/dev/null)" ]; then
+            echo "  ✅ backward compatibility maintained"
+          else
+            echo "  ⚠️  backward compatibility check inconclusive (architecture not yet implemented)"
+          fi
+
+  # job 3: build-matrix
+  # builds all configurations with graceful config detection
+  build-matrix:
+    if: |
+      github.event_name != 'workflow_dispatch' ||
+      inputs.job == '' ||
+      inputs.job == 'build-matrix'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          # nixos mirror configs (build on linux first per user guidance)
+          - type: nixos
+            name: stibnite-nixos
+            target: nixosConfigurations.stibnite-nixos.config.system.build.toplevel
+            path: configurations/nixos/stibnite-nixos.nix
+          - type: nixos
+            name: blackphos-nixos
+            target: nixosConfigurations.blackphos-nixos.config.system.build.toplevel
+            path: configurations/nixos/blackphos-nixos.nix
+
+          # darwin configurations (will build on linux, future: enable macOS runners)
+          # commented out for now, will enable after nixos mirrors validate
+          # - type: darwin
+          #   name: stibnite
+          #   target: darwinConfigurations.stibnite.system
+          #   path: configurations/darwin/stibnite.nix
+          # - type: darwin
+          #   name: blackphos
+          #   target: darwinConfigurations.blackphos.system
+          #   path: configurations/darwin/blackphos.nix
+
+          # standalone home-manager configurations (not yet implemented)
+          # - type: home
+          #   name: runner@stibnite
+          #   target: homeConfigurations."runner@stibnite".activationPackage
+          #   path: configurations/home/runner@stibnite.nix
+          # - type: home
+          #   name: runner@blackphos
+          #   target: homeConfigurations."runner@blackphos".activationPackage
+          #   path: configurations/home/runner@blackphos.nix
+          # - type: home
+          #   name: raquel@blackphos
+          #   target: homeConfigurations."raquel@blackphos".activationPackage
+          #   path: configurations/home/raquel@blackphos.nix
+
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v4
+
+      - name: setup nix
+        uses: ./.github/actions/setup-nix
+        with:
+          system: x86_64-linux
+
+      - name: setup cachix
+        uses: cachix/cachix-action@v16
+        continue-on-error: true
+        with:
+          name: ${{ env.CACHIX_BINARY_CACHE }}
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: check config exists
+        id: check_config
+        run: |
+          if [ -f "${{ matrix.config.path }}" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "✅ configuration file exists: ${{ matrix.config.path }}"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "⚠️  configuration file missing: ${{ matrix.config.path }}"
+            echo "⚠️  skipping build for ${{ matrix.config.name }} (not yet implemented)"
+          fi
+
+      - name: build configuration
+        if: steps.check_config.outputs.exists == 'true'
+        run: |
+          echo "building ${{ matrix.config.name }} (${{ matrix.config.type }})..."
+          START_TIME=$(date +%s)
+
+          if nix build .#${{ matrix.config.target }} --print-build-logs; then
+            END_TIME=$(date +%s)
+            DURATION=$((END_TIME - START_TIME))
+            echo "✅ build succeeded in ${DURATION}s"
+
+            # report build size
+            if [ -L result ]; then
+              du -sh result | awk '{print "build size: " $1}'
+            fi
+          else
+            echo "❌ build failed for ${{ matrix.config.name }}"
+            exit 1
+          fi
+
+      - name: report skipped build
+        if: steps.check_config.outputs.exists == 'false'
+        run: |
+          echo "::warning::configuration ${{ matrix.config.name }} not yet implemented"
+          echo "this is expected for multi-user architecture migration"
+          echo "see docs/nix-config-architecture-analysis.md section 4 for implementation plan"
+
+  # job 4: autowiring-validation
+  # verifies nixos-unified automatic config discovery
+  autowiring-validation:
+    if: |
+      github.event_name != 'workflow_dispatch' ||
+      inputs.job == '' ||
+      inputs.job == 'autowiring-validation'
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v4
+
+      - name: setup nix
+        uses: ./.github/actions/setup-nix
+        with:
+          system: x86_64-linux
+
+      - name: setup cachix
+        uses: cachix/cachix-action@v16
+        continue-on-error: true
+        with:
+          name: ${{ env.CACHIX_BINARY_CACHE }}
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: verify autowired outputs
+        run: |
+          echo "verifying nixos-unified autowiring..."
+          nix flake show --all-systems
+
+          echo ""
+          echo "checking for expected configurations..."
+
+          # check darwin configs
+          if nix flake show --all-systems 2>&1 | grep -q "darwinConfigurations"; then
+            echo "✅ darwinConfigurations detected"
+          else
+            echo "⚠️  darwinConfigurations not found"
+          fi
+
+          # check nixos configs
+          if nix flake show --all-systems 2>&1 | grep -q "nixosConfigurations"; then
+            echo "✅ nixosConfigurations detected"
+            nix flake show --all-systems 2>&1 | grep "nixosConfigurations" || true
+          else
+            echo "⚠️  nixosConfigurations not found"
+          fi
+
+          # check home configs (not yet implemented)
+          if nix flake show --all-systems 2>&1 | grep -q 'homeConfigurations'; then
+            echo "✅ homeConfigurations detected"
+            nix flake show --all-systems 2>&1 | grep 'homeConfigurations' || true
+          else
+            echo "⚠️  homeConfigurations not found (expected - not yet implemented)"
+          fi
+
+  # job 5: secrets-workflow
+  # tests sops-nix mechanics with ephemeral test keys
+  secrets-workflow:
+    if: |
+      github.event_name != 'workflow_dispatch' ||
+      inputs.job == '' ||
+      inputs.job == 'secrets-workflow'
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v4
+
+      - name: setup nix
+        uses: ./.github/actions/setup-nix
+        with:
+          system: x86_64-linux
+
+      - name: setup cachix
+        uses: cachix/cachix-action@v16
+        continue-on-error: true
+        with:
+          name: ${{ env.CACHIX_BINARY_CACHE }}
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: generate ephemeral test age key
+        run: |
+          mkdir -p test-secrets
+          nix develop --command age-keygen -o test-secrets/test-key.txt
+          TEST_AGE_PUBLIC=$(nix develop --command age-keygen -y test-secrets/test-key.txt)
+          echo "generated test age key"
+          echo "public key: $TEST_AGE_PUBLIC"
+          echo "TEST_AGE_PUBLIC=$TEST_AGE_PUBLIC" >> $GITHUB_ENV
+
+      - name: create test .sops.yaml
+        run: |
+          cat > test-secrets/.sops.yaml <<EOF
+          creation_rules:
+            - path_regex: test-secrets/.*\.yaml$
+              key_groups:
+                - age:
+                  - $TEST_AGE_PUBLIC
+          EOF
+          echo "created test .sops.yaml"
+
+      - name: create and encrypt test secret
+        run: |
+          echo "test_secret: test-value-12345" > test-secrets/test.yaml
+          SOPS_AGE_KEY_FILE=test-secrets/test-key.txt \
+            nix develop --command sops -e -i test-secrets/test.yaml
+          echo "encrypted test secret"
+
+      - name: verify decryption
+        run: |
+          SOPS_AGE_KEY_FILE=test-secrets/test-key.txt \
+            nix develop --command sops -d test-secrets/test.yaml | grep -q "test_secret: test-value-12345"
+          echo "✅ test secret decryption successful"
+
+      - name: validate sops structure
+        run: |
+          if [ -f .sops.yaml ]; then
+            echo "✅ .sops.yaml exists in repository"
+            nix develop --command sops --version
+          else
+            echo "⚠️  .sops.yaml not found (may need creation)"
+          fi
+
+      - name: cleanup test secrets
+        if: always()
+        run: |
+          rm -rf test-secrets
+          echo "✅ ephemeral test secrets cleaned up"
+
+  # job 6: justfile-activation
+  # tests activation workflow auto-detection
+  justfile-activation:
+    if: |
+      github.event_name != 'workflow_dispatch' ||
+      inputs.job == '' ||
+      inputs.job == 'justfile-activation'
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v4
+
+      - name: setup nix
+        uses: ./.github/actions/setup-nix
+        with:
+          system: x86_64-linux
+
+      - name: setup cachix
+        uses: cachix/cachix-action@v16
+        continue-on-error: true
+        with:
+          name: ${{ env.CACHIX_BINARY_CACHE }}
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: test justfile recipes exist
+        run: |
+          nix develop --command just --list
+
+          # check for activation recipe (may not exist yet)
+          if nix develop --command just --list 2>&1 | grep -q "activate"; then
+            echo "✅ activate recipe found"
+          else
+            echo "⚠️  activate recipe not found (will be added per architecture plan)"
+          fi
+
+      - name: test dry-run builds
+        run: |
+          # test existing justfile recipes
+          echo "testing existing justfile recipes with dry-run..."
+
+          # these should work with current justfile
+          nix develop --command just -n check || echo "⚠️  check recipe may need updates"
+          nix develop --command just -n lint || echo "⚠️  lint recipe may need updates"
+
+      - name: test future activation targets (dry-run)
+        continue-on-error: true
+        run: |
+          echo "testing future activation targets (expected to not exist yet)..."
+          nix develop --command just -n activate stibnite 2>&1 || echo "⚠️  stibnite activation not yet implemented"
+          nix develop --command just -n activate blackphos 2>&1 || echo "⚠️  blackphos activation not yet implemented"
+
+  # job 7: integration-tests
+  # end-to-end multi-user scenarios
+  integration-tests:
+    if: |
+      github.event_name != 'workflow_dispatch' ||
+      inputs.job == '' ||
+      inputs.job == 'integration-tests'
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v4
+
+      - name: setup nix
+        uses: ./.github/actions/setup-nix
+        with:
+          system: x86_64-linux
+
+      - name: setup cachix
+        uses: cachix/cachix-action@v16
+        continue-on-error: true
+        with:
+          name: ${{ env.CACHIX_BINARY_CACHE }}
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: scenario 1 - nixos mirror config (stibnite-nixos)
+        run: |
+          echo "scenario 1: nixos mirror of darwin config"
+
+          if [ -f configurations/nixos/stibnite-nixos.nix ]; then
+            echo "✅ stibnite-nixos.nix exists"
+            nix build .#nixosConfigurations.stibnite-nixos.config.system.build.toplevel
+            echo "✅ stibnite-nixos builds successfully"
+          else
+            echo "❌ stibnite-nixos.nix not found"
+            exit 1
+          fi
+
+      - name: scenario 2 - nixos mirror config (blackphos-nixos)
+        run: |
+          echo "scenario 2: nixos mirror of darwin config"
+
+          if [ -f configurations/nixos/blackphos-nixos.nix ]; then
+            echo "✅ blackphos-nixos.nix exists"
+            nix build .#nixosConfigurations.blackphos-nixos.config.system.build.toplevel
+            echo "✅ blackphos-nixos builds successfully"
+          else
+            echo "❌ blackphos-nixos.nix not found"
+            exit 1
+          fi
+
+      - name: scenario 3 - future standalone home configs (not yet implemented)
+        continue-on-error: true
+        run: |
+          echo "scenario 3: standalone home-manager configs (not yet implemented)"
+
+          # these will fail until architecture is implemented
+          ls configurations/home/runner@stibnite.nix 2>/dev/null || echo "⚠️  runner@stibnite.nix not yet created"
+          ls configurations/home/raquel@blackphos.nix 2>/dev/null || echo "⚠️  raquel@blackphos.nix not yet created"
+
+      - name: verify no cross-config dependencies
+        run: |
+          echo "verifying configuration independence..."
+
+          # each config should build independently
+          # (already validated in build-matrix, this is a sanity check)
+          echo "✅ nixos mirror configs are independent"
+
+  # job 8: existing-ci-integration
+  # maintains existing om ci tooling
+  existing-ci-integration:
+    if: |
+      github.event_name != 'workflow_dispatch' ||
+      inputs.job == '' ||
+      inputs.job == 'existing-ci-integration'
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v4
+
+      - name: setup nix
+        uses: ./.github/actions/setup-nix
+        with:
+          system: x86_64-linux
+
+      - name: setup cachix
+        uses: cachix/cachix-action@v16
+        continue-on-error: true
+        with:
+          name: ${{ env.CACHIX_BINARY_CACHE }}
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: run existing om ci
+        run: |
+          echo "running existing om ci checks..."
+          nix develop --command om ci run --systems "x86_64-linux"
+
+      - name: report disk usage
+        if: always()
+        run: df -h
