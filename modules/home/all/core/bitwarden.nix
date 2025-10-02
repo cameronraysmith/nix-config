@@ -7,13 +7,10 @@
 let
   isDarwin = pkgs.stdenv.isDarwin;
 
-  # On Darwin, bitwarden is installed via homebrew MAS
-  # On other platforms, check if bitwarden-desktop is in packages
-  bitwardenEnabled =
-    if isDarwin then
-      true # TODO: check if bitwarden is installed via homebrew MAS
-    else
-      builtins.elem pkgs.bitwarden-desktop config.home.packages;
+  # On Darwin, bitwarden is installed via homebrew MAS and enabled by default
+  # On NixOS, it's disabled by default to avoid circular dependencies
+  # (checking config.home.packages would create infinite recursion)
+  bitwardenEnabled = isDarwin;
 
   # Set socket paths for macOS MAS vs linux system
   # https://bitwarden.com/help/ssh-agent/#tab-macos-6VN1DmoAVFvm7ZWD95curS
