@@ -5,7 +5,7 @@ let
 
   # get mdFormat type for agents-md module
   lib' = {
-    self = import "${inputs.mirkolenz-nixos}/lib" lib;
+    self = import ../../lib lib;
   };
 in
 {
@@ -20,8 +20,8 @@ in
     inputs.nix-index-database.homeModules.nix-index
     inputs.sops-nix.homeManagerModules.sops
 
-    # mirkolenz agents-md module for config propagation
-    "${inputs.mirkolenz-nixos}/home/options/agents-md.nix"
+    # agents-md module for config propagation
+    ./modules/agents-md.nix
 
     # local modules
     ./all/core
