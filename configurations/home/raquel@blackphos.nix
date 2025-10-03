@@ -23,8 +23,8 @@ in
 
   # raquel-specific home-manager configuration
   programs.git = {
-    userName = user.fullname;
-    userEmail = user.email;
+    userName = lib.mkForce user.fullname;
+    userEmail = lib.mkForce user.email;
   };
 
   # raquel's preferred shell setup
