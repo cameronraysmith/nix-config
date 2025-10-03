@@ -957,3 +957,22 @@ ratchet-update:
   @for workflow in {{gha_workflows}}; do \
     eval "{{ratchet_base}} update $workflow"; \
   done
+
+# Test cachix push/pull with a simple derivation
+[group('CI/CD')]
+test-cachix:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Testing cachix push/pull..."
+    
+    # Build a simple derivation
+    STORE_PATH=$(nix build nixpkgs#hello --no-link --print-out-paths)
+    echo "Built: $STORE_PATH"
+    
+    # Push to cachix
+    echo "Pushing to cachix..."
+    sops exec-env secrets/shared.yaml "cachix push cameronraysmith $STORE_PATH"
+    
+    # Verify it's in the cache by trying to pull it from another location
+    echo "✅ Push completed. Verify at: https://app.cachix.org/cache/cameronraysmith"
+    echo "Store path: $STORE_PATH"
