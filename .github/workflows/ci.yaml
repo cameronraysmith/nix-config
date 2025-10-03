@@ -275,7 +275,8 @@ jobs:
           if nix flake show --all-systems 2>&1 | grep -q "darwinConfigurations"; then
             echo "✅ darwinConfigurations detected"
           else
-            echo "⚠️  darwinConfigurations not found"
+            echo "❌ darwinConfigurations not found"
+            exit 1
           fi
 
           # check nixos configs
@@ -283,16 +284,26 @@ jobs:
             echo "✅ nixosConfigurations detected"
             nix flake show --all-systems 2>&1 | grep "nixosConfigurations" || true
           else
-            echo "⚠️  nixosConfigurations not found"
+            echo "❌ nixosConfigurations not found"
+            exit 1
           fi
 
-          # check home configs (not yet implemented)
-          if nix flake show --all-systems 2>&1 | grep -q 'homeConfigurations'; then
-            echo "✅ homeConfigurations detected"
-            nix flake show --all-systems 2>&1 | grep 'homeConfigurations' || true
-          else
-            echo "⚠️  homeConfigurations not found (expected - not yet implemented)"
-          fi
+          # verify standalone home configurations exist
+          echo ""
+          echo "verifying standalone home configurations..."
+          HOME_CONFIGS=$(nix eval .#legacyPackages.x86_64-linux.homeConfigurations --apply 'x: builtins.attrNames x' --json)
+
+          # check for expected home configs
+          for config in "runner@stibnite" "runner@blackphos" "raquel@blackphos"; do
+            if echo "$HOME_CONFIGS" | grep -q "\"$config\""; then
+              echo "  ✅ $config exists"
+            else
+              echo "  ❌ $config missing"
+              exit 1
+            fi
+          done
+
+          echo "✅ all expected homeConfigurations found"
 
   # job 5: secrets-workflow
   # tests sops-nix mechanics with ephemeral test keys
