@@ -62,6 +62,7 @@ in
       cp = "cherry-pick";
       cpx = "cherry-pick -x";
       d = "diff";
+      div = "log --oneline --left-right @{u}...HEAD";
       f = "fetch";
       fo = "fetch origin";
       fu = "fetch upstream";
