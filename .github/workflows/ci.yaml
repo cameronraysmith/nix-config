@@ -339,18 +339,21 @@ jobs:
 
   # job 6: nix
   # builds all flake outputs via omnix (nixos configs, home configs, checks, devshells)
+  # matrix strategy: test all flake-supported systems on their native platforms
+  # pattern adapted from: https://github.com/Defelo/nixpkgs-review-gha
   nix:
     if: |
       github.event_name != 'workflow_dispatch' ||
       inputs.job == '' ||
       inputs.job == 'nix'
     strategy:
-      fail-fast: false
+      fail-fast: false  # allow each system to test independently
       matrix:
         system:
-          - x86_64-linux
-          - aarch64-linux
-          - aarch64-darwin
+          - x86_64-linux    # standard linux (ubuntu-latest)
+          - aarch64-linux   # arm linux (ubuntu-24.04-arm, may require org access)
+          - aarch64-darwin  # apple silicon macOS (macos-latest, 10x cost)
+    # dynamic runner selection based on system architecture
     runs-on: >-
       ${{ (matrix.system == 'x86_64-linux' && 'ubuntu-latest')
       || (matrix.system == 'aarch64-linux' && 'ubuntu-24.04-arm')
