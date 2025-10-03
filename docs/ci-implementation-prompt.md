@@ -4,6 +4,42 @@
 
 Implement comprehensive CI/CD testing for the multi-user nix-config architecture using the nothing-but-nix pattern from nixpkgs-review-gha. The CI pipeline should validate all six phases of the architecture migration plan and serve as an integration test suite to avoid repeated local rebuilds during development.
 
+## Omnix consolidation (2025-10-03)
+
+The CI pipeline was consolidated to use Omnix as the primary build tool, eliminating redundant manual build jobs.
+
+**Changes:**
+- Deleted `build-matrix` job (redundant - manually built 2 nixos configs)
+- Deleted `integration-tests` job (redundant - manually built nixos + home configs)
+- Renamed `existing-ci-integration` → `nix` (now primary build job)
+- Kept all validation jobs: `bootstrap-verification`, `config-validation`, `autowiring-validation`, `secrets-workflow`, `justfile-activation`
+
+**Rationale:**
+The `nix` job (running `om ci run --systems "x86_64-linux"`) already builds ALL configurations automatically:
+- nixosConfigurations.* (all nixos configs)
+- legacyPackages.x86_64-linux.homeConfigurations.* (all home configs)
+- checks.x86_64-linux.* (pre-commit, etc.)
+- devShells.x86_64-linux.* (dev environments)
+
+The deleted jobs duplicated this work, adding ~22 minutes of redundant CPU time.
+
+**Current architecture (6 jobs):**
+1. `bootstrap-verification` - tests Makefile onboarding workflow
+2. `config-validation` - validates multi-user architecture user definitions
+3. `autowiring-validation` - verifies nixos-unified auto-discovery
+4. `secrets-workflow` - tests sops-nix encryption/decryption
+5. `justfile-activation` - tests justfile recipes and activation targets
+6. `nix` - builds all flake outputs via Omnix (single source of truth)
+
+**Benefits:**
+- Automatic discovery of new configurations (no CI changes needed)
+- Single source of truth for builds (Omnix)
+- Reduced CI time: ~15min → ~13min wallclock
+- 50% reduction in total CPU time
+- Simplified maintenance (fewer jobs to update)
+
+See `docs/omnix-ci-analysis.md` for complete analysis and implementation details.
+
 ## context
 
 ### current CI limitations
