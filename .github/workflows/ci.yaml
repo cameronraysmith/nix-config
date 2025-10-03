@@ -266,23 +266,22 @@ jobs:
       - name: verify autowired outputs
         run: |
           echo "verifying nixos-unified autowiring..."
-          nix flake show --all-systems
-
-          echo ""
-          echo "checking for expected configurations..."
 
           # check darwin configs
-          if nix flake show --all-systems 2>&1 | grep -q "darwinConfigurations"; then
-            echo "✅ darwinConfigurations detected"
+          echo "checking darwinConfigurations..."
+          DARWIN_CONFIGS=$(nix eval .#darwinConfigurations --apply 'x: builtins.attrNames x' --json)
+          if [ -n "$DARWIN_CONFIGS" ] && [ "$DARWIN_CONFIGS" != "[]" ]; then
+            echo "✅ darwinConfigurations detected: $DARWIN_CONFIGS"
           else
             echo "❌ darwinConfigurations not found"
             exit 1
           fi
 
           # check nixos configs
-          if nix flake show --all-systems 2>&1 | grep -q "nixosConfigurations"; then
-            echo "✅ nixosConfigurations detected"
-            nix flake show --all-systems 2>&1 | grep "nixosConfigurations" || true
+          echo "checking nixosConfigurations..."
+          NIXOS_CONFIGS=$(nix eval .#nixosConfigurations --apply 'x: builtins.attrNames x' --json)
+          if [ -n "$NIXOS_CONFIGS" ] && [ "$NIXOS_CONFIGS" != "[]" ]; then
+            echo "✅ nixosConfigurations detected: $NIXOS_CONFIGS"
           else
             echo "❌ nixosConfigurations not found"
             exit 1
