@@ -24,8 +24,8 @@ in
   # runner-specific home-manager configuration
   programs.bash.enable = true; # runner uses bash
   programs.git = {
-    userName = user.fullname;
-    userEmail = user.email;
+    userName = lib.mkForce user.fullname;
+    userEmail = lib.mkForce user.email;
   };
 
   # runner might want minimal dev tools
