@@ -26,6 +26,15 @@
       - documentation authoring: ~/.claude/commands/preferences/documentation.md
       - change management: ~/.claude/commands/preferences/change-management.md
       - preferences: @~/.claude/commands/preferences/preferences.md
+
+      Always remember to fallback to practical features and architectural
+      patterns that emphasize type-safety and functional programming as is
+      feasible within a given programming language or framework's ecosystem
+      (possibly with the addition of relevant libraries, e.g. basedpyright,
+      beartype, and dbrattli/Expression in python) without losing sight of the
+      fact that, in the ideal case, the integration of all of our codebases,
+      regardless of language or framework, would correspond to a monad
+      transformer stack in the category of functional effects.
     '';
   };
 }
