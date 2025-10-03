@@ -18,6 +18,7 @@
 
       - general development practices: @~/.claude/commands/preferences/general-practices.md
       - architectural patterns: ~/.claude/commands/preferences/architectural-patterns.md
+      - data modeling: ~/.claude/commands/preferences/data-modeling.md
       - nix development: ~/.claude/commands/preferences/nix-development.md
       - python development: ~/.claude/commands/preferences/python-development.md
       - rust development: ~/.claude/commands/preferences/rust-development.md
