@@ -20,6 +20,10 @@ Python can approximate functional programming patterns through careful library s
 - Thread state explicitly through function parameters or state monads
 - Isolate IO and side effects to specific layers or boundaries
 
+For detailed patterns on Result types, error composition, and ADT modeling in Python:
+- **~/.claude/commands/preferences/railway-oriented-programming.md** - Result type implementation, bind/apply, async effects
+- **~/.claude/commands/preferences/algebraic-data-types.md** - Discriminated unions with Pydantic, newtypes, domain modeling
+
 ## Development practices
 
 - Add type annotations to all public functions and classes
