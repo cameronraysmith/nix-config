@@ -20,6 +20,7 @@
           nixd
           nix-output-monitor
           omnix
+          cachix
           ratchet
           teller # migrating to sops-nix
           sops
