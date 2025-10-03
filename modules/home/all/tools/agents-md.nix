@@ -22,6 +22,7 @@
       - rust development: ~/.claude/commands/preferences/rust-development.md
       - typescript/node.js development: ~/.claude/commands/preferences/typescript-nodejs-development.md
       - git version control: ~/.claude/commands/preferences/git-version-control.md
+      - git history cleanup: ~/.claude/commands/preferences/git-history-cleanup.md
       - documentation authoring: ~/.claude/commands/preferences/documentation.md
       - change management: ~/.claude/commands/preferences/change-management.md
       - preferences: ~/.claude/commands/preferences/preferences.md
