@@ -40,6 +40,33 @@ The deleted jobs duplicated this work, adding ~22 minutes of redundant CPU time.
 
 See `docs/omnix-ci-analysis.md` for complete analysis and implementation details.
 
+## Multi-system matrix implementation (2025-10-03)
+
+The `nix` job was enhanced with a matrix strategy to build flake outputs on all supported system-platform combinations.
+
+**Matrix configuration:**
+- x86_64-linux → ubuntu-latest
+- aarch64-linux → ubuntu-24.04-arm (GitHub ARM runner)
+- aarch64-darwin → macos-latest
+
+**Pattern adopted from nixpkgs-review-gha:**
+- Manual matrix definition (explicit control over systems)
+- Dynamic runner mapping using ternary operators
+- fail-fast: false for independent system testing
+- Per-system build via `om ci run --systems "${{ matrix.system }}"`
+
+**Rationale:**
+The flake supports multiple architectures (x86_64-linux, aarch64-linux, aarch64-darwin) and platform-specific configurations (nixosConfigurations for Linux, darwinConfigurations for macOS).
+Testing on native platforms catches architecture-specific issues and validates cross-platform compatibility.
+
+**Runner considerations:**
+- ubuntu-latest: Always available, standard GitHub-hosted runner
+- macos-latest: Available but 10x more expensive, necessary for darwin configs
+- ubuntu-24.04-arm: May require organization access to GitHub ARM runners
+
+If ubuntu-24.04-arm is unavailable, the aarch64-linux job will fail.
+Options: exclude from matrix, use QEMU emulation, or add self-hosted ARM runner.
+
 ## context
 
 ### current CI limitations
