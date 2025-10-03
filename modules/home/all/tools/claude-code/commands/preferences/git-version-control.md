@@ -27,3 +27,13 @@ Do not commit if:
 - For commits that revise previous ones, include the prefix "fixup! " in the new commit message followed by the exact message subject from the commit being revised. If there are multiple fixup commits do not repeat the "fixup! " multiple times. Once is enough.
 - Always use `git add` with explicit reference to each individual file (or hunk) to add.
 - Never `git add` (i.e. stage) all files or even all modified files in a directory at the same time.
+
+## Session commit summary
+
+At the end of a turn where commits were created, provide a git command that lists exactly the commits made during that session:
+
+- Use the commit hash from the gitStatus context (the first commit in "Recent commits") as the starting point
+- Get the current HEAD hash with `git rev-parse HEAD` to use as the ending point
+- Provide a range-based git log command: `git log --oneline <start-hash>..<end-hash>`
+- Use explicit hashes, not symbolic references like HEAD, to ensure the command remains valid even after subsequent commits
+- Example: If gitStatus shows HEAD was at `abc1234` and session ended at `def5678`, provide: `git log --oneline abc1234..def5678`
