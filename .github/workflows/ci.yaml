@@ -406,11 +406,12 @@ jobs:
         run: |
           nix develop --command just --list
 
-          # check for activation recipe (may not exist yet)
+          # verify activation recipe exists
           if nix develop --command just --list 2>&1 | grep -q "activate"; then
             echo "✅ activate recipe found"
           else
-            echo "⚠️  activate recipe not found (will be added per architecture plan)"
+            echo "❌ activate recipe not found"
+            exit 1
           fi
 
       - name: test dry-run builds
@@ -419,15 +420,25 @@ jobs:
           echo "testing existing justfile recipes with dry-run..."
 
           # these should work with current justfile
-          nix develop --command just -n check || echo "⚠️  check recipe may need updates"
-          nix develop --command just -n lint || echo "⚠️  lint recipe may need updates"
+          nix develop --command just -n check
+          nix develop --command just -n lint
 
-      - name: test future activation targets (dry-run)
-        continue-on-error: true
+      - name: test activation targets (dry-run)
         run: |
-          echo "testing future activation targets (expected to not exist yet)..."
-          nix develop --command just -n activate stibnite 2>&1 || echo "⚠️  stibnite activation not yet implemented"
-          nix develop --command just -n activate blackphos 2>&1 || echo "⚠️  blackphos activation not yet implemented"
+          echo "testing activation targets with dry-run..."
+
+          # test standalone home configuration activation
+          for config in "runner@stibnite" "runner@blackphos" "raquel@blackphos"; do
+            echo "  testing: just -n activate $config"
+            if nix develop --command just -n activate "$config"; then
+              echo "  ✅ $config activation dry-run succeeds"
+            else
+              echo "  ❌ $config activation dry-run failed"
+              exit 1
+            fi
+          done
+
+          echo "✅ all activation targets validated"
 
   # job 7: integration-tests
   # end-to-end multi-user scenarios
