@@ -21,6 +21,10 @@ TypeScript with Effect-TS provides excellent support for functional programming 
 - Use `Either<E, A>` and `Option<A>` for error handling instead of null/undefined/exceptions
 - Layer your application as effect transformers (similar to monad transformer stacks)
 
+For detailed patterns on Result types, error composition, and ADT modeling in TypeScript:
+- **~/.claude/commands/preferences/railway-oriented-programming.md** - Result type implementation, bind/apply, effect composition
+- **~/.claude/commands/preferences/algebraic-data-types.md** - Discriminated unions, branded types (newtypes), domain modeling
+
 ### TypeScript-specific practices
 - Enable strict mode in tsconfig.json (`strict: true`)
 - Leverage discriminated unions for state machines and domain modeling
