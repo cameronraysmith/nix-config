@@ -12,9 +12,9 @@
     settings.body = ''
       # Development Guidelines
 
-      If one of the following applies to a given task or topic,
-      consider reading the corresponding document to ensure adherence to our
-      guidelines and conventions:
+      If one of the following applies to a given task or topic, consider reading
+      the corresponding document to ensure adherence to our guidelines and
+      conventions:
 
       - general development practices: @~/.claude/commands/preferences/general-practices.md
       - architectural patterns: ~/.claude/commands/preferences/architectural-patterns.md
@@ -36,7 +36,9 @@
       beartype, and dbrattli/Expression in python) without losing sight of the
       fact that, in the ideal case, the integration of all of our codebases,
       regardless of language or framework, would correspond to a monad
-      transformer stack in the category of functional effects.
+      transformer stack in the category of functional effects. Succinctly, side
+      effects should be explicit in type signatures and isolated at boundaries
+      to preserve compositionality.
     '';
   };
 }
