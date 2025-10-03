@@ -104,25 +104,38 @@ jobs:
 
       - name: validate user definitions
         run: |
-          echo "validating config.nix user definitions..."
+          echo "validating config.nix user definitions through darwin configurations..."
 
-          # test expected users exist
-          for user in crs58 cameron runner raquel me; do
-            echo "testing user: $user"
-            if nix eval .#flake.config.$user.username --raw 2>/dev/null; then
-              echo "  ✅ $user.username exists"
-            else
-              echo "  ❌ $user.username missing (expected for unimplemented multi-user architecture)"
-            fi
-          done
-
-          # test backward compatibility (me = crs58)
-          ME_USERNAME=$(nix eval .#flake.config.me.username --raw 2>/dev/null || echo "")
-          if [ "$ME_USERNAME" = "crs58" ] || [ "$ME_USERNAME" = "$(nix eval .#flake.config.me.username --raw 2>/dev/null)" ]; then
-            echo "  ✅ backward compatibility maintained"
+          # verify crs58 is configured in stibnite
+          echo "testing stibnite users..."
+          STIBNITE_USERS=$(nix eval .#darwinConfigurations.stibnite.config.users.users --apply 'x: builtins.attrNames x' --json)
+          if echo "$STIBNITE_USERS" | grep -q '"crs58"'; then
+            echo "  ✅ crs58 user exists in stibnite"
           else
-            echo "  ⚠️  backward compatibility check inconclusive (architecture not yet implemented)"
+            echo "  ❌ crs58 user missing in stibnite"
+            exit 1
           fi
+
+          # verify cameron is configured in blackphos (once migrated) or crs58 for now
+          echo "testing blackphos users..."
+          BLACKPHOS_USERS=$(nix eval .#darwinConfigurations.blackphos.config.users.users --apply 'x: builtins.attrNames x' --json)
+          if echo "$BLACKPHOS_USERS" | grep -q '"crs58"'; then
+            echo "  ✅ crs58 user exists in blackphos (admin user configured)"
+          else
+            echo "  ❌ no admin user found in blackphos"
+            exit 1
+          fi
+
+          # verify primary user is set correctly in stibnite
+          STIBNITE_PRIMARY=$(nix eval .#darwinConfigurations.stibnite.config.system.primaryUser --raw)
+          if [ "$STIBNITE_PRIMARY" = "crs58" ]; then
+            echo "  ✅ stibnite primary user is crs58"
+          else
+            echo "  ❌ stibnite primary user is $STIBNITE_PRIMARY (expected crs58)"
+            exit 1
+          fi
+
+          echo "✅ user definitions validated successfully"
 
   # job 3: build-matrix
   # builds all configurations with graceful config detection
