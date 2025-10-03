@@ -377,7 +377,13 @@ jobs:
       - name: build all outputs via omnix
         run: |
           echo "building all flake outputs for ${{ matrix.system }} via om ci..."
-          nix develop --command om ci run --systems "${{ matrix.system }}"
+          if [ "${{ matrix.system }}" = "aarch64-darwin" ]; then
+            # for darwin: build and push to cachix (including build deps for cache efficiency)
+            nix develop --command om ci run --systems "${{ matrix.system }}" --include-all-dependencies | tee /dev/stderr | cachix push ${{ env.CACHIX_BINARY_CACHE }}
+          else
+            # for linux: just build (we're happy to rebuild these)
+            nix develop --command om ci run --systems "${{ matrix.system }}"
+          fi
           echo "✅ all outputs built successfully for ${{ matrix.system }}"
 
       - name: report disk usage
