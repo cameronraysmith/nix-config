@@ -19,6 +19,20 @@ help:
 
 ## nix
 
+# Activate the appropriate configuration for current user and host
+[group('nix')]
+activate target="":
+    @if [ -n "{{target}}" ]; then \
+        echo "activating {{target}} ..."; \
+        nix run . {{target}}; \
+    elif [ -f ./configurations/home/$USER@$HOSTNAME.nix ]; then \
+        echo "activating home configuration $USER@$HOSTNAME ..."; \
+        nix run . $USER@$HOSTNAME; \
+    else \
+        echo "activating system configuration $HOSTNAME ..."; \
+        nix run . $HOSTNAME; \
+    fi
+
 # Print nix flake inputs and outputs
 [group('nix')]
 io:
