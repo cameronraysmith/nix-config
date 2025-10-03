@@ -730,3 +730,88 @@ flake.om.ci.default = {
   root.aarch64-darwin.steps.custom = { };
 };
 ```
+
+## Cachix push integration verification (2025-10-03)
+
+After implementing the multi-system matrix, cachix push integration was added and verified for darwin builds to cache expensive aarch64-darwin outputs.
+
+### Implementation
+
+The darwin job was enhanced to push all build outputs and dependencies to cachix:
+
+```yaml
+- name: build all outputs via omnix
+  run: |
+    if [ "${{ matrix.system }}" = "aarch64-darwin" ]; then
+      # darwin: build and push to cachix (including build deps for cache efficiency)
+      nix develop --command om ci run --systems "${{ matrix.system }}" \
+        --include-all-dependencies | tee /dev/stderr | cachix push ${{ env.CACHIX_BINARY_CACHE }}
+    else
+      # linux: just build (rebuilds are cheap)
+      nix develop --command om ci run --systems "${{ matrix.system }}"
+    fi
+```
+
+**Key decisions:**
+- Push only for darwin builds (linux rebuilds are cheap and fast)
+- Use `--include-all-dependencies` to cache build-time dependencies for efficiency
+- Use `tee /dev/stderr` to show store paths being pushed while piping to cachix
+
+### Verification results
+
+**CI run:** [18233551532](https://github.com/cameronraysmith/nix-config/actions/runs/18233551532)
+
+**Darwin job timing:**
+- Started: 2025-10-03T20:53:54Z
+- Completed: 2025-10-03T21:35:45Z
+- Duration: 41 minutes 51 seconds
+- Build step: 40 minutes 5 seconds
+
+**Cachix push evidence:**
+```
+Pushing /nix/store/zpc59z7655i20caxly4j2nr4q2i5m1v0-pub-petitparser-7.0.1.drv (2.05 KiB)
+Pushing /nix/store/zpkq18fs61353sz8vi72p8p06r59nx70-thumbpdf-3.17.drv (2.96 KiB)
+[... hundreds of store paths ...]
+Pushing /nix/store/zzigfbisy7jv1hr9d8nli8df24l1rph7-completion.zsh (2.85 KiB)
+
+All done.
+✅ all outputs built successfully for aarch64-darwin
+```
+
+**Local verification:**
+```bash
+$ just test-cachix
+Testing cachix push/pull...
+Built: /nix/store/ci364cgbwbpww272shfz5mj3y019r9fd-hello-2.12.2
+Pushing to cachix...
+✅ Push completed. Verify at: https://app.cachix.org/cache/cameronraysmith
+```
+
+### Success criteria met
+
+- ✅ CI run completed without errors
+- ✅ Darwin job showed cachix push activity in logs
+- ✅ Hundreds of store paths (.drv files) successfully pushed
+- ✅ No authentication or permission errors
+- ✅ "All done." confirmation message from cachix
+- ✅ Local test recipe (`just test-cachix`) works correctly
+
+### Impact
+
+**Build time:** Darwin builds take ~42 minutes vs ~5-7 minutes for linux builds, justifying the caching strategy.
+
+**Cache efficiency:** Using `--include-all-dependencies` ensures build-time dependencies are cached, reducing cache misses for subsequent builds.
+
+**Cost optimization:** By caching darwin builds, subsequent CI runs can pull from cache instead of rebuilding expensive derivations on costly macOS runners (~10x cost of linux).
+
+### Related changes
+
+**DevShell enhancement:**
+- Added cachix to devShell packages (modules/flake-parts/devshell.nix:23)
+- Enables local testing of cachix push functionality
+- Cachix CLI available for manual cache operations
+
+**Test recipe:**
+- Added `just test-cachix` for local verification
+- Tests push authentication and basic push/pull workflow
+- Provides URL for manual cache inspection
