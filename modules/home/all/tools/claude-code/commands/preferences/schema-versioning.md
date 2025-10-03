@@ -298,6 +298,20 @@ Use these types for cross-database compatibility:
 - JSONB (works identically in modern DuckDB)
 - ARRAY types (works with slight syntax differences)
 
+### Type-driven schema design
+
+For patterns on modeling domain types in schemas and generated code:
+
+- **~/.claude/commands/preferences/algebraic-data-types.md** - ENUMs (sum types), DOMAIN types (newtypes), making illegal states unrepresentable, cross-language ADT patterns
+- **~/.claude/commands/preferences/railway-oriented-programming.md** - Result types in generated code, effect signatures for database operations
+
+Apply these patterns to:
+- Model order status as ENUM instead of VARCHAR
+- Use DOMAIN types for validated fields (email_address, positive_int)
+- Generate discriminated unions from ENUMs (Python Union, TypeScript discriminated union, Go sealed interface)
+- Generate Result-returning query functions instead of exception-throwing
+- Enforce schema constraints so invalid states cannot exist
+
 ## Cross-database compatibility
 
 DuckDB's SQL dialect closely follows PostgreSQL conventions.
@@ -366,6 +380,8 @@ def test_migration_compatibility():
 
 The same PostgreSQL schema generates type-safe code across languages.
 Each language uses its native type system and validation libraries.
+
+For detailed patterns on sum types, newtypes, and Result types in generated code, see ~/.claude/commands/preferences/algebraic-data-types.md and ~/.claude/commands/preferences/railway-oriented-programming.md.
 
 ### Python (Pydantic)
 
@@ -560,6 +576,18 @@ This workflow aligns with principles from other preference files:
 - Type safety through code generation
 - Schema evolution as transactional changes
 - Immutability of migration files
+
+**From algebraic-data-types.md:**
+- ENUMs for sum types (order_status, user_role)
+- DOMAIN types for newtypes (email_address, positive_int)
+- Making illegal states unrepresentable
+- Cross-language discriminated unions
+
+**From railway-oriented-programming.md:**
+- Result types in generated query functions
+- Effect signatures for async database operations
+- bind/apply for composing database operations
+- Two-track model for error propagation
 
 **From git-version-control.md:**
 - Migrations are versioned in git
