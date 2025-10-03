@@ -59,6 +59,21 @@ Validate data shape and constraints at system boundaries.
 - Log validation failures for debugging and monitoring
 - Consider partial validation for streaming scenarios (LLM outputs, etc.)
 
+### Type-driven design with ADTs
+
+For comprehensive guidance on modeling domain types and error handling, see:
+
+- **~/.claude/commands/preferences/algebraic-data-types.md** - Sum types (discriminated unions), product types, newtype pattern, making illegal states unrepresentable
+- **~/.claude/commands/preferences/railway-oriented-programming.md** - Result types, bind/apply composition, effect signatures, two-track model
+
+Key principles from ADT design:
+- Use sum types (ENUMs, discriminated unions) to model "OR" relationships
+- Use product types (records, tables) to model "AND" relationships
+- Wrap primitives in newtypes to prevent semantic confusion (UserId vs OrderId)
+- Design schemas so illegal states cannot be represented
+- Use Result<T, E> for operations that can fail
+- Distinguish bind (sequential, short-circuit) from apply (parallel, collect errors)
+
 ## Incremental processing patterns
 
 ### Time-partitioned models
@@ -206,3 +221,5 @@ When modeling data, prioritize:
 8. **Separation of concerns** - logical models separate from physical storage
 
 Remember that in the ideal case, data pipelines should behave as a monad transformer stack where side effects are explicit in signatures and isolated at boundaries to preserve compositionality.
+
+For concrete implementation patterns see ~/.claude/commands/preferences/railway-oriented-programming.md (Result types, bind/apply, effect signatures) and ~/.claude/commands/preferences/algebraic-data-types.md (domain modeling with sum/product types).
