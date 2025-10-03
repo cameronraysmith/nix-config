@@ -22,15 +22,17 @@ help:
 # Activate the appropriate configuration for current user and host
 [group('nix')]
 activate target="":
-    @if [ -n "{{target}}" ]; then \
-        echo "activating {{target}} ..."; \
-        nix run . {{target}}; \
-    elif [ -f ./configurations/home/$USER@$HOSTNAME.nix ]; then \
-        echo "activating home configuration $USER@$HOSTNAME ..."; \
-        nix run . $USER@$HOSTNAME; \
-    else \
-        echo "activating system configuration $HOSTNAME ..."; \
-        nix run . $HOSTNAME; \
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -n "{{target}}" ]; then
+        echo "activating {{target}} ..."
+        nix run . {{target}}
+    elif [ -f ./configurations/home/$USER@$(hostname).nix ]; then
+        echo "activating home configuration $USER@$(hostname) ..."
+        nix run . $USER@$(hostname)
+    else
+        echo "activating system configuration $(hostname) ..."
+        nix run . $(hostname)
     fi
 
 # Print nix flake inputs and outputs
