@@ -1,5 +1,23 @@
 # Rust Development
 
+## Architectural patterns alignment
+
+See @~/.claude/commands/preferences/architectural-patterns.md for overarching principles.
+
+Rust excels at type-safety and zero-cost abstractions, making it ideal for implementing the base IO/Result layer in multi-language monad transformer stacks.
+
+### Recommended libraries for functional programming
+- **Error handling**: Use built-in `Option<T>` and `Result<T, E>` types for composable error handling
+- **Monadic error composition**: `anyhow` for application errors, `thiserror` for library errors
+- **Effect composition**: `tokio` for async effects, `rayon` for parallel computation
+- **Functional utilities**: `itertools` for extended iterator combinators, `either` crate for Either type
+- **Type-level programming**: Use traits and generics to encode invariants at compile time
+
+### Role in multi-language architectures
+- Often serves as the base `IO`/`Result` layer in multi-language monad transformer stacks
+- Provides memory-safe, high-performance foundation for effect composition
+- Use `Result<T, E>` consistently to maintain composability with higher-level language layers
+
 ## Type Safety and Ownership
 - Leverage Rust's type system to encode invariants at compile time
 - Use `Option<T>` and `Result<T, E>` instead of null values or exceptions
