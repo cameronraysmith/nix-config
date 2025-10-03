@@ -1,8 +1,9 @@
 { flake, pkgs, ... }:
 
 let
-  inherit (flake) inputs;
+  inherit (flake) config inputs;
   inherit (inputs) self;
+  adminUser = config.crs58; # explicit admin user for blackphos (will change to config.cameron later)
 in
 {
   imports = [
@@ -12,7 +13,7 @@ in
   nixpkgs.hostPlatform = "aarch64-darwin";
   nixpkgs.config.allowUnfree = true;
 
-  system.primaryUser = flake.config.me.username;
+  system.primaryUser = adminUser.username;
 
   custom.homebrew = {
     enable = true;
