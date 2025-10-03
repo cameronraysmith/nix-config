@@ -344,7 +344,17 @@ jobs:
       github.event_name != 'workflow_dispatch' ||
       inputs.job == '' ||
       inputs.job == 'nix'
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        system:
+          - x86_64-linux
+          - aarch64-linux
+          - aarch64-darwin
+    runs-on: >-
+      ${{ (matrix.system == 'x86_64-linux' && 'ubuntu-latest')
+      || (matrix.system == 'aarch64-linux' && 'ubuntu-24.04-arm')
+      || (matrix.system == 'aarch64-darwin' && 'macos-latest') }}
     steps:
       - name: checkout repository
         uses: actions/checkout@v4
@@ -352,7 +362,7 @@ jobs:
       - name: setup nix
         uses: ./.github/actions/setup-nix
         with:
-          system: x86_64-linux
+          system: ${{ matrix.system }}
 
       - name: setup cachix
         uses: cachix/cachix-action@v16
@@ -363,9 +373,9 @@ jobs:
 
       - name: build all outputs via omnix
         run: |
-          echo "building all flake outputs via om ci..."
-          nix develop --command om ci run --systems "x86_64-linux"
-          echo "✅ all outputs built successfully"
+          echo "building all flake outputs for ${{ matrix.system }} via om ci..."
+          nix develop --command om ci run --systems "${{ matrix.system }}"
+          echo "✅ all outputs built successfully for ${{ matrix.system }}"
 
       - name: report disk usage
         if: always()
