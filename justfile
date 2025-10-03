@@ -37,7 +37,7 @@ activate target="":
 [group('nix')]
 io:
   nix flake metadata
-  nix flake show
+  nix flake show --legacy --all-systems
   om show .
 
 # Lint nix files
@@ -64,7 +64,7 @@ build profile: lint check
 [group('nix')]
 check:
   nix flake check
-  
+
 # Run nix flake to execute `nix run .#activate` for the current host.
 [group('nix')]
 switch:
@@ -77,12 +77,12 @@ switch-home:
 
 # https://discourse.nixos.org/t/sudo-run-current-system-sw-bin-sudo-must-be-owned-by-uid-0-and-have-the-setuid-bit-set-and-cannot-chdir-var-cron-bailing-out-var-cron-permission-denied/20463
 # sudo: /run/current-system/sw/bin/sudo must be owned by uid 0 and have the setuid bit set
-# Run nix flake with explicit use of the sudo in `/run/wrappers` 
+# Run nix flake with explicit use of the sudo in `/run/wrappers`
 [group('nix')]
 switch-wrapper:
   /run/wrappers/bin/sudo nix run
 
-# Shell with bootstrap dependencies 
+# Shell with bootstrap dependencies
 [group('nix')]
 bootstrap-shell:
   nix \
@@ -306,29 +306,29 @@ get-kubeconfig:
 hash-encrypt source_file user="crs58":
   #!/usr/bin/env bash
   set -euo pipefail
-  
+
   # Generate content-based hash for filename
   HASH=$(nix hash file --type sha256 --base64 "{{source_file}}" | cut -d'-' -f2 | head -c 32)
-  
+
   # Extract base filename without extension
   BASE_NAME=$(basename "{{source_file}}" .yaml)
   BASE_NAME=$(basename "$BASE_NAME" .yml)
-  
+
   # Create target path
   TARGET_DIR="secrets/users/{{user}}"
   TARGET_FILE="${TARGET_DIR}/${HASH}-${BASE_NAME}.yaml"
-  
+
   # Ensure target directory exists
   mkdir -p "$TARGET_DIR"
-  
+
   # Copy file with hash-based name
   cp "{{source_file}}" "$TARGET_FILE"
   echo "Copied {{source_file}} → $TARGET_FILE"
-  
+
   # Encrypt in place with sops
   sops encrypt --in-place "$TARGET_FILE"
   echo "Encrypted $TARGET_FILE with sops"
-  
+
   # Display verification info
   echo "Hash: $HASH"
   echo "Final path: $TARGET_FILE"
@@ -338,31 +338,31 @@ hash-encrypt source_file user="crs58":
 verify-hash original_file secret_file:
   #!/usr/bin/env bash
   set -euo pipefail
-  
+
   # Extract hash from secret filename
   SECRET_BASENAME=$(basename "{{secret_file}}")
   EXPECTED_HASH=$(echo "$SECRET_BASENAME" | cut -d'-' -f1)
-  
+
   # Generate hash of original file
   ACTUAL_HASH=$(nix hash file --type sha256 --base64 "{{original_file}}" | cut -d'-' -f2 | head -c 32)
-  
+
   # Create temporary file for decrypted content
   TEMP_FILE=$(mktemp)
   trap "rm -f $TEMP_FILE" EXIT
-  
+
   # Decrypt secret file to temp location
   sops decrypt "{{secret_file}}" > "$TEMP_FILE"
-  
+
   # Generate hash of decrypted content
   DECRYPTED_HASH=$(nix hash file --type sha256 --base64 "$TEMP_FILE" | cut -d'-' -f2 | head -c 32)
-  
+
   echo "Original file: {{original_file}}"
   echo "Secret file: {{secret_file}}"
   echo "Expected hash (from filename): $EXPECTED_HASH"
   echo "Actual hash (from original): $ACTUAL_HASH"
   echo "Decrypted hash: $DECRYPTED_HASH"
   echo
-  
+
   # Verify original matches filename hash
   if [ "$ACTUAL_HASH" = "$EXPECTED_HASH" ]; then
     echo "Original file hash matches secret filename hash"
@@ -370,7 +370,7 @@ verify-hash original_file secret_file:
     echo "Original file hash does NOT match secret filename hash"
     exit 1
   fi
-  
+
   # Verify decrypted content matches original
   if [ "$DECRYPTED_HASH" = "$ACTUAL_HASH" ]; then
     echo "Decrypted content matches original file"
@@ -378,10 +378,10 @@ verify-hash original_file secret_file:
     echo "Decrypted content does NOT match original file"
     exit 1
   fi
-  
+
   echo "All verification checks passed!"
 
-# Edit a sops encrypted file 
+# Edit a sops encrypted file
 [group('secrets')]
 edit-secret file:
   @sops {{ file }}
@@ -391,7 +391,7 @@ edit-secret file:
 new-secret file:
   @sops {{ file }}
 
-# Show specific secret value from shared secrets  
+# Show specific secret value from shared secrets
 [group('secrets')]
 get-shared-secret key:
   @sops -d --extract '["{{ key }}"]' secrets/shared.yaml
@@ -446,6 +446,446 @@ ci-logs workflow="ci.yaml":
 ci-logs-failed workflow="ci.yaml":
     @RUN_ID=$(gh run list --workflow={{workflow}} --limit 1 --json databaseId --jq '.[0].databaseId'); \
     gh run view "$RUN_ID" --log-failed
+
+# List categorized flake outputs using nix eval
+[group('CI/CD')]
+ci-show-outputs system="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    echo "╔═══════════════════════════════════════════════════════════════╗"
+    echo "║                      Flake outputs                            ║"
+    echo "╚═══════════════════════════════════════════════════════════════╝"
+    echo ""
+
+    # Auto-detect system if not specified
+    if [ -z "{{system}}" ]; then
+        SYSTEM=$(nix eval --impure --raw --expr 'builtins.currentSystem')
+    else
+        SYSTEM="{{system}}"
+    fi
+
+    echo "🔍 nix eval"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    PACKAGES=$(nix eval ".#packages.$SYSTEM" --apply 'x: builtins.attrNames x' --json 2>/dev/null | jq -r '.[]' || echo "none")
+    CHECKS=$(nix eval ".#checks.$SYSTEM" --apply 'x: builtins.attrNames x' --json 2>/dev/null | jq -r '.[]' || echo "none")
+    DEVSHELLS=$(nix eval ".#devShells.$SYSTEM" --apply 'x: builtins.attrNames x' --json 2>/dev/null | jq -r '.[]' || echo "none")
+    NIXOS_CONFIGS=$(nix eval ".#nixosConfigurations" --apply 'x: builtins.attrNames x' --json 2>/dev/null | jq -r '.[]' || echo "none")
+    DARWIN_CONFIGS=$(nix eval ".#darwinConfigurations" --apply 'x: builtins.attrNames x' --json 2>/dev/null | jq -r '.[]' || echo "none")
+    HOME_CONFIGS=$(nix eval ".#legacyPackages.$SYSTEM.homeConfigurations" --apply 'x: builtins.attrNames x' --json 2>/dev/null | jq -r '.[]' || echo "none")
+
+    echo "📦 Packages ($SYSTEM):"
+    if [ "$PACKAGES" = "none" ]; then
+        echo "  (none found)"
+    else
+        echo "$PACKAGES" | sed 's/^/  - packages.'"$SYSTEM"'./'
+    fi
+    echo ""
+
+    echo "✅ Checks ($SYSTEM):"
+    if [ "$CHECKS" = "none" ]; then
+        echo "  (none found)"
+    else
+        echo "$CHECKS" | sed 's/^/  - checks.'"$SYSTEM"'./'
+    fi
+    echo ""
+
+    echo "🐚 DevShells ($SYSTEM):"
+    if [ "$DEVSHELLS" = "none" ]; then
+        echo "  (none found)"
+    else
+        echo "$DEVSHELLS" | sed 's/^/  - devShells.'"$SYSTEM"'./'
+    fi
+    echo ""
+
+    echo "🐧 NixOS Configurations:"
+    if [ "$NIXOS_CONFIGS" = "none" ]; then
+        echo "  (none found)"
+    else
+        echo "$NIXOS_CONFIGS" | while read -r config; do
+            CONFIG_SYSTEM=$(nix eval ".#nixosConfigurations.$config.config.nixpkgs.system" --raw 2>/dev/null || echo "unknown")
+            echo "  - nixosConfigurations.$config (system: $CONFIG_SYSTEM)"
+        done
+    fi
+    echo ""
+
+    echo "🍎 Darwin Configurations:"
+    if [ "$DARWIN_CONFIGS" = "none" ]; then
+        echo "  (none found)"
+    else
+        echo "$DARWIN_CONFIGS" | while read -r config; do
+            CONFIG_SYSTEM=$(nix eval ".#darwinConfigurations.$config.pkgs.stdenv.hostPlatform.system" --raw 2>/dev/null || echo "unknown")
+            echo "  - darwinConfigurations.$config (system: $CONFIG_SYSTEM)"
+        done
+    fi
+    echo ""
+
+    echo "🏠 Home Configurations ($SYSTEM):"
+    if [ "$HOME_CONFIGS" = "none" ]; then
+        echo "  (none found)"
+    else
+        echo "$HOME_CONFIGS" | sed 's/^/  - legacyPackages.'"$SYSTEM"'.homeConfigurations./'
+    fi
+    echo ""
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "Note: These outputs will be built by 'just ci-build-local'"
+    echo ""
+
+# Build all flake outputs locally with nom (inefficient manual version of om ci for debugging builds)
+[group('CI/CD')]
+ci-build-local system="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # Auto-detect system if not specified
+    if [ -z "{{system}}" ]; then
+        TARGET_SYSTEM=$(nix eval --impure --raw --expr 'builtins.currentSystem')
+    else
+        TARGET_SYSTEM="{{system}}"
+    fi
+
+    echo "╔═══════════════════════════════════════════════════════════════╗"
+    echo "║          Building All Flake Outputs (nom mode)                ║"
+    echo "║                                                               ║"
+    echo "║  This mimics 'om ci run' but uses direct nix commands         ║"
+    echo "║  with nom for interpretable build status monitoring.          ║"
+    echo "╚═══════════════════════════════════════════════════════════════╝"
+    echo ""
+    echo "🎯 Target system: $TARGET_SYSTEM"
+    echo "📍 Flake: $(pwd)"
+    echo ""
+
+    # Check for nom
+    if ! command -v nom &> /dev/null; then
+        echo "❌ Error: 'nom' not found in PATH"
+        echo "   Install with: nix profile install nixpkgs#nix-output-monitor"
+        exit 1
+    fi
+
+    # Initialize tracking
+    BUILD_LOG=$(mktemp)
+    FAILED_LOG=$(mktemp)
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "📋 Phase 1: Discovery"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    # Discover outputs
+    echo "🔍 Discovering flake outputs for $TARGET_SYSTEM..."
+
+    PACKAGES=$(nix eval ".#packages.$TARGET_SYSTEM" --apply 'x: builtins.attrNames x' --json 2>/dev/null | jq -r '.[]' || echo "")
+    CHECKS=$(nix eval ".#checks.$TARGET_SYSTEM" --apply 'x: builtins.attrNames x' --json 2>/dev/null | jq -r '.[]' || echo "")
+    DEVSHELLS=$(nix eval ".#devShells.$TARGET_SYSTEM" --apply 'x: builtins.attrNames x' --json 2>/dev/null | jq -r '.[]' || echo "")
+    NIXOS_CONFIGS=$(nix eval ".#nixosConfigurations" --apply 'x: builtins.attrNames x' --json 2>/dev/null | jq -r '.[]' || echo "")
+    DARWIN_CONFIGS=$(nix eval ".#darwinConfigurations" --apply 'x: builtins.attrNames x' --json 2>/dev/null | jq -r '.[]' || echo "")
+    HOME_CONFIGS=$(nix eval ".#legacyPackages.$TARGET_SYSTEM.homeConfigurations" --apply 'x: builtins.attrNames x' --json 2>/dev/null | jq -r '.[]' || echo "")
+
+    PKG_COUNT=$(echo "$PACKAGES" | grep -c . || echo "0")
+    CHECK_COUNT=$(echo "$CHECKS" | grep -c . || echo "0")
+    DEVSHELL_COUNT=$(echo "$DEVSHELLS" | grep -c . || echo "0")
+    NIXOS_COUNT=$(echo "$NIXOS_CONFIGS" | grep -c . || echo "0")
+    DARWIN_COUNT=$(echo "$DARWIN_CONFIGS" | grep -c . || echo "0")
+    HOME_COUNT=$(echo "$HOME_CONFIGS" | grep -c . || echo "0")
+
+    TOTAL_COUNT=$((PKG_COUNT + CHECK_COUNT + DEVSHELL_COUNT + NIXOS_COUNT + DARWIN_COUNT + HOME_COUNT))
+
+    echo ""
+    echo "📊 Discovery summary:"
+    echo "   • Packages:           $PKG_COUNT"
+    echo "   • Checks:             $CHECK_COUNT"
+    echo "   • DevShells:          $DEVSHELL_COUNT"
+    echo "   • NixOS configs:      $NIXOS_COUNT"
+    echo "   • Darwin configs:     $DARWIN_COUNT"
+    echo "   • Home configs:       $HOME_COUNT"
+    echo "   ─────────────────────────"
+    echo "   • Total outputs:      $TOTAL_COUNT"
+    echo ""
+
+    if [ "$TOTAL_COUNT" -eq 0 ]; then
+        echo "⚠️  No outputs found to build"
+        exit 0
+    fi
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "🔨 Phase 2: Building"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    # Build packages
+    if [ "$PKG_COUNT" -gt 0 ]; then
+        echo "📦 Building packages ($PKG_COUNT)..."
+        echo "$PACKAGES" | while read -r pkg; do
+            if [ -n "$pkg" ]; then
+                echo ""
+                echo "  → packages.$TARGET_SYSTEM.$pkg"
+                if nom build ".#packages.$TARGET_SYSTEM.$pkg" --print-build-logs 2>&1; then
+                    echo "    ✅ Success"
+                    echo "packages.$TARGET_SYSTEM.$pkg" >> "$BUILD_LOG"
+                else
+                    echo "    ❌ Failed"
+                    echo "packages.$TARGET_SYSTEM.$pkg" >> "$FAILED_LOG"
+                fi
+            fi
+        done
+        echo ""
+    fi
+
+    # Build checks
+    if [ "$CHECK_COUNT" -gt 0 ]; then
+        echo "✅ Building checks ($CHECK_COUNT)..."
+        echo "$CHECKS" | while read -r check; do
+            if [ -n "$check" ]; then
+                echo ""
+                echo "  → checks.$TARGET_SYSTEM.$check"
+                if nom build ".#checks.$TARGET_SYSTEM.$check" --print-build-logs 2>&1; then
+                    echo "    ✅ Success"
+                    echo "checks.$TARGET_SYSTEM.$check" >> "$BUILD_LOG"
+                else
+                    echo "    ❌ Failed"
+                    echo "checks.$TARGET_SYSTEM.$check" >> "$FAILED_LOG"
+                fi
+            fi
+        done
+        echo ""
+    fi
+
+    # Build devShells
+    if [ "$DEVSHELL_COUNT" -gt 0 ]; then
+        echo "🐚 Building devShells ($DEVSHELL_COUNT)..."
+        echo "$DEVSHELLS" | while read -r shell; do
+            if [ -n "$shell" ]; then
+                echo ""
+                echo "  → devShells.$TARGET_SYSTEM.$shell"
+                if nom build ".#devShells.$TARGET_SYSTEM.$shell" --print-build-logs 2>&1; then
+                    echo "    ✅ Success"
+                    echo "devShells.$TARGET_SYSTEM.$shell" >> "$BUILD_LOG"
+                else
+                    echo "    ❌ Failed"
+                    echo "devShells.$TARGET_SYSTEM.$shell" >> "$FAILED_LOG"
+                fi
+            fi
+        done
+        echo ""
+    fi
+
+    # Build NixOS configurations
+    if [ "$NIXOS_COUNT" -gt 0 ]; then
+        echo "🐧 Building NixOS configurations ($NIXOS_COUNT)..."
+        echo "$NIXOS_CONFIGS" | while read -r config; do
+            if [ -n "$config" ]; then
+                CONFIG_SYSTEM=$(nix eval ".#nixosConfigurations.$config.config.nixpkgs.system" --raw 2>/dev/null || echo "unknown")
+
+                if [ "$CONFIG_SYSTEM" = "$TARGET_SYSTEM" ] || [ "$TARGET_SYSTEM" = "x86_64-linux" ]; then
+                    echo ""
+                    echo "  → nixosConfigurations.$config (system: $CONFIG_SYSTEM)"
+                    if nom build ".#nixosConfigurations.$config.config.system.build.toplevel" --print-build-logs 2>&1; then
+                        echo "    ✅ Success"
+                        echo "nixosConfigurations.$config" >> "$BUILD_LOG"
+                    else
+                        echo "    ❌ Failed"
+                        echo "nixosConfigurations.$config" >> "$FAILED_LOG"
+                    fi
+                else
+                    echo ""
+                    echo "  ⊘ Skipping nixosConfigurations.$config (system: $CONFIG_SYSTEM, target: $TARGET_SYSTEM)"
+                fi
+            fi
+        done
+        echo ""
+    fi
+
+    # Build Darwin configurations
+    if [ "$DARWIN_COUNT" -gt 0 ]; then
+        echo "🍎 Building Darwin configurations ($DARWIN_COUNT)..."
+        echo "$DARWIN_CONFIGS" | while read -r config; do
+            if [ -n "$config" ]; then
+                CONFIG_SYSTEM=$(nix eval ".#darwinConfigurations.$config.pkgs.stdenv.hostPlatform.system" --raw 2>/dev/null || echo "unknown")
+
+                if [ "$CONFIG_SYSTEM" = "$TARGET_SYSTEM" ] || [ "$TARGET_SYSTEM" = "aarch64-darwin" ]; then
+                    echo ""
+                    echo "  → darwinConfigurations.$config (system: $CONFIG_SYSTEM)"
+                    if nom build ".#darwinConfigurations.$config.system" --print-build-logs 2>&1; then
+                        echo "    ✅ Success"
+                        echo "darwinConfigurations.$config" >> "$BUILD_LOG"
+                    else
+                        echo "    ❌ Failed"
+                        echo "darwinConfigurations.$config" >> "$FAILED_LOG"
+                    fi
+                else
+                    echo ""
+                    echo "  ⊘ Skipping darwinConfigurations.$config (system: $CONFIG_SYSTEM, target: $TARGET_SYSTEM)"
+                fi
+            fi
+        done
+        echo ""
+    fi
+
+    # Build home configurations
+    if [ "$HOME_COUNT" -gt 0 ]; then
+        echo "🏠 Building home configurations ($HOME_COUNT)..."
+        echo "$HOME_CONFIGS" | while read -r config; do
+            if [ -n "$config" ]; then
+                echo ""
+                echo "  → legacyPackages.$TARGET_SYSTEM.homeConfigurations.\"$config\""
+                if nom build ".#legacyPackages.$TARGET_SYSTEM.homeConfigurations.\"$config\".activationPackage" --print-build-logs 2>&1; then
+                    echo "    ✅ Success"
+                    echo "homeConfigurations.$config" >> "$BUILD_LOG"
+                else
+                    echo "    ❌ Failed"
+                    echo "homeConfigurations.$config" >> "$FAILED_LOG"
+                fi
+            fi
+        done
+        echo ""
+    fi
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "📈 Phase 3: Summary"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    BUILT_COUNT=$(wc -l < "$BUILD_LOG" | tr -d ' ' || echo "0")
+    FAILED_COUNT=$(wc -l < "$FAILED_LOG" | tr -d ' ' || echo "0")
+
+    echo "📊 Build results:"
+    echo "   • Total outputs:      $TOTAL_COUNT"
+    echo "   • Successfully built: $BUILT_COUNT"
+    echo "   • Failed:             $FAILED_COUNT"
+    echo ""
+
+    if [ "$BUILT_COUNT" -gt 0 ]; then
+        echo "✅ Successfully built:"
+        cat "$BUILD_LOG" | sed 's/^/   • /'
+        echo ""
+    fi
+
+    if [ "$FAILED_COUNT" -gt 0 ]; then
+        echo "❌ Failed builds:"
+        cat "$FAILED_LOG" | sed 's/^/   • /'
+        echo ""
+        echo "💡 Tip: Rebuild individually with:"
+        cat "$FAILED_LOG" | sed 's/^/   nom build .#/'
+        echo ""
+    fi
+
+    rm -f "$BUILD_LOG" "$FAILED_LOG"
+
+    if [ "$FAILED_COUNT" -gt 0 ]; then
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "❌ Build completed with failures"
+        exit 1
+    else
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "✅ All outputs built successfully!"
+        echo ""
+        echo "🎉 This is equivalent to: om ci run --systems $TARGET_SYSTEM"
+        echo ""
+    fi
+
+# Build specific output category with nom (packages, checks, devshells, nixos, home)
+[group('CI/CD')]
+ci-build-category category system="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # Auto-detect system if not specified
+    if [ -z "{{system}}" ]; then
+        TARGET_SYSTEM=$(nix eval --impure --raw --expr 'builtins.currentSystem')
+    else
+        TARGET_SYSTEM="{{system}}"
+    fi
+
+    echo "🔨 Building {{category}} for $TARGET_SYSTEM..."
+    echo ""
+
+    case "{{category}}" in
+        packages)
+            ITEMS=$(nix eval ".#packages.$TARGET_SYSTEM" --apply 'x: builtins.attrNames x' --json 2>/dev/null | jq -r '.[]' || echo "")
+            if [ -z "$ITEMS" ]; then
+                echo "No packages found"
+                exit 0
+            fi
+            echo "$ITEMS" | while read -r item; do
+                [ -n "$item" ] && nom build ".#packages.$TARGET_SYSTEM.$item" --print-build-logs
+            done
+            ;;
+        checks)
+            ITEMS=$(nix eval ".#checks.$TARGET_SYSTEM" --apply 'x: builtins.attrNames x' --json 2>/dev/null | jq -r '.[]' || echo "")
+            if [ -z "$ITEMS" ]; then
+                echo "No checks found"
+                exit 0
+            fi
+            echo "$ITEMS" | while read -r item; do
+                [ -n "$item" ] && nom build ".#checks.$TARGET_SYSTEM.$item" --print-build-logs
+            done
+            ;;
+        devshells)
+            ITEMS=$(nix eval ".#devShells.$TARGET_SYSTEM" --apply 'x: builtins.attrNames x' --json 2>/dev/null | jq -r '.[]' || echo "")
+            if [ -z "$ITEMS" ]; then
+                echo "No devShells found"
+                exit 0
+            fi
+            echo "$ITEMS" | while read -r item; do
+                [ -n "$item" ] && nom build ".#devShells.$TARGET_SYSTEM.$item" --print-build-logs
+            done
+            ;;
+        nixos)
+            ITEMS=$(nix eval ".#nixosConfigurations" --apply 'x: builtins.attrNames x' --json 2>/dev/null | jq -r '.[]' || echo "")
+            if [ -z "$ITEMS" ]; then
+                echo "No NixOS configurations found"
+                exit 0
+            fi
+            echo "$ITEMS" | while read -r item; do
+                if [ -n "$item" ]; then
+                    CONFIG_SYSTEM=$(nix eval ".#nixosConfigurations.$item.config.nixpkgs.system" --raw 2>/dev/null || echo "unknown")
+                    if [ "$CONFIG_SYSTEM" = "$TARGET_SYSTEM" ] || [ "$TARGET_SYSTEM" = "x86_64-linux" ]; then
+                        nom build ".#nixosConfigurations.$item.config.system.build.toplevel" --print-build-logs
+                    else
+                        echo "Skipping $item (system: $CONFIG_SYSTEM)"
+                    fi
+                fi
+            done
+            ;;
+        darwin)
+            ITEMS=$(nix eval ".#darwinConfigurations" --apply 'x: builtins.attrNames x' --json 2>/dev/null | jq -r '.[]' || echo "")
+            if [ -z "$ITEMS" ]; then
+                echo "No Darwin configurations found"
+                exit 0
+            fi
+            echo "$ITEMS" | while read -r item; do
+                if [ -n "$item" ]; then
+                    CONFIG_SYSTEM=$(nix eval ".#darwinConfigurations.$item.pkgs.stdenv.hostPlatform.system" --raw 2>/dev/null || echo "unknown")
+                    if [ "$CONFIG_SYSTEM" = "$TARGET_SYSTEM" ] || [ "$TARGET_SYSTEM" = "aarch64-darwin" ]; then
+                        nom build ".#darwinConfigurations.$item.system" --print-build-logs
+                    else
+                        echo "Skipping $item (system: $CONFIG_SYSTEM)"
+                    fi
+                fi
+            done
+            ;;
+        home)
+            ITEMS=$(nix eval ".#legacyPackages.$TARGET_SYSTEM.homeConfigurations" --apply 'x: builtins.attrNames x' --json 2>/dev/null | jq -r '.[]' || echo "")
+            if [ -z "$ITEMS" ]; then
+                echo "No home configurations found"
+                exit 0
+            fi
+            echo "$ITEMS" | while read -r item; do
+                [ -n "$item" ] && nom build ".#legacyPackages.$TARGET_SYSTEM.homeConfigurations.\"$item\".activationPackage" --print-build-logs
+            done
+            ;;
+        *)
+            echo "❌ Unknown category: {{category}}"
+            echo "Valid categories: packages, checks, devshells, nixos, darwin, home"
+            exit 1
+            ;;
+    esac
+
+    echo ""
+    echo "✅ Done building {{category}}"
 
 # Validate latest CI run comprehensively
 [group('CI/CD')]
