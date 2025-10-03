@@ -21,6 +21,7 @@
       - nix development: ~/.claude/commands/preferences/nix-development.md
       - python development: ~/.claude/commands/preferences/python-development.md
       - rust development: ~/.claude/commands/preferences/rust-development.md
+      - haskell development: ~/.claude/commands/preferences/haskell-development.md
       - typescript/node.js development: ~/.claude/commands/preferences/typescript-nodejs-development.md
       - git version control: @~/.claude/commands/preferences/git-version-control.md
       - git history cleanup: ~/.claude/commands/preferences/git-history-cleanup.md
