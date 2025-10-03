@@ -35,7 +35,7 @@
         PascalCase or camelCase, in acronyms, or in proper nouns.
       - Do prefer to capitalize the first letter of the first word of
           - complete sentences that end with punctuation marks
-          - section headings
+          - markdown file section and subsection headings
       - Do not use uppercase words for emphasis or notification purposes like
         "IMPORTANT", "URGENT", "WARNING", etc except in relevant situations
         like error handling, logging, or quoting usage by other sources.
