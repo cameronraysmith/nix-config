@@ -479,14 +479,36 @@ jobs:
             exit 1
           fi
 
-      - name: scenario 3 - future standalone home configs (not yet implemented)
-        continue-on-error: true
+      - name: scenario 3 - standalone home configs
         run: |
-          echo "scenario 3: standalone home-manager configs (not yet implemented)"
+          echo "scenario 3: testing standalone home-manager configurations"
 
-          # these will fail until architecture is implemented
-          ls configurations/home/runner@stibnite.nix 2>/dev/null || echo "⚠️  runner@stibnite.nix not yet created"
-          ls configurations/home/raquel@blackphos.nix 2>/dev/null || echo "⚠️  raquel@blackphos.nix not yet created"
+          # verify config files exist
+          echo "checking configuration files..."
+          for config in "runner@stibnite" "runner@blackphos" "raquel@blackphos"; do
+            config_file="configurations/home/${config}.nix"
+            if [ -f "$config_file" ]; then
+              echo "  ✅ $config_file exists"
+            else
+              echo "  ❌ $config_file missing"
+              exit 1
+            fi
+          done
+
+          # build each standalone home configuration
+          echo ""
+          echo "building standalone home configurations..."
+          for config in "runner@stibnite" "runner@blackphos" "raquel@blackphos"; do
+            echo "  building $config..."
+            if nix build ".#legacyPackages.x86_64-linux.homeConfigurations.\"$config\".activationPackage" --print-out-paths; then
+              echo "  ✅ $config builds successfully"
+            else
+              echo "  ❌ $config build failed"
+              exit 1
+            fi
+          done
+
+          echo "✅ all standalone home configurations build successfully"
 
       - name: verify no cross-config dependencies
         run: |
