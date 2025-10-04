@@ -1,11 +1,28 @@
 # Documentation
 
-- Propose to update relevant documentation when there are changes to the content it references
-- Propse to update README.md when there are changes to the content it references
-- Prefer docstrings relevant to a given programming language over code comments
-- Only add comments for reference or to explain awkward or complex code
+## References
 
-## Documentation structure
+1. Méndez Fernández, D., Penzenstadler, B.: Artefact-based requirements
+   engineering: The AMDiRE approach. Requir. Eng. 20, 405–434 (2015).
+   https://arxiv.org/abs/1611.10024
+2. Chuprina, T., Mendez, D., Wnuk, K.: Towards artefact-based requirements
+   engineering for data-centric systems. arXiv [cs.SE]. (2021)
+3. ISO/IEC/IEEE international standard - systems and software engineering
+   – life cycle processes – requirements engineering, (2018)
+4. IEEE standard for information technology–systems design–software design
+   descriptions, (2009)
+5. Diátaxis: A systematic approach to technical documentation authoring.
+   https://diataxis.fr.
+
+## Location
+
+- Most repositories use `docs/` for their active documentation but some have
+  both `docs/` and another directory like `site/`, `website/`, `nbs/`, etc.
+- Most `README.md` files in the repository root should aim to include minimal
+  content with relevant links to the docs website unless they do not yet have
+  docs.
+
+## Structure
 
 Generally assume we intend to follow this standard structure for repository
 documentation combining user-facing and development documentation:
@@ -17,7 +34,7 @@ docs/
 ├── concepts/            # Diataxis: Understanding-oriented explanations
 ├── reference/           # Diataxis: Information-oriented API docs (optional)
 ├── about/               # Contributing, conduct, links into development
-└── development/         # Development documentation (AMDiRE-based)
+└── development/         # Development documentation (adapted AMDiRE-based)
     ├── index.md         # Development overview and navigation
     ├── context/         # Context Specification (problem domain)
     │   ├── index.md     # Context overview and table of contents
@@ -40,16 +57,50 @@ docs/
 
 ### Document evolution
 
-Initial development seeds context.md, requirements.md, architecture.md, and testing.md as single comprehensive documents.
-As complexity grows—expected for most real projects—shard each document by major subsection into separate files with descriptive names (e.g., context.md → stakeholders.md, objectives.md, constraints.md).
-Update the corresponding index.md to serve as table of contents and navigation after sharding.
-This pattern maintains manageability while preserving traceability as documentation scales.
+Many projects will begin with only `docs/development/` and add the user docs
+directories later. Initial development drafts context.md, requirements.md,
+architecture.md, and testing.md as single comprehensive documents. As complexity
+grows—expected for most real projects—decompose each document by major
+subsection into separate files with descriptive names (e.g., context.md →
+stakeholders.md, objectives.md, constraints.md). Update the corresponding
+index.md to serve as table of contents and navigation after sharding. This
+pattern maintains manageability while preserving traceability as documentation
+scales. If the documentation becomes sufficiently complex, we can continue to
+refactor into a directory tree with additional levels.
 
 ### Key principles
 
-- Separate user documentation (diataxis framework) from development documentation (AMDiRE methodology)
-- User docs focus on helping users learn, accomplish tasks, understand concepts, and find reference information
-- Development docs provide traceability: context (why) → requirements (what) → architecture (how) → work items (implementation)
-- Work items bridge planning to execution with workflow state tracking (backlog → active → completed)
-- Maintain bidirectional traceability between requirements, architecture decisions, and implementation artifacts
-- Reference GitHub issues, pull requests, ADRs, RFCs, or RFDs in completed work items for full audit trail
+- Separate user documentation (diataxis framework) from development
+  documentation (AMDiRE methodology)
+- User docs focus on helping users learn, accomplish tasks, understand concepts,
+  and find reference information
+- Development docs provide traceability: context (why) → requirements (what) →
+  architecture (how) → work items (implementation)
+- Work items bridge planning to execution with workflow state tracking (backlog
+  → active → completed)
+- Maintain bidirectional traceability between requirements, architecture
+  decisions, and implementation artifacts
+- Reference GitHub issues, pull requests, ADRs, RFCs, or RFDs in completed work
+  items for full audit trail
+- Name files in the work-items directory using the pattern
+  `<issue-id>-<very-short-description>.md` with zero-padded issue IDs to support
+  up to four digits (e.g. GitHub issue #12 becomes `0012-description.md` in
+  `work-items`).
+
+## Code
+
+- In code, prefer docstrings relevant to a given programming language over code comments
+  as the docstrings end up in `docs/reference/` files automatically generated by
+  most language API reference documentation tools.
+- Only add comments to code for reference or to explain awkward or complex code,
+  but prefer to include it in docstrings when possible.
+
+## Maintenance
+
+- Proactively review and propose to update relevant documentation, including the
+  repository's active documentation directory and relevant README.md files when
+  there are changes to any of the contents each references.
+- Be judicious in the use of documentation, ensuring that it is clear, concise,
+  and accurate for humans to read and understand.
+- Propose to remove, refactor, and consolidate documentation as relevant to
+  maintain optimal correspondence between the code and documentation.
