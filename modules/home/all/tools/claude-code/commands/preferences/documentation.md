@@ -3,19 +3,20 @@
 - Propose to update relevant documentation when there are changes to the content it references
 - Propse to update README.md when there are changes to the content it references
 - Prefer docstrings relevant to a given programming language over code comments
-- Only add comments for reference or to explaining awkward or complex code
+- Only add comments for reference or to explain awkward or complex code
 
 ## Documentation structure
 
-Follow this standard structure for repository documentation combining user-facing and development documentation:
+Generally assume we intend to follow this standard structure for repository
+documentation combining user-facing and development documentation:
 
 ```
 docs/
 ├── tutorials/           # Diataxis: Learning-oriented lessons
 ├── guides/              # Diataxis: Task-oriented how-tos
 ├── concepts/            # Diataxis: Understanding-oriented explanations
-├── reference/           # Diataxis: Information-oriented API docs
-├── about/               # Contributing, code of conduct, etc.
+├── reference/           # Diataxis: Information-oriented API docs (optional)
+├── about/               # Contributing, conduct, links into development
 └── development/         # Development documentation (AMDiRE-based)
     ├── index.md         # Development overview and navigation
     ├── context/         # Context Specification (problem domain)
@@ -36,6 +37,13 @@ docs/
         ├── completed/   # Finished items with PR/ADR/RFC/RFD references
         └── backlog/     # Planned but not yet started items
 ```
+
+### Document evolution
+
+Initial development seeds context.md, requirements.md, architecture.md, and testing.md as single comprehensive documents.
+As complexity grows—expected for most real projects—shard each document by major subsection into separate files with descriptive names (e.g., context.md → stakeholders.md, objectives.md, constraints.md).
+Update the corresponding index.md to serve as table of contents and navigation after sharding.
+This pattern maintains manageability while preserving traceability as documentation scales.
 
 ### Key principles
 
