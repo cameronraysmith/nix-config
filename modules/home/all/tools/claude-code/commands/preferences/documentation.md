@@ -97,10 +97,20 @@ refactor into a directory tree with additional levels.
 
 ## Maintenance
 
-- Proactively review and propose to update relevant documentation, including the
-  repository's active documentation directory and relevant README.md files when
-  there are changes to any of the contents each references.
+- When making code changes, immediately identify all affected documentation artifacts
+  with surgical precision:
+  - `docs/development/context/` if problem domain or stakeholders change
+  - `docs/development/requirements/` if functional/non-functional requirements change
+  - `docs/development/architecture/` if design decisions, components, or technology change
+  - `docs/development/traceability/` if test strategy or validation approach changes
+  - `docs/development/work-items/` for implementation status tracking
+  - Repository README.md and user-facing docs/ if behavior changes
+- Update affected documentation immediately in the same session, not at an undetermined
+  future point.
+- Commit documentation updates atomically in series with the related code changes,
+  following the same proactive atomic commit workflow specified in
+  `~/.claude/commands/preferences/git-version-control.md`.
 - Be judicious in the use of documentation, ensuring that it is clear, concise,
   and accurate for humans to read and understand.
-- Propose to remove, refactor, and consolidate documentation as relevant to
+- Proactively remove, refactor, and consolidate documentation as relevant to
   maintain optimal correspondence between the code and documentation.
