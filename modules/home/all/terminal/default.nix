@@ -156,6 +156,7 @@ in
       pre-commit
       proto # version manager NOT protobuf-related
       ratchet
+      shellcheck
       starship-jj
       # step-ca
       tmate
