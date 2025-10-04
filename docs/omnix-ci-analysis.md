@@ -815,3 +815,62 @@ Pushing to cachix...
 - Added `just test-cachix` for local verification
 - Tests push authentication and basic push/pull workflow
 - Provides URL for manual cache inspection
+
+## Cache effectiveness verification (2025-10-04)
+
+After populating the cache in the initial run, a second CI run was triggered to verify cache pull performance.
+
+### Performance comparison
+
+**Uncached run:** [18233551532](https://github.com/cameronraysmith/nix-config/actions/runs/18233551532)
+- Darwin job duration: 41m 51s
+- Build step: 40m 5s
+
+**Cached run:** [18237067860](https://github.com/cameronraysmith/nix-config/actions/runs/18237067860)
+- Darwin job duration: 11m 47s
+- Build step: ~9m 20s
+
+**Performance improvement:**
+- Time saved: 30m 4s
+- Speedup: 3.55x faster
+- Reduction: 71.9% time reduction
+
+### Cache pull evidence
+
+**Cache hits:** 275 store paths pulled from cameronraysmith.cachix.org
+
+Sample cache pulls:
+```
+copying path '/nix/store/7nc7pay3zkcn4nhxg8arhjzni6n41cha-pre-commit-config.json' from 'https://cameronraysmith.cachix.org'
+copying path '/nix/store/82yxa0arakqmpgq79d73qy3n4rjp30ip-agenix-0.15.0' from 'https://cameronraysmith.cachix.org'
+copying path '/nix/store/1dmxjc791p3v8v8gla2lkqm0iiqbzk82-nix-config-shell-env' from 'https://cameronraysmith.cachix.org'
+copying path '/nix/store/3s4s41ii24wa6rfyd1r757kklfc4ixll-claude-code-bin-2.0.5' from 'https://cameronraysmith.cachix.org'
+copying path '/nix/store/a2xk2gyskgld0plsy3b6g5wjnqbph9z3-nix-config-shell' from 'https://cameronraysmith.cachix.org'
+```
+
+**Selective push:** Only new/changed derivations pushed to cache in subsequent runs:
+```
+Pushing /nix/store/m860gkm3dcywshk2dhilljs2r1zi076r-darwin-system-25.11.c48e963.drv (139.84 KiB)
+Pushing /nix/store/n3rs9k84vickgjsrrpkbzhqvclf98fw7-home-manager-files.drv (16.49 KiB)
+Pushing /nix/store/szhjlwa6n7y3lb00q8blvmdwakh62q83-home-manager-generation.drv (3.05 KiB)
+
+All done.
+✅ all outputs built successfully for aarch64-darwin
+```
+
+### Impact on CI workflow
+
+**Cost optimization confirmed:**
+- Darwin builds reduced from ~42 minutes to ~12 minutes
+- 3.5x speedup translates to ~3.5x cost reduction for darwin CI jobs
+- MacOS runners cost ~10x linux runners, making cache efficiency critical
+
+**Cache strategy validation:**
+- Selective push for darwin only remains optimal
+- Linux jobs complete in 5-7 minutes, making caching less impactful
+- `--include-all-dependencies` ensures comprehensive cache coverage
+
+### Conclusion
+
+Cachix integration successfully reduces darwin CI time by 72%, validating the implementation strategy.
+The cache effectively stores build artifacts and dependencies, significantly improving CI performance for expensive darwin builds while maintaining minimal overhead for cheap linux builds.
