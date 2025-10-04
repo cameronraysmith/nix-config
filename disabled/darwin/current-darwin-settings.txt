@@ -1,0 +1,164 @@
+================================================
+Current macOS System Settings
+Generated on: Fri Sep 26 13:33:37 EDT 2025
+================================================
+
+## CustomUserPreferences
+------------------------
+[NSGlobalDomain] NSCloseAlwaysConfirmsChanges = <not set> (Confirm changes when closing documents)
+[NSGlobalDomain] AppleSpacesSwitchOnActivate = <not set> (Switch to Space with open windows for app)
+[com.apple.Music] userWantsPlaybackNotifications = 0 (Music playback notifications)
+[com.apple.ActivityMonitor] UpdatePeriod = <not set> (Update frequency)
+[com.apple.TextEdit] SmartQuotes = <not set> (Smart quotes)
+[com.apple.TextEdit] RichText = 0 (Rich text mode)
+[com.apple.spaces] spans-displays = 0 (Each space spans displays)
+[com.apple.menuextra.clock] DateFormat = <not set> (Clock date format)
+[com.apple.menuextra.clock] FlashDateSeparators = 0 (Flash date separators)
+
+## Dock Settings
+----------------
+[Dock] appswitcher-all-displays = <not set> (Show app switcher on all displays)
+[Dock] autohide = 1 (Auto-hide dock)
+[Dock] autohide-delay = <not set> (Auto-hide delay)
+[Dock] autohide-time-modifier = <not set> (Auto-hide animation duration)
+[Dock] dashboard-in-overlay = <not set> (Dashboard as overlay)
+[Dock] enable-spring-load-actions-on-all-items = <not set> (Spring loading for all items)
+[Dock] expose-animation-duration = <not set> (Mission Control animation duration)
+[Dock] expose-group-apps = 1 (Group windows by application)
+[Dock] launchanim = <not set> (Launch animation)
+[Dock] mineffect = scale (Minimize effect)
+[Dock] minimize-to-application = <not set> (Minimize to application icon)
+[Dock] mouse-over-hilite-stack = <not set> (Highlight stack items on hover)
+[Dock] mru-spaces = <not set> (Rearrange spaces based on use)
+[Dock] orientation = <not set> (Dock position)
+[Dock] show-process-indicators = <not set> (Show indicators for open apps)
+[Dock] show-recents = 1 (Show recent apps)
+[Dock] showhidden = <not set> (Show hidden apps)
+[Dock] static-only = <not set> (Show only open apps)
+[Dock] tilesize = 33 (Icon size)
+[Dock] wvous-bl-corner = 1 (Bottom-left hot corner)
+[Dock] wvous-br-corner = 5 (Bottom-right hot corner)
+[Dock] wvous-tl-corner = 1 (Top-left hot corner)
+[Dock] wvous-tr-corner = 1 (Top-right hot corner)
+
+## Finder Settings
+------------------
+[Finder] _FXShowPosixPathInTitle = <not set> (Show POSIX path in title)
+[Finder] _FXSortFoldersFirst = 0 (Keep folders on top)
+[Finder] AppleShowAllExtensions = <not set> (Show all file extensions)
+[Finder] AppleShowAllFiles = <not set> (Show hidden files)
+[Finder] CreateDesktop = <not set> (Show items on desktop)
+[Finder] FXDefaultSearchScope = SCcf (Default search scope)
+[Finder] FXEnableExtensionChangeWarning = <not set> (Warn when changing extension)
+[Finder] FXPreferredViewStyle = Nlsv (Preferred view style)
+[Finder] QuitMenuItem = <not set> (Allow quitting Finder)
+[Finder] ShowPathbar = 1 (Show path bar)
+[Finder] ShowStatusBar = 0 (Show status bar)
+
+## Login Window Settings
+------------------------
+[LoginWindow] autoLoginUser = <not set> (Auto-login user)
+[LoginWindow] DisableConsoleAccess = <not set> (Disable console access)
+[LoginWindow] GuestEnabled = <not set> (Guest account enabled)
+[LoginWindow] LoginwindowText = <not set> (Login window text)
+[LoginWindow] PowerOffDisabledWhileLoggedIn = <not set> (Disable power off when logged in)
+[LoginWindow] RestartDisabled = <not set> (Disable restart)
+[LoginWindow] RestartDisabledWhileLoggedIn = <not set> (Disable restart when logged in)
+[LoginWindow] SHOWFULLNAME = <not set> (Show full name)
+[LoginWindow] ShutDownDisabled = <not set> (Disable shut down)
+[LoginWindow] ShutDownDisabledWhileLoggedIn = <not set> (Disable shut down when logged in)
+[LoginWindow] SleepDisabled = <not set> (Disable sleep)
+
+## Mouse & Trackpad Settings
+----------------------------
+[Mouse] Button2 = 1 (Secondary click)
+[Mouse] MouseButtonMode = OneButton (Mouse button mode)
+[Trackpad] ActuationStrength = <not set> (Click pressure)
+[Trackpad] Clicking = 1 (Tap to click)
+[Trackpad] Dragging = 0 (Dragging)
+[Trackpad] FirstClickThreshold = 1 (First click threshold)
+[Trackpad] SecondClickThreshold = 1 (Second click threshold)
+[Trackpad] TrackpadRightClick = 1 (Right click)
+[Trackpad] TrackpadThreeFingerDrag = 0 (Three finger drag)
+[Trackpad] TrackpadThreeFingerTapGesture = 0 (Three finger tap)
+
+## Screenshot Settings
+----------------------
+[Screenshot] disable-shadow = <not set> (Disable shadow)
+[Screenshot] location = ~/Dropbox (Personal)/Apps/Overleaf/slides-t32-03032025/fig/reproducibility (Save location)
+[Screenshot] show-thumbnail = 0 (Show thumbnail)
+[Screenshot] type = <not set> (File type)
+[Screenshot] target = file (Capture target)
+
+## Spaces Settings
+------------------
+[Spaces] spans-displays = 0 (Displays have separate Spaces)
+
+## Universal Access Settings
+----------------------------
+[UniversalAccess] closeViewScrollWheelToggle = <not set> (Zoom with scroll wheel)
+[UniversalAccess] closeViewZoomFollowsFocus = <not set> (Zoom follows focus)
+[UniversalAccess] reduceTransparency = <not set> (Reduce transparency)
+[UniversalAccess] mouseDriverCursorSize = <not set> (Cursor size)
+
+## Software Update Settings
+---------------------------
+[SoftwareUpdate] AutomaticallyInstallMacOSUpdates = <not set> (Auto-install macOS updates)
+
+## NSGlobalDomain Settings
+--------------------------
+[NSGlobalDomain] _HIHideMenuBar = 1 (Auto-hide menu bar)
+[NSGlobalDomain] com.apple.keyboard.fnState = <not set> (Function key behavior)
+[NSGlobalDomain] com.apple.mouse.tapBehavior = <not set> (Mouse tap behavior)
+[NSGlobalDomain] com.apple.sound.beep.feedback = <not set> (Sound feedback)
+[NSGlobalDomain] com.apple.sound.beep.volume = <not set> (Beep volume)
+[NSGlobalDomain] com.apple.springing.delay = 0.5 (Spring loading delay)
+[NSGlobalDomain] com.apple.springing.enabled = 1 (Spring loading enabled)
+[NSGlobalDomain] com.apple.swipescrolldirection = 0 (Natural scrolling)
+[NSGlobalDomain] com.apple.trackpad.enableSecondaryClick = <not set> (Secondary click)
+[NSGlobalDomain] com.apple.trackpad.forceClick = 0 (Force click)
+[NSGlobalDomain] com.apple.trackpad.scaling = <not set> (Tracking speed)
+[NSGlobalDomain] AppleEnableMouseSwipeNavigateWithScrolls = <not set> (Swipe to navigate (mouse))
+[NSGlobalDomain] AppleEnableSwipeNavigateWithScrolls = <not set> (Swipe to navigate)
+[NSGlobalDomain] AppleFontSmoothing = <not set> (Font smoothing)
+[NSGlobalDomain] AppleICUForce24HourTime = <not set> (24-hour time)
+[NSGlobalDomain] AppleInterfaceStyle = Dark (Interface style)
+[NSGlobalDomain] AppleInterfaceStyleSwitchesAutomatically = <not set> (Auto dark mode)
+[NSGlobalDomain] AppleKeyboardUIMode = 0 (Keyboard UI mode)
+[NSGlobalDomain] AppleMeasurementUnits = Inches (Measurement units)
+[NSGlobalDomain] AppleMetricUnits = 0 (Metric units)
+[NSGlobalDomain] ApplePressAndHoldEnabled = <not set> (Press and hold for accents)
+[NSGlobalDomain] AppleScrollerPagingBehavior = <not set> (Click in scroll bar behavior)
+[NSGlobalDomain] AppleShowAllExtensions = 1 (Show all extensions)
+[NSGlobalDomain] AppleShowAllFiles = <not set> (Show all files)
+[NSGlobalDomain] AppleShowScrollBars = <not set> (Show scroll bars)
+[NSGlobalDomain] AppleSpacesSwitchOnActivate = <not set> (Switch to Space with windows)
+[NSGlobalDomain] AppleTemperatureUnit = Fahrenheit (Temperature unit)
+[NSGlobalDomain] AppleWindowTabbingMode = always (Window tabbing mode)
+[NSGlobalDomain] InitialKeyRepeat = 15 (Initial key repeat delay)
+[NSGlobalDomain] KeyRepeat = 2 (Key repeat rate)
+[NSGlobalDomain] NSAutomaticCapitalizationEnabled = 0 (Auto capitalization)
+[NSGlobalDomain] NSAutomaticDashSubstitutionEnabled = 1 (Auto dash substitution)
+[NSGlobalDomain] NSAutomaticPeriodSubstitutionEnabled = 0 (Auto period substitution)
+[NSGlobalDomain] NSAutomaticQuoteSubstitutionEnabled = 1 (Smart quotes)
+[NSGlobalDomain] NSAutomaticSpellingCorrectionEnabled = 0 (Auto spelling correction)
+[NSGlobalDomain] NSAutomaticWindowAnimationsEnabled = <not set> (Window animations)
+[NSGlobalDomain] NSDisableAutomaticTermination = <not set> (Disable auto termination)
+[NSGlobalDomain] NSDocumentSaveNewDocumentsToCloud = <not set> (Save to iCloud by default)
+[NSGlobalDomain] NSNavPanelExpandedStateForSaveMode = <not set> (Expanded save panel)
+[NSGlobalDomain] NSNavPanelExpandedStateForSaveMode2 = <not set> (Expanded save panel 2)
+[NSGlobalDomain] NSScrollAnimationEnabled = <not set> (Smooth scrolling)
+[NSGlobalDomain] NSTableViewDefaultSizeMode = 2 (Table view size mode)
+[NSGlobalDomain] NSTextShowsControlCharacters = <not set> (Show control characters)
+[NSGlobalDomain] NSUseAnimatedFocusRing = <not set> (Animated focus ring)
+[NSGlobalDomain] NSWindowResizeTime = <not set> (Window resize time)
+[NSGlobalDomain] PMPrintingExpandedStateForPrint = <not set> (Expanded print panel)
+[NSGlobalDomain] PMPrintingExpandedStateForPrint2 = <not set> (Expanded print panel 2)
+
+## System Startup Settings
+--------------------------
+[Startup] chime = true (enabled)
+
+================================================
+Capture complete! Settings saved to current-darwin-settings.txt
+================================================
