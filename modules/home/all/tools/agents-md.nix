@@ -12,9 +12,9 @@
     settings.body = ''
       # Development Guidelines
 
-      If one of the following applies to a given task or topic, consider reading
-      the corresponding document to ensure adherence to our guidelines and
-      conventions:
+      If one of the following applies to a given task or topic, proactively read
+      the corresponding document, without pausing to ask if you should, to ensure
+      you are aware of our ideal guidelines and conventions:
 
       - general development practices: @~/.claude/commands/preferences/general-practices.md
       - architectural patterns: ~/.claude/commands/preferences/architectural-patterns.md
@@ -27,7 +27,7 @@
       - typescript/node.js development: ~/.claude/commands/preferences/typescript-nodejs-development.md
       - git version control: @~/.claude/commands/preferences/git-version-control.md
       - git history cleanup: ~/.claude/commands/preferences/git-history-cleanup.md
-      - documentation authoring: ~/.claude/commands/preferences/documentation.md
+      - documentation: ~/.claude/commands/preferences/documentation.md
       - change management: ~/.claude/commands/preferences/change-management.md
       - preferences: @~/.claude/commands/preferences/preferences.md
 
