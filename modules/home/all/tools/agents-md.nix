@@ -16,7 +16,11 @@
       the corresponding document, without pausing to ask if you should, to ensure
       you are aware of our ideal guidelines and conventions:
 
+      - preferences: @~/.claude/commands/preferences/preferences.md
       - general development practices: @~/.claude/commands/preferences/general-practices.md
+      - git version control: @~/.claude/commands/preferences/git-version-control.md
+      - documentation: ~/.claude/commands/preferences/documentation.md
+      - change management: ~/.claude/commands/preferences/change-management.md
       - architectural patterns: ~/.claude/commands/preferences/architectural-patterns.md
       - data modeling: ~/.claude/commands/preferences/data-modeling.md
       - schema versioning: ~/.claude/commands/preferences/schema-versioning.md
@@ -25,11 +29,7 @@
       - rust development: ~/.claude/commands/preferences/rust-development.md
       - haskell development: ~/.claude/commands/preferences/haskell-development.md
       - typescript/node.js development: ~/.claude/commands/preferences/typescript-nodejs-development.md
-      - git version control: @~/.claude/commands/preferences/git-version-control.md
       - git history cleanup: ~/.claude/commands/preferences/git-history-cleanup.md
-      - documentation: ~/.claude/commands/preferences/documentation.md
-      - change management: ~/.claude/commands/preferences/change-management.md
-      - preferences: @~/.claude/commands/preferences/preferences.md
 
       Always remember to fallback to practical features and architectural
       patterns that emphasize type-safety and functional programming as is
