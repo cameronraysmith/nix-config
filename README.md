@@ -5,149 +5,6 @@ you'd like to experiment with nix in a containerized environment, consider
 trying [nixpod](https://github.com/cameronraysmith/nixpod) before attempting to
 use something like this repository or one of the credited examples below.
 
-## quick start
-
-### bootstrapping a new machine
-
-Start on a clean macOS or NixOS system:
-
-```bash
-# bootstrap nix and essential tools
-make bootstrap && exec $SHELL
-
-# verify installation
-make verify
-
-# setup secrets (generate age keys for sops-nix)
-make setup-user
-
-# activate configuration
-nix run . hostname       # admin user (darwin/nixos with integrated home-manager)
-nix run . user@hostname  # non-admin user (standalone home-manager, no sudo required)
-```
-
-### multi-user architecture
-
-This config supports two user patterns:
-
-1. **admin users** (darwin/nixos): Integrated home-manager configuration
-   - Define user in `config.nix` and `configurations/{darwin,nixos}/${hostname}.nix`
-   - Activate with `nix run . hostname` (requires sudo for system changes)
-   - Full system and home-manager configuration
-
-2. **non-admin users**: Standalone home-manager configuration
-   - Define user in `config.nix` and `configurations/home/${user}@${host}.nix`
-   - Activate with `nix run . user@hostname` (no sudo required)
-   - Home environment only, independent of system config
-
-### example: two machines with shared and unique users
-
-**machine 1: stibnite (darwin)**
-
-```bash
-# admin user (crs58) on stibnite
-cd /path/to/nix-config
-
-# define user in config.nix
-# create configurations/darwin/stibnite.nix with:
-#   home-manager.users.crs58 = { ... };
-
-make setup-user  # generate age key
-# update .sops.yaml with crs58's age public key
-
-nix run . stibnite  # activate darwin + home-manager for crs58
-```
-
-**add non-admin user (runner) on stibnite**
-
-```bash
-# runner sets up their environment
-make bootstrap && exec $SHELL
-make setup-user  # generates ~/.config/sops/age/keys.txt
-
-# admin (crs58) adds runner's configuration
-# 1. add runner to config.nix
-# 2. create configurations/home/runner@stibnite.nix
-# 3. update .sops.yaml with runner's age public key
-# 4. run: sops updatekeys secrets/*
-
-# runner activates (no sudo required)
-nix run . runner@stibnite
-```
-
-**machine 2: blackphos (darwin)**
-
-```bash
-# admin user (cameron) on blackphos
-# similar process to stibnite/crs58
-# create configurations/darwin/blackphos.nix
-
-nix run . blackphos  # activate for cameron
-
-# add runner on blackphos (same user, different machine)
-# create configurations/home/runner@blackphos.nix
-# runner can have different config than runner@stibnite
-
-nix run . runner@blackphos
-
-# add raquel (unique to blackphos)
-# create configurations/home/raquel@blackphos.nix
-
-nix run . raquel@blackphos
-```
-
-This demonstrates:
-- Multiple admin users across machines (crs58, cameron)
-- Same user on multiple machines (runner@stibnite, runner@blackphos)
-- Machine-specific users (raquel@blackphos)
-- Shared configuration via `modules/home/default.nix`
-- Per-user, per-machine customization
-
-### scaling to more machines
-
-1. **add new darwin host:**
-   - Create `configurations/darwin/${hostname}.nix`
-   - Define admin user with integrated home-manager
-   - Activate: `nix run . hostname`
-
-2. **add new nixos host:**
-   - Create `configurations/nixos/${hostname}.nix`
-   - Define admin user with integrated home-manager
-   - Activate: `nix run . hostname`
-
-3. **add non-admin user to any host:**
-   - Create `configurations/home/${user}@${host}.nix`
-   - User runs `make bootstrap && make setup-user`
-   - Admin updates `.sops.yaml` and runs `sops updatekeys`
-   - User activates: `nix run . user@hostname`
-
-### secrets management
-
-All secrets use sops-nix with age encryption:
-
-```bash
-# verify secrets access
-make check-secrets
-
-# create content-addressed encrypted file
-just hash-encrypt /path/to/file.txt
-
-# edit existing secret
-just edit-secret secrets/encrypted-file.yaml
-
-# validate all secrets decrypt correctly
-just validate-secrets
-```
-
-See [docs/sops-quick-reference.md](docs/sops-quick-reference.md) for comprehensive secrets workflow.
-
-### documentation
-
-- **architecture design:** [docs/nix-config-architecture-analysis.md](docs/nix-config-architecture-analysis.md)
-- **detailed onboarding:** [docs/new-user-host.md](docs/new-user-host.md)
-- **secrets workflow:** [docs/sops-quick-reference.md](docs/sops-quick-reference.md)
-- **team collaboration:** [docs/sops-team-onboarding.md](docs/sops-team-onboarding.md)
-
 <details>
 <summary>organization</summary>
 
@@ -234,6 +91,262 @@ This enables supporting shared configuration:
 │ default │ N/A         │
 ╰─────────┴─────────────╯
 ```
+
+</details>
+
+## usage
+
+<details>
+<summary>bootstrapping a new machine</summary>
+
+Start on a clean macOS or NixOS system:
+
+```bash
+# bootstrap nix and essential tools
+make bootstrap && exec $SHELL
+
+# verify installation
+make verify
+
+# setup secrets (generate age keys for sops-nix)
+make setup-user
+
+# activate configuration
+nix run . hostname       # admin user (darwin/nixos with integrated home-manager)
+nix run . user@hostname  # non-admin user (standalone home-manager, no sudo required)
+```
+
+**What this does:**
+- `make bootstrap`: Installs nix and direnv using Determinate Systems installer
+- `make verify`: Checks nix installation, flakes support, and flake validity
+- `make setup-user`: Generates age key at `~/.config/sops/age/keys.txt` for secrets
+- Activation: Applies system and/or home-manager configuration
+
+</details>
+
+<details>
+<summary>multi-user architecture</summary>
+
+This config supports two user patterns:
+
+**1. admin users** (darwin/nixos): Integrated home-manager configuration
+- Define user in `config.nix` and `configurations/{darwin,nixos}/${hostname}.nix`
+- Activate with `nix run . hostname` (requires sudo for system changes)
+- Full system and home-manager configuration
+- One admin per host
+
+**2. non-admin users**: Standalone home-manager configuration
+- Define user in `config.nix` and `configurations/home/${user}@${host}.nix`
+- Activate with `nix run . user@hostname` (no sudo required)
+- Home environment only, independent of system config
+- Multiple users per host supported
+
+**Directory structure:**
+```
+configurations/
+├── darwin/          # darwin system configs (admin users)
+│   ├── stibnite.nix
+│   └── blackphos.nix
+├── nixos/           # nixos system configs (admin users)
+│   └── orb-nixos.nix
+└── home/            # standalone home-manager (non-admin users)
+    ├── runner@stibnite.nix
+    └── raquel@blackphos.nix
+```
+
+</details>
+
+<details>
+<summary>adding a new host</summary>
+
+**Step 1: Get host SSH key and convert to age**
+
+On the new host:
+```bash
+# if host doesn't have ssh key, generate one
+sudo ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N ""
+
+# convert to age public key
+sudo cat /etc/ssh/ssh_host_ed25519_key.pub | ssh-to-age
+# Output: age18rgyca7ptr6djqn5h7rhgu4yuv9258v5wflg7tefgvxr06nz7cgsw7qgmy
+```
+
+**Step 2: Add host key to `.sops.yaml`**
+
+```yaml
+keys:
+  # existing keys...
+  - &newhostname age18rgyca7ptr6djqn5h7rhgu4yuv9258v5wflg7tefgvxr06nz7cgsw7qgmy
+
+creation_rules:
+  - path_regex: hosts/newhostname/.*\.yaml$
+    key_groups:
+      - age:
+        - *admin
+        - *crs58  # or appropriate admin user
+        - *newhostname
+```
+
+**Step 3: Create host configuration**
+
+Darwin: `configurations/darwin/${hostname}.nix`
+NixOS: `configurations/nixos/${hostname}.nix`
+
+See [docs/new-user-host.md](docs/new-user-host.md) for complete examples.
+
+**Step 4: Reencrypt secrets and activate**
+
+```bash
+# reencrypt secrets for new host
+sops updatekeys secrets/shared.yaml
+
+# activate configuration
+nix run . hostname
+```
+
+</details>
+
+<details>
+<summary>adding a new user</summary>
+
+**Step 1: User generates age key**
+
+On the user's machine:
+```bash
+make bootstrap && exec $SHELL  # if nix not installed
+make setup-user                 # generates ~/.config/sops/age/keys.txt
+
+# display public key to send to admin
+grep "public key:" ~/.config/sops/age/keys.txt
+```
+
+**Important:** Use `age-keygen` for user keys (not `ssh-to-age` from SSH keys).
+SSH keys (in Bitwarden) are for authentication; age keys are for secrets encryption.
+
+**Step 2: Admin adds user to config**
+
+1. Add user to `config.nix`:
+```nix
+newuser = {
+  username = "newuser";
+  fullname = "New User";
+  email = "newuser@example.com";
+  sshKey = "ssh-ed25519 AAAAC3Nza...";
+  isAdmin = false;
+};
+```
+
+2. Create `configurations/home/newuser@${host}.nix`
+
+3. Update `.sops.yaml` with user's age public key
+
+4. Reencrypt secrets:
+```bash
+sops updatekeys secrets/shared.yaml
+# repeat for any secrets the user needs access to
+```
+
+**Step 3: User activates**
+
+```bash
+nix run . newuser@hostname  # no sudo required
+```
+
+</details>
+
+<details>
+<summary>secrets management</summary>
+
+All secrets use sops-nix with age encryption.
+
+**Key generation:**
+- **Users**: `age-keygen -o ~/.config/sops/age/keys.txt` (via `make setup-user`)
+- **Hosts**: `ssh-to-age < /etc/ssh/ssh_host_ed25519_key.pub`
+
+**Daily operations:**
+```bash
+# verify secrets access
+make check-secrets
+
+# create content-addressed encrypted file
+just hash-encrypt /path/to/file.txt
+
+# edit existing secret
+just edit-secret secrets/encrypted-file.yaml
+
+# validate all secrets decrypt correctly
+just validate-secrets
+
+# reencrypt secrets after adding new keys to .sops.yaml
+sops updatekeys secrets/shared.yaml
+```
+
+**See also:**
+- [docs/sops-quick-reference.md](docs/sops-quick-reference.md) - Commands and troubleshooting
+- [docs/sops-team-onboarding.md](docs/sops-team-onboarding.md) - Team collaboration workflow
+- [docs/new-user-host.md](docs/new-user-host.md) - Comprehensive onboarding guide
+
+</details>
+
+<details>
+<summary>example: multi-machine multi-user setup</summary>
+
+**machine 1: stibnite (darwin, admin: crs58)**
+
+```bash
+cd /path/to/nix-config
+make bootstrap && exec $SHELL
+make setup-user  # generate age key
+# send public age key to repo admin
+
+# admin creates:
+# - config.nix entry for crs58
+# - configurations/darwin/stibnite.nix
+# - updates .sops.yaml with crs58's age key and host key
+
+nix run . stibnite  # activate darwin + home-manager
+```
+
+**add non-admin user (runner) on stibnite**
+
+```bash
+# runner generates their key
+make bootstrap && exec $SHELL
+make setup-user
+# send public age key to admin
+
+# admin creates:
+# - config.nix entry for runner
+# - configurations/home/runner@stibnite.nix
+# - updates .sops.yaml with runner's age key
+# - runs: sops updatekeys secrets/*
+
+# runner activates (no sudo)
+nix run . runner@stibnite
+```
+
+**machine 2: blackphos (darwin, admin: cameron)**
+
+```bash
+# similar bootstrap process
+# admin creates configurations/darwin/blackphos.nix
+nix run . blackphos
+
+# add runner on blackphos (same user, different machine config)
+# create configurations/home/runner@blackphos.nix
+nix run . runner@blackphos
+
+# add raquel (unique to blackphos)
+# create configurations/home/raquel@blackphos.nix
+nix run . raquel@blackphos
+```
+
+This demonstrates:
+- Multiple admin users across machines (crs58, cameron)
+- Same user on multiple machines (runner@stibnite, runner@blackphos)
+- Machine-specific users (raquel@blackphos)
+- Shared configuration via `modules/home/default.nix`
+- Per-user, per-machine customization
 
 </details>
 
