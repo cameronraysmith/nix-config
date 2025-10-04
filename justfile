@@ -461,12 +461,19 @@ ci-build-local category="" system="":
 
 # Validate latest CI run comprehensively
 [group('CI/CD')]
-ci-validate workflow="ci.yaml":
-    @./scripts/ci/validate-run.sh $(gh run list --workflow={{workflow}} --limit 1 --json databaseId --jq '.[0].databaseId')
+ci-validate workflow="ci.yaml" run_id="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -z "{{run_id}}" ]; then
+        RUN_ID=$(gh run list --workflow={{workflow}} --limit 1 --json databaseId --jq '.[0].databaseId')
+    else
+        RUN_ID="{{run_id}}"
+    fi
+    ./scripts/ci/validate-run.sh "$RUN_ID"
 
 # Debug specific failed job from latest CI run
 [group('CI/CD')]
-ci-debug-job workflow="ci.yaml" job_name="build-matrix":
+ci-debug-job workflow="ci.yaml" job_name="nix (aarch64-darwin)":
     @RUN_ID=$(gh run list --workflow={{workflow}} --limit 1 --json databaseId --jq '.[0].databaseId'); \
     JOB_ID=$(gh run view "$RUN_ID" --json jobs --jq ".jobs[] | select(.name == \"{{job_name}}\") | .databaseId"); \
     gh run view --job "$JOB_ID" --log

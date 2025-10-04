@@ -44,12 +44,12 @@ fi
 REQUIRED_JOBS=(
   "bootstrap-verification"
   "config-validation"
-  "build-matrix"
   "autowiring-validation"
   "secrets-workflow"
   "justfile-activation"
-  "integration-tests"
-  "existing-ci-integration"
+  "nix (x86_64-linux)"
+  "nix (aarch64-linux)"
+  "nix (aarch64-darwin)"
 )
 
 MISSING_JOBS=()
