@@ -151,7 +151,7 @@ See [docs/sops-quick-reference.md](docs/sops-quick-reference.md) for comprehensi
 <details>
 <summary>organization</summary>
 
-The configuration is structured using 
+The configuration is structured using
 [hercules-ci/flake-parts](https://github.com/hercules-ci/flake-parts)
 based on [srid/nixos-unified](https://github.com/srid/nixos-unified).
 
@@ -171,14 +171,21 @@ This enables supporting shared configuration:
 ```zsh
 ❯ om show .
 
-📦 Packages (nix build .#<name>)
-╭──────────┬───────────────────────────────────────────────────────╮
-│ name     │ description                                           │
-├──────────┼───────────────────────────────────────────────────────┤
-│ activate │ Activate NixOS/nix-darwin/home-manager configurations │
-│ default  │ Activate NixOS/nix-darwin/home-manager configurations │
-│ update   │ Update the primary flake inputs                       │
-╰──────────┴───────────────────────────────────────────────────────╯
+ Packages (nix build .#<name>)
+╭──────────────────────┬───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ name                 │ description                                                                                               │
+├──────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ activate             │ Activate NixOS/nix-darwin/home-manager configurations                                                     │
+│ starship-jj          │ starship plugin for jj                                                                                    │
+│ markdown-tree-parser │ A powerful JavaScript library and CLI tool for parsing and manipulating markdown files as tree structures │
+│ update               │ Update the primary flake inputs                                                                           │
+│ holos                │ Holos CLI tool                                                                                            │
+│ default              │ Activate NixOS/nix-darwin/home-manager configurations                                                     │
+│ cc-statusline-rs     │ Claude Code statusline implementation in Rust                                                             │
+│ quarto               │ Open-source scientific and technical publishing system built on Pandoc                                    │
+│ teller               │ Cloud native secrets management for developers                                                            │
+│ claude-code-bin      │ Agentic coding tool that lives in your terminal, understands your codebase, and helps you code faster     │
+╰──────────────────────┴───────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
 🐚 Devshells (nix develop .#<name>)
 ╭─────────┬────────────────────────────────╮
@@ -194,25 +201,22 @@ This enables supporting shared configuration:
 │ pre-commit │ N/A         │
 ╰────────────┴─────────────╯
 
-🐧 NixOS Configurations 
-(nixos-rebuild build --flake .#<name> to test; 
- change `build` --> `switch` or
- nix run .#activate on named host to instantiate)
-╭───────────┬─────────────╮
-│ name      │ description │
-├───────────┼─────────────┤
-│ orb-nixos │ N/A         │
-╰───────────┴─────────────╯
+🐧 NixOS Configurations (nixos-rebuild switch --flake .#<name>)
+╭─────────────────┬─────────────╮
+│ name            │ description │
+├─────────────────┼─────────────┤
+│ stibnite-nixos  │ N/A         │
+│ blackphos-nixos │ N/A         │
+│ orb-nixos       │ N/A         │
+╰─────────────────┴─────────────╯
 
-🍏 Darwin Configurations 
-(darwin-rebuild build --flake .#<name> to test; 
- change `build` --> `switch` or
- nix run .#activate on named host to instantiate)
+🍏 Darwin Configurations (darwin-rebuild switch --flake .#<name>)
 ╭────────────────┬─────────────╮
 │ name           │ description │
 ├────────────────┼─────────────┤
+│ blackphos      │ N/A         │
 │ macbook-darwin │ N/A         │
-│ MGB033059      │ N/A         │
+│ stibnite       │ N/A         │
 ╰────────────────┴─────────────╯
 
 🔧 NixOS Modules
@@ -250,6 +254,7 @@ Available recipes:
     help                                           # Display help
 
     [nix]
+    activate target=""                             # Activate the appropriate configuration for current user and host
     io                                             # Print nix flake inputs and outputs
     lint                                           # Lint nix files
     dev                                            # Manually enter dev shell
@@ -262,6 +267,7 @@ Available recipes:
     bootstrap-shell                                # Shell with bootstrap dependencies
     update                                         # Update nix flake
     update-primary-inputs                          # Update primary nix flake inputs (see flake.nix)
+    update-package package="claude-code-bin"       # Update a package using its updateScript
 
     [nix-home-manager]
     home-manager-bootstrap-build profile="aarch64-linux" # Bootstrap build home-manager with flake
@@ -303,12 +309,21 @@ Available recipes:
     validate-secrets                               # Validate all sops encrypted files can be decrypted
 
     [CI/CD]
+    test-ci-blocking workflow="ci.yaml"            # Trigger CI workflow and wait for result (blocking)
+    ci-status workflow="ci.yaml"                   # View latest CI run status and details
+    ci-logs workflow="ci.yaml"                     # View latest CI run logs
+    ci-logs-failed workflow="ci.yaml"              # View only failed logs from latest CI run
+    ci-show-outputs system=""                      # List categorized flake outputs using nix eval
+    ci-build-local category="" system=""           # Build all flake outputs locally with nom (inefficient manual version of om ci for debugging builds)
+    ci-validate workflow="ci.yaml" run_id=""       # Validate latest CI run comprehensively
+    ci-debug-job workflow="ci.yaml" job_name="nix (aarch64-darwin)" # Debug specific failed job from latest CI run
     ghsecrets repo="cameronraysmith/nix-config"    # Update github secrets for repo from environment variables
     list-workflows                                 # List available workflows and associated jobs.
-    test-flake-workflow                            # Execute flake.yaml workflow.
+    test-flake-workflow                            # Execute ci.yaml workflow locally via act.
     ratchet-pin                                    # Pin all workflow versions to hash values (requires Docker)
     ratchet-unpin                                  # Unpin hashed workflow versions to semantic values (requires Docker)
     ratchet-update                                 # Update GitHub Actions workflows to the latest version (requires Docker)
+    test-cachix                                    # Test cachix push/pull with a simple derivation
 
 ...by running 'just <command>'.
 This message is printed by 'just help' and just 'just'.
