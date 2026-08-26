@@ -6,6 +6,7 @@
 let
   # Capture outer config for use in imports
   flakeModules = config.flake.modules.nixos;
+  flakeHomeModules = config.flake.modules.homeManager;
   flakeUsers = config.flake.users;
 in
 {
@@ -203,6 +204,9 @@ in
         HandleLidSwitch = "lock";
         HandleLidSwitchExternalPower = "lock";
         HandleLidSwitchDocked = "ignore";
+        IdleAction = "ignore";
+        # Paired with niri's disabled power-key handling; firmware wake is unaffected.
+        HandlePowerKey = "ignore";
       };
 
       # Bulk PCIe d3cold disable before every sleep (D21, generalized). A live test
@@ -334,7 +338,7 @@ in
       # and gnome-shell, and a stock GNOME session needs nothing from cameron's
       # home-manager. GDM is a stage-2 display manager ordered after the root mount, so
       # it does not touch the initrd passphrase path, and it enables no plymouth
-      # (2.9/D11 stand). niri is out of scope, deferred to a reversible follow-up.
+      # (2.9/D11 stand). GNOME remains the lockable fallback alongside niri.
       services.displayManager.gdm.enable = true;
       # The greeter is the machine's own worst offender: with autoSuspend at its nixpkgs
       # default of true the greeter's power settings are left empty and gnome-settings-daemon
@@ -343,6 +347,14 @@ in
       # makes nixpkgs write a greeter database with both timeouts 0 and both types "nothing".
       services.displayManager.gdm.autoSuspend = false;
       services.desktopManager.gnome.enable = true;
+
+      programs.niri.enable = true;
+      # Explicit null beats niri.nix's mkDefault "niri"; the option default does not.
+      # "gnome" would also rewrite every user's saved AccountsService session on each
+      # GDM start. null leaves that history intact and lets GDM fall back to GNOME.
+      services.displayManager.defaultSession = null;
+      # No picker switch: gnome-shell 50.2 js/gdm/loginDialog.js:388-390 hides the
+      # session button only when ids.length <= 1; registering niri supplies the second.
 
       # Nothing on this machine suspends itself on idle. Resume from suspend fails in roughly
       # one cycle in five — 7 failures against 30 successes across 14 boots — with no
@@ -417,7 +429,9 @@ in
       # Infrastructure settings (useGlobalPkgs, extraSpecialArgs, etc.) are provided by
       # the cameron inventory service.
       home-manager.users.cameron = {
-        imports = flakeUsers.cameron.modules;
+        imports = flakeUsers.cameron.modules ++ [ flakeHomeModules.niri ];
+        # Validate with the exact derivation installed by nixpkgs' NixOS module.
+        programs.niri.package = config.programs.niri.package;
       };
     };
 }
