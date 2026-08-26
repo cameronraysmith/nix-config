@@ -147,6 +147,11 @@ if (process.argv.includes("--s9-s10-empirical")) {
   await (await import("./s9-s10-checks.mjs")).runEmpirical({ contract, additions, tools });
   process.exit(0);
 }
+const activationSource = process.argv.find((arg) => arg.startsWith("--activation-source-receipt="));
+if (activationSource) {
+  await (await import("./deployment-checks.mjs")).runLiveActivationCheck({ moduleUrl, sourceReceipt: activationSource.slice("--activation-source-receipt=".length) });
+  process.exit(0);
+}
 await (await import("./s9-s10-checks.mjs")).runChecks({ contract, additions, tools, types });
 if (process.argv.includes("--s6-empirical")) {
   await (await import("./s6-checks.mjs")).runS6Empirical({ contract, tools });

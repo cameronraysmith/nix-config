@@ -99,28 +99,45 @@ export async function applyDns(cwd: string, plan: Awaited<ReturnType<typeof plan
   return { source: plan.source, sha: plan.sha, plan: plan.plan, sha256: plan.sha256, applied: plan.summary, execution: plan.execution };
 }
 export async function probeCrossChain(cwd: string, signal: AbortSignal, execute = capture) {
-  const observe = async (command: string) => {
+  const observe = async <T>(command: string, project: (output: string) => T) => {
     try {
       const result = await execute(cwd, command, signal);
-      return { stdout: result.stdout, receipt: processReceipt(result), error: null };
+      return { value: result.exitCode === 0 ? project(result.stdout.trim()) : null, receipt: processReceipt(result), error: null };
     } catch (error) {
       signal.throwIfAborted();
-      return { stdout: "", receipt: null, error: String(error) };
+      return { value: null, receipt: null, error: String(error).slice(0, 1024) };
     }
   };
-  const unit = await observe("ssh root@magnetite.zt systemctl show gitea-mq.service -p ActiveState -p SubState -p UnitFileState --value");
+  const unit = await observe("ssh root@magnetite.zt systemctl show gitea-mq.service -p ActiveState -p SubState -p UnitFileState", (output) => {
+    const fields = Object.fromEntries(output.split("\n").map((line) => line.split("=")));
+    const state = (key: string) => /^[a-z-]{1,64}$/.test(fields[key] ?? "") ? fields[key]! : null;
+    return { activeState: state("ActiveState"), subState: state("SubState"), unitFileState: state("UnitFileState") };
+  });
   const nginxVhostCount = await observe(`ssh root@magnetite.zt ${quote(`cfg=$(systemctl show nginx -p ExecStart --value | grep -o '/nix/store/[a-z0-9]*-nginx.conf')
 test -n "$cfg" || exit 1
 grep -Ec '^[[:space:]]*server_name[[:space:]]+mq[.]scientistexperience[.]net[[:space:]]*;' "$cfg"
 status=$?
-test "$status" -le 1`)}`);
-  const httpsStatus = await observe("curl -s -o /dev/null -w '%{http_code}\\n' --max-time 30 https://mq.scientistexperience.net");
+test "$status" -le 1`)}`, (output) => /^\d+$/.test(output) && Number.isSafeInteger(Number(output)) ? Number(output) : null);
+  const httpsStatus = await observe("curl -s -o /dev/null -w '%{http_code}\\n' --max-time 30 https://mq.scientistexperience.net", (output) => /^[1-5]\d{2}$/.test(output) ? Number(output) : null);
   return { unit, nginxVhostCount, httpsStatus };
+}
+export async function observeActivation(cwd: string, source: DeploymentSource, signal: AbortSignal, execute = capture) {
+  const expected = requireSuccess(await execute(cwd, `nix eval --no-write-lock-file --raw ${quote(`${source.source}#nixosConfigurations.magnetite.config.system.build.toplevel.outPath`)}`, signal));
+  const current = requireSuccess(await execute(cwd, "ssh root@magnetite.zt readlink /run/current-system", signal));
+  const systemPath = /^\/nix\/store\/[a-z0-9]{32}-nixos-system-magnetite-[^\s/]+$/;
+  if (!systemPath.test(expected) || !systemPath.test(current)) throw new Blocked("Invalid intended or observed magnetite system path; activation not attempted");
+  return { expected, current, alreadyActivated: current === expected };
 }
 const DumpReceipt = Type.Object({ path: Type.String({ pattern: "^/var/backups/omnigent/omnigent-.+\\.sql$" }), bytes: Type.Integer({ minimum: 1 }) });
 export async function updateMachine(cwd: string, source: JoinDeploymentSource, signal: AbortSignal, execute = capture) {
   const run = async (command: string) => requireSuccess(await execute(cwd, command, signal));
-  const before = await run("ssh root@magnetite.zt readlink /run/current-system");
+  const activation = await observeActivation(cwd, source, signal, execute);
+  const before = activation.current;
+  const identity = { source: source.source, sha: source.sha, chainTipSha: source.chainTipSha, parents: source.parents };
+  if (activation.alreadyActivated) return {
+    ...identity, activation, outcome: "already-activated" as const, before, after: before, log: null, dump: null,
+    crossChain: await probeCrossChain(cwd, signal, execute), invocation: null,
+  };
   const dumpOutput = await run(`ssh root@magnetite.zt ${quote(`set -eu
 umask 077
 mkdir -p /var/backups/omnigent
@@ -135,7 +152,7 @@ cat "$dump.receipt.json"`)}`);
   const log = `logs/magnetite-${new Date().toISOString().replace(/[:.]/g, "-")}.log`;
   await run(`SOURCE=${quote(source.source)}\nclan machines update magnetite --flake "$SOURCE" 2>&1 | tee ${quote(log)}`);
   const after = await run("ssh root@magnetite.zt readlink /run/current-system");
-  if (!before.startsWith("/nix/store/") || !after.startsWith("/nix/store/") || before === after) throw new Blocked("Magnetite current-system did not change to a different store path");
+  if (after !== activation.expected) throw new Blocked(`Magnetite current-system does not match intended source: expected=${activation.expected}; before=${before}; after=${after}`);
   const crossChain = await probeCrossChain(cwd, signal, execute);
-  return { ...source, before, after, log, dump, crossChain, invocation: 'clan machines update magnetite --flake "$SOURCE" (git+file URL; installed --flake help permits remote or local flakes)' };
+  return { ...identity, activation, outcome: "activated" as const, before, after, log, dump: { path: dump.path, bytes: dump.bytes }, crossChain, invocation: 'clan machines update magnetite --flake "$SOURCE" (git+file URL; installed --flake help permits remote or local flakes)' };
 }

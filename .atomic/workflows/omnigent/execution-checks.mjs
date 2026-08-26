@@ -152,7 +152,6 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       ...tools,
       save: async (_cwd, file, value) => { files.set(file, structuredClone(value)); },
       snapshot: async () => ({ ...tree }),
-      processCheckpoint: async (_root, _name, action) => ({ receipt: [], evidence: await action() }),
       capture: async (_cwd, command) => {
         events.push(command);
         if (command.includes("rev-parse --verify")) {
@@ -239,6 +238,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
         if (driftBeforeLand && name === "land-0") tree[working.at(-1)] = "unowned-race";
         try {
           const value = await action({ signal });
+          assert.deepEqual(JSON.parse(JSON.stringify(value)), value, `${name}: checkpoint must round-trip through JSON`);
           if (name === "allocate-evidence") allocated = value;
           return { ok: true, value };
         } catch (error) { return { ok: false, error: { message: String(error) } }; }

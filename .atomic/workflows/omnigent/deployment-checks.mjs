@@ -12,6 +12,13 @@ export async function runDeploymentChecks({ moduleUrl }) {
   const deployment = await import(moduleUrl(".atomic/workflows/omnigent/deployment.ts"));
   const tools = await import(moduleUrl(".atomic/workflows/omnigent/tools.ts"));
   const { hostEnvironment } = await import(moduleUrl(".atomic/workflows/omnigent/slices.ts"));
+  const checkpoint = async (node, action) => {
+    const result = await tools.processCheckpoint("unused-mock-root", node, action);
+    assert.deepEqual(JSON.parse(JSON.stringify(result)), result);
+    return result.evidence;
+  };
+  await assert.rejects(() => checkpoint("raw-regression", async () => ({ nested: [observation("side effect succeeded")] })), /Raw process output cannot enter a checkpoint/);
+  await checkpoint("cross-chain-projection", () => deployment.probeCrossChain("/mock", signal, async () => observation("active")));
   const sha = "a".repeat(40), name = "omnigent-magnetite";
   for (const needsExport of [false, true]) {
     const commands = [];
@@ -76,46 +83,95 @@ export async function runDeploymentChecks({ moduleUrl }) {
   assert.throws(() => deployment.dnsPlanSummary({}), /Malformed/);
   const source = { sha: joinSha, chainTipSha: sha, parents: [sha, otherParent], source: `git+file:///mock?rev=${joinSha}` };
   const dump = { path: "/var/backups/omnigent/omnigent-20260909T120000Z-123.sql", bytes: 4096 };
+  const expected = `/nix/store/${"1".repeat(32)}-nixos-system-magnetite-new`;
+  const previous = `/nix/store/${"2".repeat(32)}-nixos-system-magnetite-old`;
+  const skipCommands = [];
+  const skipped = await checkpoint("update-machine-already-activated", () => deployment.updateMachine("/mock", source, signal, async (_cwd, command) => {
+    skipCommands.push(command);
+    if (command.startsWith("nix eval") || command.includes("readlink")) return observation(expected);
+    assert(!/pg_dump|clan machines update/.test(command), "Already activated generation must not repeat dump or activation");
+    return observation();
+  }));
+  assert.equal(skipped.activation.alreadyActivated, true);
+  assert.equal(skipped.outcome, "already-activated");
+  assert.equal(skipped.before, expected);
+  assert.equal(skipped.after, expected);
+  assert.equal(skipped.dump, null);
+  assert.equal(skipped.log, null);
+  assert.equal(skipCommands.filter((command) => command.startsWith("nix eval")).length, 1);
+  let installed = previous, updates = 0, dumps = 0;
+  const interruptedExecute = async (_cwd, command) => {
+    if (command.startsWith("nix eval")) return observation(expected);
+    if (command.includes("readlink")) return observation(installed);
+    if (command.includes("pg_dump")) { dumps++; return observation(JSON.stringify(dump)); }
+    if (command.includes("clan machines update")) { updates++; installed = expected; }
+    return observation();
+  };
+  await assert.rejects(() => checkpoint("interrupted-update", async () => {
+    await deployment.updateMachine("/mock", source, signal, interruptedExecute);
+    throw Error("simulated checkpoint interruption after activation");
+  }), /simulated checkpoint interruption/);
+  const resumed = await checkpoint("resumed-update", () => deployment.updateMachine("/mock", source, signal, interruptedExecute));
+  assert.equal(resumed.outcome, "already-activated");
+  assert.equal(updates, 1);
+  assert.equal(dumps, 1);
+  console.log("PASS interrupted post-activation checkpoint re-entry: exactly one dump and one clan update across both attempts");
   let dumpScript = "";
-  for (const changed of [true, false]) {
+  for (const after of [expected, previous, `/nix/store/${"3".repeat(32)}-nixos-system-magnetite-foreign`]) {
     let reads = 0;
     const commands = [];
-    const run = () => deployment.updateMachine("/mock", source, signal, async (_cwd, command) => {
+    const run = () => checkpoint("update-machine", () => deployment.updateMachine("/mock", source, signal, async (_cwd, command) => {
       commands.push(command);
-      if (command.includes("readlink")) return observation(`/nix/store/${++reads === 1 || !changed ? "old" : "new"}`);
-      if (command.includes("pg_dump")) return observation(JSON.stringify(dump));
+      if (command.startsWith("nix eval")) return observation(expected);
+      if (command.includes("readlink")) return observation(++reads === 1 ? previous : after);
+      if (command.includes("pg_dump")) return observation(JSON.stringify({ ...dump, stdout: "must not escape parsed receipt" }));
       return observation();
-    });
-    if (changed) {
+    }));
+    if (after === expected) {
       const receipt = await run();
-      assert.equal(receipt.before, "/nix/store/old");
-      assert.equal(receipt.after, "/nix/store/new");
+      assert.equal(receipt.before, previous);
+      assert.equal(receipt.after, expected);
+      assert.deepEqual(receipt.activation, { expected, current: previous, alreadyActivated: false });
+      assert.equal(receipt.outcome, "activated");
+      console.log("RECEIPT update-machine " + JSON.stringify(receipt));
       assert.equal(receipt.source, source.source);
       assert.deepEqual(receipt.dump, dump);
       assert.equal(receipt.sha, joinSha);
       assert.equal(receipt.chainTipSha, sha);
       assert.deepEqual(receipt.parents, [sha, otherParent]);
       assert(receipt.crossChain.unit && receipt.crossChain.nginxVhostCount && receipt.crossChain.httpsStatus);
-      assert(commands[4].includes("systemctl show gitea-mq.service"));
-      assert(commands[5].includes("nginx.conf"));
-      assert(commands[6].includes("https://mq.scientistexperience.net"));
-    } else await assert.rejects(run, /did not change/);
-    assert(commands[1].includes("ssh root@magnetite.zt") && commands[1].includes("pg_dump"));
-    dumpScript = execFileSync("bash", ["-c", `ssh() { printf '%s' "$2"; }; ${commands[1]}`], { encoding: "utf8" });
-    assert(commands[2].includes(source.source) && commands[2].includes('clan machines update magnetite --flake "$SOURCE" 2>&1 | tee'));
+      assert(commands[5].includes("systemctl show gitea-mq.service"));
+      assert(commands[6].includes("nginx.conf"));
+      assert(commands[7].includes("https://mq.scientistexperience.net"));
+    } else await assert.rejects(run, /does not match intended source/);
+    assert(commands[2].includes("ssh root@magnetite.zt") && commands[2].includes("pg_dump"));
+    dumpScript = execFileSync("bash", ["-c", `ssh() { printf '%s' "$2"; }; ${commands[2]}`], { encoding: "utf8" });
+    assert(commands[3].includes(source.source) && commands[3].includes('clan machines update magnetite --flake "$SOURCE" 2>&1 | tee'));
+    for (const command of commands) execFileSync("shellcheck", ["-s", "bash", "-"], { input: command, stdio: ["pipe", "inherit", "inherit"] });
   }
   for (const result of [observation("", 1), observation(""), observation(JSON.stringify({ ...dump, bytes: 0 })), observation(JSON.stringify({ bytes: 4096 }))]) {
     const commands = [];
     await assert.rejects(() => deployment.updateMachine("/mock", source, signal, async (_cwd, command) => {
       commands.push(command);
-      return command.includes("readlink") ? observation("/nix/store/old") : result;
+      if (command.startsWith("nix eval")) return observation(expected);
+      return command.includes("readlink") ? observation(previous) : result;
     }));
     assert(!commands.some((command) => command.includes("clan machines update")), "Missing, empty or failed dump must block activation");
   }
+  for (const [intended, current] of [[observation(""), observation(previous)], [observation(expected, 1), observation(previous)], [observation(expected), observation("not-a-store-path")], [observation(expected), observation(previous, 255)]]) {
+    const commands = [];
+    await assert.rejects(() => deployment.updateMachine("/mock", source, signal, async (_cwd, command) => {
+      commands.push(command);
+      assert(command.startsWith("nix eval") || command.includes("readlink"));
+      return command.startsWith("nix eval") ? intended : current;
+    }));
+    assert(!commands.some((command) => /pg_dump|clan machines update/.test(command)));
+  }
+  console.log("PASS checkpoint JSON round trips and activation reconciliation: already activated skips effects; differing source dumps then updates; unchanged/wrong generation and unavailable evidence fail closed");
   execFileSync("shellcheck", ["-s", "sh", "-"], { input: dumpScript, stdio: ["pipe", "inherit", "inherit"] });
   let mqScript = "", httpsScript = "";
-  for (const [unit, count, status, exitCode] of [["active\nrunning\nenabled", "1", "200", 0], ["inactive\ndead\ndisabled", "0", "503", 0], ["", "", "000", 255]]) {
-    const observed = await deployment.probeCrossChain("/mock", signal, async (_cwd, command) => {
+  for (const [unit, count, status, exitCode] of [["ActiveState=active\nSubState=running\nUnitFileState=enabled", "1", "200", 0], ["ActiveState=inactive\nSubState=dead\nUnitFileState=disabled", "0", "503", 0], ["", "", "000", 255]]) {
+    const observed = await checkpoint("cross-chain", () => deployment.probeCrossChain("/mock", signal, async (_cwd, command) => {
       if (command.includes("nginx.conf")) {
         mqScript = execFileSync("bash", ["-c", `ssh() { printf '%s' "$2"; }; ${command}`], { encoding: "utf8" });
         return observation(count, exitCode);
@@ -124,13 +180,13 @@ export async function runDeploymentChecks({ moduleUrl }) {
         httpsScript = command;
         return observation(status, exitCode);
       }
-      assert.equal(command, "ssh root@magnetite.zt systemctl show gitea-mq.service -p ActiveState -p SubState -p UnitFileState --value");
+      assert.equal(command, "ssh root@magnetite.zt systemctl show gitea-mq.service -p ActiveState -p SubState -p UnitFileState");
       execFileSync("shellcheck", ["-s", "sh", "-"], { input: command, stdio: ["pipe", "inherit", "inherit"] });
       return observation(unit, exitCode);
-    });
-    assert.equal(observed.unit.stdout, unit);
-    assert.equal(observed.nginxVhostCount.stdout, count);
-    assert.equal(observed.httpsStatus.stdout, status);
+    }));
+    assert.deepEqual(observed.unit.value, exitCode ? null : Object.fromEntries(unit.split("\n").map((line) => { const [key, value] = line.split("="); return [key[0].toLowerCase() + key.slice(1), value]; })));
+    assert.equal(observed.nginxVhostCount.value, exitCode ? null : Number(count));
+    assert.equal(observed.httpsStatus.value, exitCode ? null : Number(status));
     for (const field of ["unit", "nginxVhostCount", "httpsStatus"]) assert.equal(observed[field].receipt.exitCode, exitCode);
   }
   const unavailable = await deployment.probeCrossChain("/mock", signal, async () => { throw Error("ssh unavailable"); });
@@ -184,6 +240,14 @@ ${dumpScript.replaceAll("/var/backups/omnigent", directory)}`;
   }
 
   const bumpUrl = moduleUrl(".atomic/workflows/bump/tools.ts"), bump = await import(bumpUrl);
+  const realRoot = `logs/omnigent-checkpoint-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  const realProcess = () => bump.capture(process.cwd(), "printf 'side effect succeeded\\n'", signal);
+  await assert.rejects(() => tools.processCheckpoint(realRoot, "raw", realProcess), /Raw process output cannot enter a checkpoint/);
+  const projected = await tools.processCheckpoint(realRoot, "projected", async () => bump.processReceipt(await realProcess()));
+  assert.deepEqual(JSON.parse(JSON.stringify(projected)), projected);
+  assert.equal(projected.evidence.exitCode, 0);
+  assert.equal(projected.evidence.tail, "side effect succeeded\n");
+  console.log("PASS real printf process exits 0: raw callback rejected, selected ProcessReceipt accepted and JSON-round-tripped");
   const mockBump = dataUrl(Object.keys(bump).map((key) => key === "capture" ? "export const capture = (...args) => globalThis.__omnigentEffects.capture(...args);" : `export const ${key} = globalThis.__omnigentEffects.bump.${key};`).join("\n"));
   const mockFs = dataUrl("export const readFile = async (path, encoding) => { const value = globalThis.__omnigentEffects.files.get(path); if (value === undefined) throw Error('Missing mocked file: ' + path); return encoding ? value : Buffer.from(value); };");
   const files = new Map([["/mock/evidence/dns.tfplan", "saved-plan"], ["/mock/evidence/dns.tfplan.json", JSON.stringify({ resource_changes: [dns] })]]);
@@ -196,14 +260,16 @@ ${dumpScript.replaceAll("/var/backups/omnigent", directory)}`;
     return import(dataUrl(code));
   };
   const planTools = await mocked(".atomic/workflows/omnigent/deployment.ts", true);
-  const plan = await planTools.planDns("/mock", "evidence", source, signal);
+  const plan = await checkpoint("plan-dns", () => planTools.planDns("/mock", "evidence", source, signal));
+  console.log("RECEIPT plan-dns " + JSON.stringify(plan));
   assert.equal(plan.plan, "/mock/evidence/dns.tfplan");
   assert.deepEqual(plan.summary, summary);
   assert(commands[0].includes(`${source.source}#terraform.config`) && commands[0].includes(`${source.source}#terraform.terraform`));
   assert(commands[0].includes("init -input=false") && commands[0].includes("plan -input=false -out='/mock/evidence/dns.tfplan'"));
   assert(commands[0].includes("show -json '/mock/evidence/dns.tfplan' > '/mock/evidence/dns.tfplan.json'"));
   assert(commands[0].includes("umask 077") && commands[0].includes("chmod 600"));
-  await planTools.applyDns("/mock", plan, signal);
+  const applied = await checkpoint("apply-dns", () => planTools.applyDns("/mock", plan, signal));
+  console.log("RECEIPT apply-dns " + JSON.stringify(applied));
   assert(commands[1].includes("apply -input=false '/mock/evidence/dns.tfplan'"));
   files.set(plan.plan, "concurrently-replaced-plan");
   await assert.rejects(() => planTools.applyDns("/mock", plan, signal), /changed after review/);
@@ -246,4 +312,42 @@ ${dumpScript.replaceAll("/var/backups/omnigent", directory)}`;
     assert(!result.stdout.includes("PI_") && !result.stdout.includes("https://"), "Probe logs must contain only booleans");
   }
   console.log("PASS pinned git export/source, DNS-only saved plan and hash guard, fail-closed pre-update dump with durable private receipt (success/failed/empty/missing shell fixtures), changed activation path, fail-closed topology recovery, POSIX probes and ShellCheck (mocked remote effects)");
+}
+
+export async function runLiveActivationCheck({ moduleUrl, sourceReceipt }) {
+  const deployment = await import(moduleUrl(".atomic/workflows/omnigent/deployment.ts"));
+  const bump = await import(moduleUrl(".atomic/workflows/bump/tools.ts"));
+  const source = JSON.parse(readFileSync(sourceReceipt, "utf8")).value.evidence;
+  assert.match(source.sha, /^[a-f0-9]{40}$/);
+  assert.equal(source.source, `git+file://${process.cwd()}?rev=${source.sha}`);
+  const signal = AbortSignal.timeout(600_000);
+  const commands = [];
+  const allowed = new Set([
+    `nix eval --no-write-lock-file --raw ${bump.quote(`${source.source}#nixosConfigurations.magnetite.config.system.build.toplevel.outPath`)}`,
+    "ssh root@magnetite.zt readlink /run/current-system",
+    "ssh root@magnetite.zt systemctl show gitea-mq.service -p ActiveState -p SubState -p UnitFileState",
+    `ssh root@magnetite.zt ${bump.quote(`cfg=$(systemctl show nginx -p ExecStart --value | grep -o '/nix/store/[a-z0-9]*-nginx.conf')
+test -n "$cfg" || exit 1
+grep -Ec '^[[:space:]]*server_name[[:space:]]+mq[.]scientistexperience[.]net[[:space:]]*;' "$cfg"
+status=$?
+test "$status" -le 1`)}`,
+    "curl -s -o /dev/null -w '%{http_code}\\n' --max-time 30 https://mq.scientistexperience.net",
+  ]);
+  const root = `logs/omnigent-live-activation-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  const receipt = await bump.processCheckpoint(root, "update-machine", () => deployment.updateMachine(process.cwd(), source, signal, async (cwd, command, signal) => {
+    commands.push(command);
+    assert(allowed.has(command), `Live check refuses command: ${command}`);
+    execFileSync("shellcheck", ["-s", "bash", "-"], { input: command, stdio: ["pipe", "inherit", "inherit"] });
+    console.log("COMMAND " + command);
+    const result = await bump.capture(cwd, command, signal);
+    console.log("RESULT " + JSON.stringify(bump.processReceipt(result)));
+    return result;
+  }));
+  assert.deepEqual(JSON.parse(JSON.stringify(receipt)), receipt);
+  assert.equal(receipt.evidence.outcome, "already-activated");
+  assert.equal(receipt.evidence.activation.alreadyActivated, true);
+  assert(commands.every((command) => allowed.has(command)));
+  assert(!commands.some((command) => /clan machines update|pg_dump/.test(command)));
+  console.log("RECEIPT live update-machine " + JSON.stringify(receipt));
+  console.log("PASS already activated at pinned source toplevel; zero clan updates and zero dumps; live read-only checkpoint JSON round trip");
 }
