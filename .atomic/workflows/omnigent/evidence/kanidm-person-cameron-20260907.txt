@@ -1,0 +1,5 @@
+Login Success for idm_admin@accounts.scientistexperience.net
+displayname: Cameron Smith
+mail: cameron.ray.smith@gmail.com
+name: cameron
+spn: cameron@accounts.scientistexperience.net
