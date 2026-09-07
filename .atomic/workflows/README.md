@@ -105,3 +105,79 @@ Cancellation or deadline interruption terminates the process group, drains its p
 
 The graph is visible in the entry file from release resolution through landing.
 Its realized shape depends on plan-only mode, bounded repairs, skill dependencies, review and human confirmation; a static diagram would describe only one possible run.
+
+## deploy-omnigent
+
+`deploy-omnigent.ts` runs S0–S3 as create/reuse → implement → scope → land → gate-sandbox → diff → review; repairs repeat scope/land/gates/review into the same change within `max_repair_attempts`.
+Landing uses only attributed paths with `jj squash --from @ --into <change> --use-destination-message --keep-emptied -- <paths>`, checks topology, advances the bookmark, and resolves the exported commit SHA.
+An empty attribution skips squash only when the change already has allowed content; ownership baselines, preexisting-path protection, and foreign-path human decisions remain enforced.
+Each gate batch creates a detached temporary Git worktree at that SHA and removes it in `finally`, including after failure or cancellation; no jj workspace is created.
+GrepAssert and Command gates run there; every Nix gate, including S2's extendModules fixture and remote builds, uses `git+file://<absolute-repo>?ref=<chain_name>&rev=<sha>` through the shared deployment-source helper.
+The Linear readback script runs from its absolute primary-repository path with the worktree root as its argument; it requires Python/PyYAML and stored Linear workspace credentials, ignoring inherited `LINEAR_API_KEY`.
+Reviews receive only the slice contract, SHA-bearing gate receipts, and `jj --ignore-working-copy diff -r <change>`; SHA observations before/after review and before repair landing block changes to the reviewed commit, not unrelated working-copy edits.
+An unchanged repair after `changes_requested` reruns all gates once and blocks if review or gates still fail; these observations are not locks against concurrent same-path edits.
+Every stage requests `openai-codex/gpt-6-astra`: high for implementation/repair/tracking, max for review, and medium for reporting, with no explicit fallbacks; actual model/thinking assertions block missing or off-policy metadata after the call.
+Required `splice_after` names the seed parent; other inputs are `chain_name` (`omnigent-magnetite`), `start_at_slice` (0), `verified_changes` ([]), `max_repair_attempts` (2), `build_timeout_minutes` (60), `deploy` (true), and `linear_team` (`CAM`).
+Resume validates bookmark/topology/path sets and runs preceding slices' gates in sandboxes at their own SHAs before marking them verified.
+S0 recovery accepts only seed → join or seed → allowed-path (possibly empty) S0 → join with empty `verified_changes`, records `reused_change`, and skips tracking only when the proposal is observed in `@`; other interrupted shapes fail closed.
+Secret generation touches only the two Omnigent generator directories, squashes into S3, and rechecks topology before resolving the deployment tip SHA.
+Deployment requires the exported bookmark to equal that SHA (one export retry) and uses the same committed-source URL helper, never `@`.
+Pinned `terraform.config` and argument-forwarding `terraform.terraform` use shared `terraform/` state and configured encryption; the default Terraform app does not forward arguments.
+The saved DNS plan must contain exactly one create of `cloudflare_dns_record` named `omni.scientistexperience.net`; confirmation shows its summary and apply verifies its hash.
+Plan/JSON files are mode 600 under the evidence root and may contain secrets; receipts retain only the summary and hash.
+`clan machines update magnetite --flake "$SOURCE"` records URL/SHA and requires different before/after `/run/current-system` paths; server probes precede the operator wizard and POSIX runner-settings probes follow it.
+Checklist responses remain verbatim human attestations: `failed` blocks, `not tested` leaves acceptance incomplete, and all-passed yields `human_attested`, never independently verified acceptance.
+Evidence lives under `.atomic/workflows/runs/deploy-omnigent/<chain_name>/<run-key>/`; stop-for-replan preserves verified changes, landed-but-unverified slice content, and any unlanded edits.
+Run `node .atomic/workflows/omnigent/check.mjs` for strict typing, negative fixtures, mocked execution, ShellCheck, and Nix parsing without evaluation, builds, deployment, or jj mutations.
+The controlling session owns registry reload and launch; live replay, worktree execution, activation, authentication, and ACP acceptance remain untested by these checks.
+
+## stand-up-gitea-mq (draft; do not launch)
+
+`stand-up-gitea-mq.ts` authors the CAM-56 graph: preflight → Nix implementation/evaluation/fresh review/routing → G1 App and credential witnesses → dedicated App-id/vars route → DNS saved plan/apply/dig/route → G2 approved ruleset PUT/readback → optional pinned deployment → V2/V3/V6/V9 observations and scratch rollback evaluation → documentation → witnessed verify.md → terminal roborev.
+Linear T2/T3 tools are best-effort, retain separate command outcomes, and route proposal frontmatter updates with the relevant changes.
+Atomic 0.9.18's public `WorkflowRunContext` has no model-catalog port, although `RunOpts` does; absent catalog metadata does not block preflight, by explicit operator decision.
+The host can implicitly fall back to its controller model before the workflow can inspect the attempt; this risk is accepted, not prevented by an empty fallback list.
+After every stage and before using its output, the workflow records actual model/thinking metadata and rejects off-policy attempts or missing metadata with a blocked exit.
+The latest author report, `logs/adr-verify/workflow-author-report-3.md`, records closure evidence and remaining launch limitations.
+
+Inputs are `change` (constant `stand-up-gitea-mq-on-magnetite`), required `splice_after` (current `rollup-landing` tip change id), `deploy` (true), `max_repair_attempts` (3; range 1–3), `build_timeout_minutes` (45), and optional `app_slug_hint`.
+There is no `start_at`; Atomic resume is the only re-entry mechanism, and a fresh run requires empty `@` and no preexisting aspect.
+Completed tool/prompt nodes replay; interruption inside an unfinished external effect still requires reconciliation before retrying it, not an assumption of exactly-once effects.
+Each gate uses forward-only attempt ids with a `batch: 1 | 2` bound; G3 authorizes exactly one additional bounded batch, and second exhaustion blocks.
+Every workflow-owned process/network effect belongs to a finite `ctx.tool` callback forwarding its cancellation signal; reports and snapshots live under the ignored run evidence directory.
+
+All model stages request only `openai-codex/gpt-6-astra`: high for implement/repair/replan/diagnose, medium for render/docs/verify-writer, and max for reviewers.
+When a catalog port is available, missing required levels blocks; otherwise native stage resolution is used, with the accepted implicit-fallback risk and mandatory post-call rejection above.
+Role constraints, paths and G1–G5 identities are protected with `<keepContext>`; structured stage outputs use TypeBox schemas and exhaustive constructor switches.
+Completion requires four branded tool witnesses for implemented changes, deployment, validation results, and report writing; blocked/declined exits expose no positive technical claims.
+Human gates are authorizations, not evidence that the technical checks passed.
+
+The workflow never moves or describes `@`, pushes to main, deletes a ref without G5, applies the `merge-queue` label, runs `linear auth`, or ticks operator tasks 1.1/8.2.
+Writers are restricted to their slice paths plus the change directory; build-service aspects remain untouched.
+The post-G1 exception permits exactly `vars/per-machine/magnetite/gitea-mq-github-app-secret-key` and `vars/per-machine/magnetite/gitea-mq-github-webhook-secret`, plus shared vars/sops paths only if the imported Omnigent helper enumerates them (currently none).
+The operator populates the PEM outside the workflow; generation checks both Clan help surfaces for no-commit support and blocks if Clan changes detached HEAD, creates a Git commit or jj change, or changes foreign paths.
+The App-id patch, generated envelopes, tasks.md and proposal.md route as one dedicated post-G1 change.
+Secrets remain inside opaque subprocesses; the leak scan reports counts only across working files including ignored paths, HEAD and history with a positive hostname control.
+
+G2 approves a saved JSON body and its hash, never a regenerated request.
+G5 permits only the exact `refs/landings/v6-probe` create/delete pair with leases and preexistence checks.
+V6 records push acceptance/refusal separately from its falsified deletion-protection claim; V2 branch polling cannot exclude transient refs between observations.
+`deploy=false` skips machine activation and live/ref validation, not the earlier G1, DNS or ruleset operations; it is not a dry run.
+Run `node .atomic/workflows/gitea-mq/check.mjs` for strict typing, negative witness/batch/schema fixtures, pure contracts, local Nix parsing (never evaluation), Python parsing, in-memory graph execution, and mocked command boundaries.
+The four required graph scenarios are success, G2 decline, two-batch G3 exhaustion, and completed-node replay; replay asserts zero repeated callbacks, model calls, or human prompts.
+Additional tests cover no-op repairs, Nix invalidation/reactivation, repair-eval failure reaching G3, interrupted relock, DNS saved-plan intent reconciliation, classic protection before/after PUT, paginated/per-App installation checks, runtime table/ACME controls, and Linear readback/comment outcomes.
+These are local authoring checks, not real Atomic persistence/recovery, topology mutation correctness, live credentials, deployment, or end-to-end acceptance.
+
+Task 11.5 now uses the authorized C6 deterministic recomputation from live effective branch rules, classic `.contexts` and `.checks[].context`, and the running MainPID's non-secret fallback environment.
+The evidence and report must call it a recomputation, not queue journal/dashboard output.
+Task 8.4 uses owner-authenticated paginated installation/repository inventory, per-App installation checks for both Apps, and write-capable human collaborators; token restrictions can hide installations, so this is not an unrestricted-universe proof.
+DNS uses one bounded plan/approval/apply/dig budget, with fresh confirmation after changed plans; replay validates intent content against the saved-plan identity and reconciles only a zero-change refresh without output changes.
+Any later scope-approved repair touching `modules/terranix/**` invalidates DNS receipts and re-enters that gate; this does not expand any writer's path allowlist.
+`Repair(Noop)` re-probes without routing an empty change.
+Changed tracked Nix invalidates deployment/validation receipts, routes actual pending paths, and reactivates and probes the pinned source before retrying validation; previously completed dependent validations become NotRun until witnessed again.
+Gate/repair/Linear outcomes are tagged unions; the verify writer supplies exact task-to-receipt claims checked against the controller ledger, and the controller appends its authoritative ledger.
+G1, rollback, docs, V2 and V6 observations have explicit receipts; task 4.4 is excluded from passed claims because no lint/treefmt witness is run.
+Free-form report prose still requires roborev; structural claim binding cannot establish semantic truth by itself.
+The following prior caveats remain explicitly out of scope: gap 2, same-path concurrent ownership/review-hash attribution during routing; gap 8, transient batch refs between V2 samples and stale candidate/head/label authorization across retries; gap 9, SSH transport identity equivalence to the gh identity and interrupted V6 cleanup recovery.
+Authenticated webhook redelivery remains NotRun, table presence is not a direct latest-migration log witness, and interrupted Linear comments lack reconciliation.
+Do not launch until the orchestrator reviews these boundaries and remaining gaps.

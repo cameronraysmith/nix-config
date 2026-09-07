@@ -1,0 +1,228 @@
+import assert from "node:assert/strict";
+import { resolve, join } from "node:path";
+
+const dataUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`;
+
+/** Execute the authored run function, not a second graph, with all effects in memory. */
+export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, slices, ledgerTools, assertCompactCheckpoint }) {
+  async function execute({ declineG2 = false, exhaust = false, replay = false, probeFailure = false, repairNix = false, v3Failure = false, repairEvalFailure = false } = {}) {
+    const files = new Map();
+    const events = [];
+    const cache = new Map();
+    const signal = new AbortController().signal;
+    const cwd = "/mock";
+    const tree = {};
+    let root = "", live = false, failProbe = probeFailure, failV3 = v3Failure, failRepairEval = repairEvalFailure;
+    let callbacks = 0, stages = 0, prompts = 0, promptIndex = 0;
+    const initialTasks = [...new Set(["1.1", "8.2", ...slices.s1.taskIds, "1.2", "1.3", "1.4", "3.2", "3.3", "6.1", "6.2", "8.1", "8.3", "8.4", "9.1", "10.1", ...Array.from({ length: 9 }, (_, i) => `11.${i + 1}`)])].map((id) => `- [ ] ${id} ${"task details ".repeat(30)}`).join("\n");
+    assert(initialTasks.length > 8192);
+    assert.throws(() => assertCompactCheckpoint({ evidence: { taskText: initialTasks } }), /8 KB/);
+    files.set(join(cwd, slices.tasks), initialTasks);
+    const get = (path) => {
+      if (!files.has(path)) throw Object.assign(new Error(`Missing mock file: ${path}`), { code: "ENOENT" });
+      return files.get(path);
+    };
+    const tick = async (_cwd, ids) => {
+      const path = join(cwd, slices.tasks);
+      files.set(path, get(path).split("\n").map((line) => ids.some((id) => line.startsWith(`- [ ] ${id} `)) ? line.replace("[ ]", "[x]") : line).join("\n"));
+      return { completed: ids };
+    };
+    const snapshot = async () => ({ ...tree, [slices.tasks]: tools.sha256(get(join(cwd, slices.tasks))) });
+    const mocked = {
+      sha256: tools.sha256,
+      humanBoxes: tools.humanBoxes,
+      assertTaskScope: tools.assertTaskScope,
+      assertSameInputs: tools.assertSameInputs,
+      save: async (_cwd, file, value) => files.set(join(cwd, file), JSON.stringify(value)),
+      snapshot,
+      scope: snapshot,
+      topology: async (_cwd, chain) => chain.changes.map((change) => change.id),
+      preflight: async () => ({ chain: { workingCopy: "wwww", join: "jjjj", seed: "ssss", tip: "ssss", changes: [] }, lock: "baseline", baseline: {}, humanBoxes: tools.humanBoxes(initialTasks) }),
+      lockInput: async () => ({ declaration: tree["flake.nix"] ?? "declaration", relocked: true }),
+      s1Gate: async () => {
+        if (exhaust || failRepairEval && events.at(-1)?.startsWith("eval-repair-")) {
+          failRepairEval = false;
+          throw Error("mock assertion/eval failed");
+        }
+        return { drv: "/nix/store/mock.drv" };
+      },
+      diffArtifact: async (_cwd, evidence, name) => `${evidence}/${name}.diff`,
+      route: async (_cwd, chain, slice) => {
+        const id = `change-${chain.changes.length}`;
+        return { ...chain, tip: id, changes: [...chain.changes, { id, paths: slice.allowedPaths }] };
+      },
+      linearUpdate: tools.linearUpdate,
+      linearComment: tools.linearComment,
+      linearOutcome: tools.linearOutcome,
+      linearReadback: async (_cwd, state) => ({ state }),
+      pendingPaths: async () => [slices.aspect],
+      syncProposal: async () => ({ synced: true }),
+      run: async (_cwd, command) => command.includes("github.appId") ? "1234" : "",
+      generateVars: async () => ({ generated: true }),
+      observeApp: async () => ({ id: 1234, slug: "queue" }),
+      leakScan: async () => ({ leaked: false }),
+      planDns: async () => ({ plan: "mock.tfplan", sha256: "plan-hash", decision: { kind: "NeedsApply", summary: { name: slices.domain } } }),
+      applyDns: async () => ({ applied: true }),
+      dnsWitness: async () => ({ cname: "magnetite.scientistexperience.net." }),
+      readRules: async (_cwd, evidence) => ({ file: `${evidence}/rulesets-before.json`, userId: 1 }),
+      approveDraft: async (_cwd, evidence) => {
+        files.set(join(cwd, evidence, "with-user.json"), "approved");
+        files.set(join(cwd, evidence, "admin-only.json"), "approved-admin");
+        return { file: `${evidence}/ruleset-diff.json`, withUser: `${evidence}/with-user.json`, adminOnly: `${evidence}/admin-only.json` };
+      },
+      applyRules: async () => ({ applied: true }),
+      identityWitness: async () => ({ identities: ["nixbot", "queue"] }),
+      resolveSource: async (_cwd, tip) => ({ source: tip }),
+      ensureActivated: async () => { live = true; return { reconciled: true }; },
+      runtimeProbe: async () => {
+        assert(live, "Probe must follow activation");
+        if (failProbe) { failProbe = false; throw Error("mock post-activation probe failure"); }
+        return { deployed: true };
+      },
+      rollback: async () => ({ normal: "normal.drv", removed: "removed.drv" }),
+      v3Witness: async () => {
+        if (failV3) { failV3 = false; throw Error("mock V3 failure"); }
+        return { pr: 4, sha: "a".repeat(40), resolved: { method: "recomputation" } };
+      },
+      v6Probe: async () => ({ result: { kind: "Fail", evidence: "push.log", reason: "Namespace has no deletion protection" } }),
+      pollLanding: async () => ({ main: "a".repeat(40) }),
+      tick,
+      resetTasks: async (_cwd, ids) => {
+        const path = join(cwd, slices.tasks);
+        files.set(path, tools.resetTaskText(get(path), ids));
+        return { invalidated: ids };
+      },
+      writeVerify: async (_cwd, markdown, claims, ledger) => {
+        ledgerTools.assertVerifyClaims(claims, ledger);
+        files.set(join(cwd, slices.verify), markdown + ledgerTools.renderGateLedger(ledger));
+        return { written: true };
+      },
+    };
+    // Every export is a trampoline; an unmocked external effect fails before any process can run.
+    globalThis.__mqMock = { files, get, tools: mocked, assertCompactCheckpoint };
+    const toolModule = dataUrl(Object.keys(tools).map((name) => `export const ${name} = (...args) => { const fn = globalThis.__mqMock.tools.${name}; if (!fn) throw Error('Unmocked tool ${name}'); return fn(...args); };`).join("\n"));
+    const fsModule = dataUrl("export const mkdir = async () => {}; export const readFile = async (p) => globalThis.__mqMock.get(p); export const writeFile = async (p, v) => globalThis.__mqMock.files.set(p, v);");
+    const bumpModule = dataUrl("export const quote = x => x; export const processCheckpoint = async (_root, _name, action) => { const result = { receipt: [], evidence: await action() }; globalThis.__mqMock.assertCompactCheckpoint(result); return result; };");
+    let code = ts.transpileModule(main, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText;
+    code = code.replace(/from "([^"]+)"/g, (whole, name) => {
+      if (name === "@bastani/atomic/workflows") return `from "${dataUrl("export const workflow = x => x;")}"`;
+      if (name === "node:fs/promises") return `from "${fsModule}"`;
+      if (name === "./bump/tools.js") return `from "${bumpModule}"`;
+      if (name === "./gitea-mq/tools.js") return `from "${toolModule}"`;
+      if (name.startsWith(".")) return `from "${moduleUrl(resolve(".atomic/workflows", name.replace(/\.js$/, ".ts")))}"`;
+      return whole;
+    });
+    const definition = (await import(dataUrl(code))).default;
+    const durable = async (key, args, action) => {
+      if (cache.has(key)) {
+        const saved = cache.get(key);
+        assert.deepEqual(args, saved.args, `Replay identity changed: ${key}`);
+        events.push(`replay:${key}`);
+        return structuredClone(saved.value);
+      }
+      const value = await action();
+      cache.set(key, { args: structuredClone(args), value: structuredClone(value) });
+      return value;
+    };
+    const context = {
+      cwd,
+      inputs: { change: types.change, splice_after: "ssss", deploy: true, max_repair_attempts: 2, build_timeout_minutes: 1 },
+      tool: (name, args, action, options) => durable(`tool:${name}`, args, async () => {
+        callbacks++; events.push(name);
+        assert(options.timeoutMs > 0 && options.failureMode === "return");
+        try {
+          const value = await action({ signal });
+          if (name === "allocate-evidence") root = value;
+          return { ok: true, value };
+        } catch (error) { return { ok: false, error: { message: String(error) } }; }
+      }),
+      task: (name, options) => durable(`stage:${name}`, { model: options.model, prompt: options.prompt, reads: options.reads }, async () => {
+        stages++; events.push(name);
+        types.validateModelPolicy(options);
+        if (name === "implement") { tree["flake.nix"] = "input"; await tick(cwd, ["2.1"]); }
+        if (name === "patch-app-id") tree[slices.aspect] = "app 1234";
+        if (name === "hostname") tree["modules/terranix/cloudflare.nix"] = "dns";
+        if (name === "docs") tree["packages/docs/topology.md"] = "docs";
+        if (repairNix && name.startsWith("repair-")) { tree[slices.aspect] = name; live = false; }
+        let structured = { summary: "mock implementation" };
+        if (name.startsWith("review-") || name === "roborev") structured = { verdict: "Approve" };
+        if (name.startsWith("diagnose-")) structured = { kind: "Repair", instructions: "Re-probe or repair the witnessed failure" };
+        if (name === "render-ruleset-diff") {
+          const rule = tools.expectedRuleset(1234, 1);
+          structured = { before: rule, after: rule, reverse: rule, question: "Approve?" };
+        }
+        if (name === "write-verify") {
+          const ledger = JSON.parse(get(join(cwd, root, "gate-ledger.json")));
+          structured = { markdown: "[verified here] [operator]\n" + Array.from({ length: 8 }, (_, i) => `## ${i + 1}. section`).join("\n"), claims: ledgerTools.passedClaims(ledger) };
+        }
+        const [model, reasoningLevel] = options.model.split(":");
+        return { structured, modelAttempts: [{ model, reasoningLevel, success: true }] };
+      }),
+      ui: Object.fromEntries(["input", "confirm", "select"].map((method) => [method, (question) => durable(`prompt:${promptIndex++}`, question, async () => {
+        prompts++; events.push(`${method}:${question}`);
+        if (method === "input") return question.startsWith("G3") ? "One more bounded batch" : JSON.stringify({ slug: "queue", id: 1234 });
+        if (method === "select") return declineG2 ? "decline" : "approve with User bypass";
+        return true;
+      })])),
+      exit: (result) => result,
+    };
+    const first = await definition.run(context);
+    if (replay) {
+      const counts = { callbacks, stages, prompts };
+      promptIndex = 0;
+      const second = await definition.run(context);
+      assert.deepEqual(second, first);
+      assert.deepEqual({ callbacks, stages, prompts }, counts, "Completed nodes must not repeat any callback, model call or human prompt");
+    }
+    return { result: first.outputs ?? first, events, files, root, cwd };
+  }
+
+  const success = await execute();
+  assert.equal(success.result.status, "completed-with-caveat", success.result.summary);
+  assert.equal(success.result.deployed, true);
+  assert.deepEqual(success.result.validated, { v2: "pass", v3: "pass", v6: "fail", v9: "pass" });
+  const ledger = JSON.parse(success.files.get(join(success.cwd, success.root, "gate-ledger.json")));
+  const claims = ledgerTools.passedClaims(ledger);
+  for (const task of ["1.2", "1.3", "1.4", "3.2", "3.3", "8.4", "10.1", "11.5", "11.7", "11.8", "11.9"]) {
+    const claim = claims.find((item) => item.taskId === task);
+    assert(claim, `Unbound task ${task}`);
+    assert(success.files.has(join(success.cwd, claim.evidence)), `Missing receipt ${claim.evidence}`);
+  }
+  assert(!claims.some((item) => ["1.1", "8.2", "4.4"].includes(item.taskId)));
+  assert(success.events.indexOf("apply-rulesets") < success.events.indexOf("update-machine-deploy-b1-a1"));
+  console.log("PASS mocked graph: success (V6 fail caveat), G1/rollback/docs/V2/V6 receipt binding");
+
+  const declined = await execute({ declineG2: true });
+  assert.equal(declined.result.status, "declined");
+  assert(!declined.events.includes("apply-rulesets"));
+  assert(!("implemented" in declined.result) && !("deployed" in declined.result));
+  console.log("PASS mocked graph: G2 decline has no ruleset PUT, activation or positive outputs");
+
+  const exhausted = await execute({ exhaust: true });
+  assert.equal(exhausted.result.status, "blocked");
+  assert.equal(exhausted.events.filter((event) => /^gate-s1-b[12]-a[12]$/.test(event)).length, 4);
+  assert.equal(exhausted.events.filter((event) => event.startsWith("input:G3")).length, 1);
+  assert(!exhausted.events.some((event) => event.includes("-b3-") || event === "route-s1"));
+  console.log("PASS mocked graph: two-batch G3 exhaustion (four attempts, one extra authorization)");
+
+  const resumed = await execute({ replay: true });
+  assert.equal(resumed.result.status, "completed-with-caveat");
+  assert(resumed.events.includes("replay:tool:preflight"));
+  assert(resumed.events.includes("replay:tool:apply-rulesets"));
+  console.log("PASS mocked graph: completed-node replay repeats zero effects, stages or human prompts");
+
+  const noop = await execute({ probeFailure: true });
+  assert.equal(noop.result.status, "completed-with-caveat", noop.result.summary);
+  assert(noop.events.includes("probe-deploy-b1-a2"));
+  assert(!noop.events.some((event) => event.startsWith("route-repair-")));
+  const changed = await execute({ v3Failure: true, repairNix: true });
+  assert.equal(changed.result.status, "completed-with-caveat", changed.result.summary);
+  const order = ["dependent-tasks-V3-b1-a2", "eval-repair-V3-b1-a2", "route-repair-V3-b1-a2", "reactivate-V3-b1-a2", "reprobe-V3-b1-a2", "V3-b1-a2"];
+  for (let i = 1; i < order.length; i++) assert(changed.events.indexOf(order[i - 1]) < changed.events.indexOf(order[i]), order.join(" -> "));
+  const failedEval = await execute({ v3Failure: true, repairNix: true, repairEvalFailure: true });
+  assert.equal(failedEval.result.status, "completed-with-caveat", failedEval.result.summary);
+  assert(failedEval.events.includes("diagnose-V3-b1-a2"));
+  assert.equal(failedEval.events.filter((event) => event.startsWith("input:G3")).length, 1);
+  console.log("PASS mocked repairs: activation-success/probe-failure no-op, Nix invalidation/reactivation before validation, repair-eval failure reaches G3");
+  delete globalThis.__mqMock;
+}

@@ -1,0 +1,46 @@
+import { aspect, design, dir, domain, tasks, verify, type Slice } from "./slices.js";
+
+const keep = (role: string, cwd: string, root: string, paths: readonly string[]) => `<keepContext>
+Role: ${role}. Repository: ${cwd}. Evidence: ${root}. Change: ${dir}.
+Allowed tracked writes: ${paths.length ? paths.join(", ") : "NONE (read-only, including no shell)"}.
+Never move or describe @, mutate git/jj, push main, delete refs, apply merge-queue labels, run linear auth, tick 1.1 or 8.2, edit build-service files, write plaintext secrets, dispatch subagents, or run a nested workflow.
+Only the controller executes processes, external effects and G1/G2/G3/G4/G5 gates. A stage report is not a tool witness. Do not weaken any hard constraint or turn not_run into pass.
+All stages use openai-codex/gpt-6-astra only: implement/repair/replan/diagnose high, render/docs/verify-writer medium, reviewers max; no fallback substitution.
+</keepContext>`;
+export const implementPrompt = (cwd: string, root: string, slice: Slice, instructions: string) => `${keep("Scoped implementation writer", cwd, root, slice.allowedPaths)}
+${slice.objective}
+<keepContext>Only these task ids may be ticked by this stage: ${slice.taskIds.join(", ") || "NONE"}. All other checkbox states are immutable. Ticks are implementation reports, not passed gates.</keepContext>
+${instructions}
+Read the supplied design/tasks and slice contract. Edit only this slice. Load the relevant development skills. Do not run any command: input locking, Nix evaluation, docs builds, deployment and routing belong to controller tools. Record only completed implementation tasks with - [x] in ${tasks}; tasks 1.1 and 8.2 belong to the operator. Never claim a technical gate passed from source inspection. Preserve the four exact assertion messages in the slice contract. Return a structured summary.`;
+export const reviewPrompt = (cwd: string, root: string, final = false) => `${keep(final ? "roborev independent falsification reviewer" : "S1 independent falsification reviewer", cwd, root, [])}
+Read the supplied diff and deterministic receipts against the specs, design, tasks and evidence ledger. Falsify concrete behavior, not the writer's summary. Return Approve only if no implementation defect remains and every positive assertion is backed by its cited tool observation. NotRun and operator attributions must remain explicit caveats, not pass. Reject with actionable findings if evidence is missing, a technical claim is exaggerated, or a hard constraint is violated. No shell or file edits. ${final ? `Inspect ${verify} sections 1–8 and its ledger; Reject is terminal needs_rework, not another repair loop.` : "Include all four assertion negative controls and the untouched nixbot/buildbot lock nodes."}`;
+export const diagnosePrompt = (cwd: string, root: string, gate: string, receipt: string) => `${keep("Read-only bounded diagnosis", cwd, root, [])}
+Gate ${gate} failed. Read ${receipt} (command, log path and bounded stdout/stderr tail) and the relevant sections of ${design} and ${tasks}. Return Repair(instructions), RevisePlan(designDelta,tasksDelta,instructions) only when observations contradict the plan, or Blocked(reason). Do not change files. Repairs cannot weaken hard constraints or substitute for a human gate. Name the failed observable and the smallest correction.`;
+export const replanPrompt = (cwd: string, root: string, delta: string) => `${keep("Plan revision micro-writer", cwd, root, [design, tasks])}
+Apply only these evidence-backed revisions: ${delta}
+<keepContext>Do not change any checkbox state. The controller resets invalidated tasks before repair; replan edits task descriptions only.</keepContext>
+Reconcile existing sections rather than append contradictory instructions. Preserve every hard constraint and operator-owned checkbox. Return a structured summary.`;
+export const rulesetPrompt = (cwd: string, root: string) => `${keep("Read-only ruleset diff renderer", cwd, root, [])}
+Read rulesets-before.json and app.json from the evidence root. Return full before, after, reverse JSON bodies plus the G2 question. Strip server-generated read-only properties from PUT bodies, preserving all writable fields. Rename ruleset 16212553 nixbot to gitea-mq on ~DEFAULT_BRANCH; rules deletion, non_fast_forward, required_linear_history, required_status_checks solely gitea-mq pinned to the observed App id, strict false and do_not_enforce_on_create true. Bypass Integration App id, User cameronraysmith's observed numeric id, RepositoryRole 5, all always. No pull_request or workflows rule. Classic protection unchanged, allow_auto_merge stays true; explain sole-enabler/collaborator trust boundary. Ask whether to keep explicit User bypass alongside admin role; the controller offers both exact bodies. Reverse is the before body verbatim. No effects.`;
+export const verifyPrompt = (cwd: string, root: string) => `${keep("Read-only evidence report renderer", cwd, root, [])}
+<keepContext>${root}/gate-ledger.json and its cited tool receipts are the sole source of truth for passed tasks. Do not read tasks.md or infer passed gates from implementation ticks. Invalidated entries are not passed; missing witnesses mean not verified. Separate implementation completion from technical verification.
+Return claims: [{taskId,evidence}] containing exactly one row per currently Passed task, with its latest receipt path. Never include 1.1, 8.2, 4.4 or an invalidated task. Observed V6 Fail does not negate completion of task 11.8 (recording the failed V6 observation). The controller validates claims and appends the authoritative gate ledger. Do not add an independently invented controller ledger.
+11.5 is authorized by deterministic C6 recomputation, NOT queue dashboard/journal output. State this attribution explicitly. 8.4 is owner-authenticated token-visible paginated inventory plus per-App installation checks, not an unrestricted installation universe. Retain the token-visibility caveat.</keepContext>
+Return markdown via structured output only; the controller writes ${verify}. Follow openspec/changes/stand-up-nixbot-on-magnetite/verify.md: sections 1–8 (structural validation, task completion, delta sync, coherence, implementation signal, front-door leak, deferred dogfood, designation/discharge coherence), then the App/deployment/integration evidence ledger. Cite the supplied current run receipts by actual artifact path; never fabricate results or copy sibling technical claims. Distinguish [verified here] and [operator] verbatim. Preserve V2/V3/V6/V9 Pass/Fail/NotRun, scope, runtime settings, rollback, actual model metadata, unsuccessful Linear attempts, and unperformed webhook redelivery. No main pushes happened; G5-authorized probe-ref pushes may have happened. G1/1.1 and G2/8.2 are never agent-ticked. V6 cannot establish protection from deletion, even when a push succeeds. Do not present this capability as an end-to-end guarantee about sole enqueue identity or unaffected build services.`;
+export const registration = `G1 — task 1.1 (operator-owned; never agent-ticked)
+Registration: https://mic92.github.io/gitea-mq/ or https://github.com/organizations/sciexp/settings/apps/new
+Name: sciexp-gitea-mq. Owner: sciexp. Visibility: public (operator may choose owner/name).
+Homepage: https://${domain}/
+Webhook URL: https://${domain}/webhook/github (leave secret blank; service sets both at startup).
+Repository permissions: Contents read & write, Administration read & write, Checks read & write, Pull requests read & write, Commit statuses read, Metadata read.
+Events: pull_request, check_run, status, installation, installation_repositories.
+Generate/download the App PEM and run interactively, outside workflow logs:
+  clan vars set magnetite gitea-mq-github-app-secret-key/key.pem
+The workflow will run:
+  clan vars generate magnetite --generator gitea-mq-github-webhook-secret
+Optional operator-selected webhook value:
+  clan vars set magnetite gitea-mq-github-webhook-secret/secret
+Inspect clan vars set --help for no-commit support and disable implicit commits. Do not move @ or create commits; any implicit commit blocks topology verification. Install on cameronraysmith/vanixiets ALONE. Never paste secrets into this reply.
+Reply with JSON {"slug":"sciexp-gitea-mq","id":12345}, or cancel. The workflow witnesses the PEM presence using clan vars list magnetite; it never runs clan vars set.`;
+export const landingQuestion = (pr: number, sha: string, evidence: string) => `G4 — V2/task 11.7. Read ${evidence}. The tool observed PR #${pr}, head ${sha}, containing main and both successful nixbot contexts before labeling, no merge-queue label or auto-merge enabled elsewhere. As cameronraysmith, apply the merge-queue label to this PR only, then confirm. The workflow NEVER labels or advances main. Confirmation starts bounded read-only polling; label time is measured from the GitHub labeled event, not this click. Decline records not_run.`;
+export const v6Question = "G5 — V6/task 11.8. Authorize exactly one create attempt of refs/landings/v6-probe on cameronraysmith/vanixiets from the orchestrator transport identity, followed by deletion of that exact ref with a lease to the observed probe SHA? No main push. Rulesets cannot protect this namespace from deletion. Decline records not_run.";
