@@ -69,3 +69,8 @@ projects:
     name: "Migrate to nixbot and herculesCI CI/CD"
     teams: ["CAM"]
     archive_documents: {}
+  "omnigent-magnetite":
+    id: "53fe2d07fd03"
+    name: "omnigent-magnetite"
+    teams: ["CAM"]
+    archive_documents: {}
