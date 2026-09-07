@@ -10,7 +10,7 @@ Filed as a working note under `docs/notes/development/version-control/`. Promoti
 
 Scope: every repository built by the `sciexp-nixbot` GitHub App. First deployment: vanixiets.
 
-Related: OpenSpec change `stand-up-gitea-mq-on-magnetite` (to be opened; carries the requirements in Appendix A and the deployment tasks); agent instructions `030-stacked-landing-protocol` and skill `git-stacked-pr-integration` (to be updated from Appendix B); `stand-up-nixbot-on-magnetite` (archived).
+Related: OpenSpec change `stand-up-gitea-mq-on-magnetite` (to be opened; carries the requirements in Appendix A and the deployment tasks); agent instructions `030-stacked-landing-protocol` and skill `git-stacked-pr-integration` (to be updated from Appendix B); `stand-up-nixbot-on-magnetite` (In Review, not yet archived).
 
 ## Context
 
@@ -41,20 +41,20 @@ nixbot:
 - Builds every PR on open, synchronize, reopen, and base retarget; there is no configuration to disable this and draft status is ignored (`webhooks.py`: "All pull requests build"). `[skip ci]` is applied to branch pushes only and is deliberately withheld from PRs.
 - Always builds pushes to `staging`, `trying`, `gh-readonly-queue/*`, and `gitea-mq/*` (`MERGE_QUEUE_PATTERNS`), regardless of `build_branches`.
 - Build identity is the post-merge tree hash. A PR, a branch, and main with the same tree share one build record and the terminal statuses are replayed to each new context (`db.py`, `build_reuse.py`).
-- Evaluates with `nix-eval-jobs --check-cache-status`; derivations reported `cached` are scheduled for substitution, `local` ones are skipped, only `not_built` ones are built (`build_scheduler.py`). The server pushes everything it builds to niks3 (`services.nixbot.niks3`).
+- Evaluates with `nix-eval-jobs --check-cache-status`; derivations reported `cached` are scheduled so that nix substitutes them, `local` ones are skipped, and everything else, including `notBuilt` and jobs with no cache status, is built (`build_scheduler.py::JobScheduler._classify`). The server pushes everything it builds to niks3 through a warn-only uploader (`services.nixbot.niks3`).
 - Posts check runs `nixbot/nix-eval` and `nixbot/nix-build` on the commit SHA (`status.py`; prefix `nixbot` in vanixiets).
-- Cancels a PR's in-flight builds when the PR closes (`canceller.py`).
+- Cancels a PR's in-flight builds when the PR closes unmerged; a PR closed as merged is not cancelled, because the merge commit shares its tree and reuses the build (`service.py::CIService._submit_pr_closed`, `canceller.py`).
 
 nix-fast-build (the `just check-fast` recipe in vanixiets):
 
-- `--skip-cached` builds only derivations absent from the configured substituters; `--niks3-server https://niks3.scientistexperience.net` uploads what it built (`push=on` in the recipe, opt-in). `--select` narrows the evaluated attribute set with a Nix function. The recipe already pins `--flake .#checks.$system` and `--eval-workers 4`.
+- `--skip-cached` builds only derivations absent from the configured substituters; `--niks3-server https://niks3.scientistexperience.net` uploads the outputs of every successful build, whether built or substituted, and of every `local` derivation, and an upload failure fails the run (`workers.py::run_evaluation`, `run_upload_worker`; `push=on` in the recipe, opt-in). `--select` narrows the evaluated attribute set with a Nix function. The recipe already pins `--flake .#checks.$system` and `--eval-workers 4`.
 
 gitea-mq (GitHub backend):
 
-- Enqueues on the `merge-queue` label; on GitHub the label is the only way to enqueue a stacked PR, and it resolves the stack through GitHub's Stacks API (`ResolveStack`). `Depends-On:` headers are not read.
+- Enqueues on the `merge-queue` label or on a PR with GitHub auto-merge enabled (`poller.go::enqueueLabeledPRs`, `enqueueAutoMergePRs`); on GitHub these are the only ways to enqueue a stacked PR, and it resolves the stack through GitHub's Stacks API (`ResolveStack`). `Depends-On:` headers are not read.
 - With `GITEA_MQ_BATCH_MAX ≠ 1`, a batch with exactly one entry whose head already contains the target tip is landed by non-force `UpdateRef` of the target to that head, with no batch branch and no extra CI run (`headIfUpToDate`, `HandlePass`). A raced fast-forward is rebuilt and retried up to `MaxFFRetries = 3`, then ejected with a comment.
-- Two or more entries are merged in sequence through GitHub's repository merge API into `gitea-mq/batch/<id>` and land as a chain of merge commits; the README states repositories that mandate linear history should not batch.
-- Required checks come from branch protection, else `GITEA_MQ_REQUIRED_CHECKS`, else any single success. State is one Postgres row per batch; a crash resumes. After fast-forward it waits about 10 s for GitHub to mark members merged and otherwise closes them with a "Merged as `<sha>`" comment. Auto-setup creates a `gitea-mq` ruleset with the App as bypass actor.
+- Two or more entries are merged in sequence through GitHub's repository merge API into `gitea-mq/batch/<id>` and land as a chain of merge commits; the README states repositories that mandate squash or rebase merges should leave `BATCH_MAX=1`.
+- Required checks come from branch protection, else `GITEA_MQ_REQUIRED_CHECKS`, else any single success. State is one Postgres row per batch; a crash resumes. After fast-forward it waits about 10 s for GitHub to mark members merged and otherwise closes them with a "✅ Merged as `<sha>` via batch #<id>." comment. Auto-setup creates a `gitea-mq` ruleset with the App as bypass actor.
 
 mergify-cli:
 
@@ -69,7 +69,7 @@ GitHub:
 1. Keep `stack-land`: synchronous fast-forward after every member PR is green in nixbot. Current state.
 2. Mergify server merge queue with `batch` and fast-forward. Licensed per repository; unavailable on private repos; its draft-PR batches are still full nixbot PR builds.
 3. Bespoke orchestrator queue: push a candidate to a `queue/*` ref, wait on nixbot, fast-forward, bisect, all in the agent. Revision 1 to 3 of this design.
-4. rust-lang/bors: detects CI completion only through GitHub Actions `workflow_run` webhooks (`docs/design.md`, `server/webhook.rs`), so it cannot observe nixbot check runs; lands merge commits by construction; no stack awareness; rust-lang's permission model and operational footprint.
+4. rust-lang/bors: detects CI completion only through GitHub Actions `workflow_run` webhooks (`docs/design.md`, `server/webhook.rs`), so it cannot observe nixbot check runs; fast-forwards the base onto a merge commit it built on its own branch (`merge_queue.rs::handle_successful_build`), so main receives merge commits by construction; no stack awareness; rust-lang's permission model and operational footprint.
 5. bors-ng: archived.
 6. GitHub native merge queue: rulesets conflict with direct ref update; no stack awareness; nixbot supports its `gh-readonly-queue/*` branches but nothing else fits.
 7. gitea-mq as the queue role, one labeled stack at a time, with the orchestrator building the rollup and nixbot building it once on `staging` before the PRs exist. Chosen.
@@ -81,9 +81,9 @@ We will land changes as bors-style rollups: an orchestrator knits ready changes 
 Technical justification:
 
 - nixbot's tree-hash identity makes the `staging` build, the tip PR build, and the post-landing main build one record. Fast-forward landing keeps that identity exact; a merge commit would create a tree nixbot never saw whenever main had moved.
-- gitea-mq's non-force `UpdateRef` is a compare-and-swap: a raced landing is rejected by the transport and retried, so main never receives an untested tree. gitea-mq is co-designed with nixbot (nixbot hardcodes `gitea-mq/*`; nixbot's own repository lands through gitea-mq batches) and reads check runs by name, which rust-lang/bors cannot.
+- gitea-mq's non-force `UpdateRef` is a compare-and-swap: a raced landing is rejected by the transport and retried, so main never receives an untested tree. nixbot hardcodes gitea-mq's branch pattern (`webhooks.py::MERGE_QUEUE_PATTERNS`; nixbot's own repository lands through `Mic92/auto-merge`, not gitea-mq), and gitea-mq reads check runs by name, which rust-lang/bors cannot.
 - nix-fast-build `--skip-cached` against the same niks3 that nixbot pushes to and reads from means "affected checks" is not computed; it is whatever the cache does not already hold. This holds only when each check's `src` is filtered to the files it depends on; with `src = self` every rebase rehashes every check and the property is lost.
-- nixbot's unconditional PR builds are kept. They are the evidence that each stack member builds on its own, which is what makes a red rollup attributable without probes once PRs exist. Their cost is neutralized by ordering: PRs are opened only after the `staging` build is green and are closed by the landing seconds later, at which point nixbot cancels the in-flight builds.
+- nixbot's unconditional PR builds are kept. They are the evidence that each stack member builds on its own, which is what makes a red rollup attributable without probes once PRs exist. Their cost is bounded by ordering: PRs are opened only after the `staging` build is green and are merged by the landing seconds later. nixbot does not cancel a PR closed as merged (`service.py::CIService._submit_pr_closed`), so the intermediate builds run to completion, substituting from niks3 what the authors' `check-fast` runs and the `staging` build already pushed; they gate nothing, because gitea-mq reads checks on the tip SHA only.
 
 Business justification:
 
@@ -103,7 +103,7 @@ Business justification:
 
 ### Negative
 
-- N − 1 nixbot PR builds are dispatched and cancelled per rollup. They may begin evaluation. Removing this requires a nixbot PR-build gate, which we will not request; unconditional PR builds are the posture we want.
+- N − 1 nixbot PR builds are dispatched per rollup and run to completion, since nixbot does not cancel a PR closed as merged. Each evaluates in full; its uncached work is whatever neither the author's `check-fast` run nor the `staging` build pushed to niks3. Removing this requires a nixbot PR-build gate, which we will not request; unconditional PR builds are the posture we want.
 - Linear history is available only in gitea-mq's single-entry path. Labeling two stacks at once produces merge commits. Serialization is an orchestrator rule, not a gitea-mq setting.
 - Author signatures do not survive the rebase; the orchestrator signs.
 - Bisection of a red `staging` build is the orchestrator's job (probe pushes to `trying`); gitea-mq bisects only multi-entry batches, which this design does not use.
@@ -123,15 +123,15 @@ Automated:
 - A flake check asserts no `checks.*` derivation depends on `self` unfiltered (compare each check's `src` against an allow-list of filtered sources, or measure: a rebase of an unrelated file must not change the check's derivation hash).
 - A flake check or NixOS module assertion pins gitea-mq configuration: `GITEA_MQ_BATCH_MAX ≠ 1`, `GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE = true`, `GITEA_MQ_REQUIRED_CHECKS` equal to nixbot's two contexts, `GITEA_MQ_MERGE_LABEL = merge-queue`.
 - A repository check asserts `landing.toml` exists and `mergify-cli.stack-github-native` is set in the orchestrator's clone.
-- nixbot's own record per landing (one build record shared by `staging`, tip PR, and main) is queryable through its API; a periodic report counts uncached builds per `refs/landings/*` ref.
+- nixbot's API (`web/api_routes.py`) lists builds by branch, PR number, or commit prefix and returns each build's `tree_hash` and each attribute's `status` and `cached` flag; a periodic report resolves each `refs/landings/*` ref to its commit, fetches the builds for that commit, confirms `staging`, tip PR, and main share one `tree_hash`, and counts attributes with `cached` false and `status` other than `skipped_local` as the uncached work.
 
 Manual, before promotion from Proposed (verification items):
 
 - V1. GitHub marks members of a natively registered stack merged after a non-force `UpdateRef` fast-forward of main. If not, gitea-mq closes them with a comment and they read as closed; decide whether that is acceptable or whether native registration is dropped, which also removes gitea-mq's stack resolution and requires labeling each PR.
 - V2. gitea-mq accepts check runs that were posted on the tip SHA before the label was applied (the `staging` build's runs replayed to the tip PR); confirm no arrive-after-enqueue assumption in the poller for the single-entry path.
 - V3. The replayed check runs on the tip PR are named exactly `nixbot/nix-eval` and `nixbot/nix-build`.
-- V4. A `staging` build of a rollup whose members were all built with `check-fast push=on` shows only interaction derivations as `not_built` in nixbot's eval report.
-- V5. Intermediate PR builds are cancelled on close and release worker capacity.
+- V4. A `staging` build of a rollup whose members were all built with `check-fast push=on` shows only interaction derivations as uncached in nixbot's build record (attributes with `cached` false and `status` other than `skipped_local`; nixbot's API does not expose the `notBuilt` status itself).
+- V5. Intermediate PR builds, which nixbot does not cancel when the PR closes as merged, substitute rather than rebuild: for each, record the uncached attribute count and wall-clock time against the `staging` build, and confirm they never delay a landing.
 - V6. Rulesets accept `refs/landings/*` from the orchestrator identity and protect them from deletion.
 - V7. mergify-cli preserves the `Landed-With:` trailer and orchestrator signature across `stack push`, `sync`, and `drop`.
 - V8. mergify-cli's stack branch prefix is configurable per repository, and `stack push` from an orchestrator-created branch does not require the invoking user to be the commit author.
