@@ -68,6 +68,13 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   const before = { ...approved, name: "nixbot" };
   files.set("/mock/approved.json", JSON.stringify(approved));
   files.set("/mock/before.json", JSON.stringify({ ruleset: before, classic: { exitCode: 0, body: "{}" } }));
+  files.set("/mock/evidence/rulesets-before.json", JSON.stringify({ ruleset: before }));
+  const wrongDraft = { before, after: tools.expectedRuleset(9999, 1), reverse: before, question: "Approve?" };
+  await assert.rejects(() => actual.approveDraft(cwd, "evidence", wrongDraft, 1234, 1, signal), /Rendered ruleset diff differs/);
+  assert(!files.has("/mock/evidence/ruleset-diff.json"), "Rejected semantic draft must not become G2 material");
+  await actual.approveDraft(cwd, "evidence", { ...wrongDraft, after: approved }, 1234, 1, signal);
+  assert.deepEqual(JSON.parse(files.get("/mock/evidence/ruleset-with-user.json")), approved);
+  console.log("PASS F2 commands: real approveDraft rejects wrong integration_id before writes and accepts corrected target");
   let didPut = false, classicReads = 0;
   handler = (command) => {
     if (command.endsWith("/branches/main/protection")) { classicReads++; return observed({}); }
@@ -98,20 +105,21 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
     if (command.includes("'/user/installations?")) return observed([{ total_count: count, installations: [installations[0]] }, { total_count: count, installations: [installations[1]] }]);
     if (command.startsWith("gh api") && command.includes("/repositories?")) return observed([{ total_count: 1, repositories: [{ full_name: slices.repository }] }]);
     if (command.startsWith("python3 -c")) {
-      const id = command.endsWith("4743700 installation") ? 4743700 : 1234;
+      const id = command.endsWith(" 4743700") ? 4743700 : 1234;
       return observed({ app_id: id, installation_id: perAppMismatch ? 99 : id === 1234 ? 20 : 10, repositories: [slices.repository] });
     }
     throw Error(`Unmocked inventory command: ${command}`);
   };
-  const identity = await actual.identityWitness(cwd, 1234, "queue", signal);
+  const tokens = [4743700, 1234].map((appId) => ({ appId, file: `/private/${appId}.json` }));
+  const identity = await actual.identityWitness(cwd, 1234, "queue", tokens, signal);
   assert.equal(identity.perApp.length, 2);
   assert.match(identity.trustBoundary, /token restrictions may hide/i);
   count = 3;
-  await assert.rejects(() => actual.identityWitness(cwd, 1234, "queue", signal), /Incomplete App/);
+  await assert.rejects(() => actual.identityWitness(cwd, 1234, "queue", tokens, signal), /Incomplete App/);
   count = 2; extraHuman = true;
-  await assert.rejects(() => actual.identityWitness(cwd, 1234, "queue", signal), /Sole write-capable/);
+  await assert.rejects(() => actual.identityWitness(cwd, 1234, "queue", tokens, signal), /Sole write-capable/);
   extraHuman = false; perAppMismatch = true;
-  await assert.rejects(() => actual.identityWitness(cwd, 1234, "queue", signal), /Per-App installation/);
+  await assert.rejects(() => actual.identityWitness(cwd, 1234, "queue", tokens, signal), /Per-App installation/);
   console.log("PASS mocked commands: classic protection before/after PUT, inventory pagination, per-App identity, human-write and count negative controls");
 
   handler = (command) => {

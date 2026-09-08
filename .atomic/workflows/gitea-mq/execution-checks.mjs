@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { resolve, join } from "node:path";
+import { readFileSync } from "node:fs";
+import { assertRetryableCallbacks } from "./credential-checks.mjs";
 
 const dataUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`;
 
@@ -7,7 +9,7 @@ const dataUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).toStr
 export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, slices, ledgerTools, assertCompactCheckpoint }) {
   const { s1Coverage } = await import(moduleUrl(".atomic/workflows/gitea-mq/s1-observations.ts"));
   const report = await import(moduleUrl(".atomic/workflows/gitea-mq/verify-report.ts"));
-  async function execute({ declineG2 = false, decline = "", rejectS1 = false, revisePlan = false, createFailure = false, cleanupFailure = false, exhaust = false, replay = false, probeFailure = false, repairNix = false, v3Failure = false, repairEvalFailure = false, dnsReject = false, dnsRejectOnce = false, rejectRoborev = false, throwExit = false, noHostnameEdit = false, proposalFailure = "", extraClaims = false, transientFailure = false, resumeFailure = false, unexpected = "" } = {}) {
+  async function execute({ declineG2 = false, decline = "", rejectS1 = false, revisePlan = false, createFailure = false, cleanupFailure = false, exhaust = false, replay = false, probeFailure = false, repairNix = false, v3Failure = false, repairEvalFailure = false, dnsReject = false, dnsRejectOnce = false, rejectRoborev = false, throwExit = false, noHostnameEdit = false, proposalFailure = "", extraClaims = false, transientFailure = false, resumeFailure = false, unexpected = "", wrongRules = "", drift = "", structuralFailure = "", nativeFailure = "" } = {}) {
     const files = new Map();
     const events = [];
     const cache = new Map();
@@ -19,6 +21,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
     const dnsPath = "modules/terranix/cloudflare.nix", dnsContent = 'resource.cloudflare_dns_record.mq = { name = "mq"; type = "CNAME"; content = "magnetite.scientistexperience.net"; proxied = false; };';
     let root = "", live = false, failProbe = probeFailure, failV3 = v3Failure, failRepairEval = repairEvalFailure, rejectReview = rejectS1, failCreate = createFailure, failCleanup = cleanupFailure;
     let failProposal = !!proposalFailure, failClaims = extraClaims, failTransient = transientFailure;
+    let failRules = !!wrongRules, failDrift = !!drift, failStructure = !!structuralFailure;
     const toolOptions = new Map();
     let callbacks = 0, stages = 0, prompts = 0, promptIndex = 0;
     const initialTasks = [...new Set(["1.1", "8.2", ...slices.s1.taskIds, "1.2", "1.3", "1.4", "3.2", "3.3", "6.1", "6.2", "8.1", "8.3", "8.4", "9.1", "10.1", ...Array.from({ length: 9 }, (_, i) => `11.${i + 1}`)])].map((id) => `- [ ] ${id} ${"task details ".repeat(30)}`).join("\n");
@@ -35,7 +38,10 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       files.set(path, get(path).split("\n").map((line) => ids.some((id) => line.startsWith(`- [ ] ${id} `)) ? line.replace("[ ]", "[x]") : line).join("\n"));
       return { completed: ids };
     };
-    const snapshot = async () => ({ ...tree, [slices.tasks]: tools.sha256(get(join(cwd, slices.tasks))), ...(files.has(join(cwd, slices.verify)) ? { [slices.verify]: tools.sha256(get(join(cwd, slices.verify))) } : {}) });
+    const snapshot = async () => {
+      if (failDrift && events.at(-1)?.startsWith("stable-")) { failDrift = drift === "always"; tree["flake.nix"] += " drift"; }
+      return { ...tree, [slices.tasks]: tools.sha256(get(join(cwd, slices.tasks))), ...(files.has(join(cwd, slices.verify)) ? { [slices.verify]: tools.sha256(get(join(cwd, slices.verify))) } : {}) };
+    };
     const mocked = {
       allocateEvidence: async () => "../evidence/run",
       processCheckpoint: async (_root, _name, action) => { const result = { receipt: [], evidence: await action() }; assertCompactCheckpoint(result); return result; },
@@ -46,6 +52,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
           files.set(join(cwd, edit.path), edit.after);
           tree[edit.path] = edit.after;
           if (repairNix && events.at(-1).startsWith("apply-repair-")) live = false;
+          if (events.at(-1).startsWith("apply-repair-verify-structural-input") && edit.path === slices.design) failStructure = structuralFailure === "always";
         }
         return { applied: edits.map((edit) => edit.path) };
       },
@@ -89,10 +96,14 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       linearReadback: async (_cwd, state) => ({ state }),
       pendingPaths: async (_cwd, slice) => Object.keys(snapshotted).filter((path) => snapshotted[path] !== routed[path] && slice.allowedPaths.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))),
       syncProposal: async () => ({ synced: true }),
-      run: async (_cwd, command) => command.includes("github.appId") ? "1234" : "",
+      run: async (_cwd, command) => {
+        if (failStructure && command.startsWith("openspec validate")) throw Error("structural input invalid");
+        return command.includes("github.appId") ? "1234" : "";
+      },
       runStreaming: async () => "",
       generateVars: async () => { if (failTransient) { failTransient = false; throw Error("transient connection failure"); } return { generated: true }; },
-      observeApp: async () => ({ id: 1234, slug: "queue" }),
+      mintAppToken: async (_cwd, evidence, label, appId) => ({ appId, file: `${evidence}/${label}-${appId}.token.json` }),
+      observeApp: async (_cwd, _root, reply, token) => { assert.equal(token.appId, reply.id); return { id: 1234, slug: "queue" }; },
       leakScan: async () => ({ leaked: false }),
       reviewDnsContent: async () => ({ sha256: tools.sha256(tree[dnsPath] ?? "") }),
       verifyDnsSource: async (_cwd, source, reviewed) => {
@@ -108,13 +119,14 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       applyDns: async () => ({ applied: true }),
       dnsWitness: async () => ({ cname: "magnetite.scientistexperience.net." }),
       readRules: async (_cwd, evidence) => ({ file: `${evidence}/rulesets-before.json`, userId: 1 }),
-      approveDraft: async (_cwd, evidence) => {
+      approveDraft: async (_cwd, evidence, draft) => {
+        assert.deepEqual(draft.after, tools.expectedRuleset(1234, 1), "wrong integration_id");
         files.set(join(cwd, evidence, "with-user.json"), "approved");
         files.set(join(cwd, evidence, "admin-only.json"), "approved-admin");
         return { file: `${evidence}/ruleset-diff.json`, withUser: `${evidence}/with-user.json`, adminOnly: `${evidence}/admin-only.json` };
       },
       applyRules: async () => ({ applied: true }),
-      identityWitness: async () => ({ identities: ["nixbot", "queue"] }),
+      identityWitness: async (_cwd, appId, _slug, tokens) => { assert.deepEqual(tokens.map((token) => token.appId), [4743700, appId]); return { identities: ["nixbot", "queue"] }; },
       resolveSource: async (_cwd, tip) => ({ source: `git+file:///mock?ref=rollup-landing&rev=${revisions.get(tip)?.sha}`, sha: revisions.get(tip)?.sha }),
       ensureActivated: async () => { live = true; return { reconciled: true }; },
       runtimeProbe: async () => {
@@ -203,6 +215,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
         if (name.startsWith("hostname") && !noHostnameEdit) { propose(dnsPath, dnsContent); propose(slices.tasks, get(join(cwd, slices.tasks)).replace("[ ] 6.1", "[x] 6.1")); }
         if (name.startsWith("repair-dns")) propose(dnsPath, `${dnsContent}\n# ${name}`);
         if (name.startsWith("docs")) propose("packages/docs/topology.md", "docs");
+        if (structuralFailure && name.startsWith("repair-verify-structural-input")) propose(slices.design, `Structural report repair ${name}`);
         if (repairNix && name.startsWith("repair-")) propose(slices.aspect, name);
         let structured = { summary: "mock implementation", edits };
         if (name.startsWith("review-") || name === "roborev") {
@@ -221,18 +234,34 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
           assert(options.reads.some((path) => /(?:diagnosis-|G3-).*\.json$/.test(path)));
           assert(!options.prompt.includes("unique design delta") && !options.prompt.includes("unique repair payload"));
         }
-        if (name === "render-ruleset-diff") {
+        if (name.startsWith("render-ruleset-diff")) {
           const rule = tools.expectedRuleset(1234, 1);
-          structured = { before: rule, after: rule, reverse: rule, question: "Approve?" };
+          structured = { before: rule, after: failRules ? tools.expectedRuleset(9999, 1) : rule, reverse: rule, question: "Approve?" };
+          failRules = wrongRules === "always";
         }
         if (name.startsWith("write-verify")) {
           structured = { commentary: { analysis: "Model analysis", caveats: "Model caveats" } };
           if (failClaims) { failClaims = false; structured.claims = [{ taskId: "4.4", evidence: "invented" }]; }
         }
-        if (name === "implement-b1-a2" && proposalFailure || name === "write-verify-b1-a2" && extraClaims) {
+        if (name === "implement-b1-a2" && proposalFailure || name === "write-verify-b1-a2" && extraClaims || name === "render-ruleset-diff-b1-a2" && wrongRules) {
           const path = options.reads.find((path) => path.includes("proposal-rejection-"));
           assert(path, "Retry needs rejection via reads");
           assert(JSON.parse(get(join(cwd, path))).reason);
+        }
+        // Atomic validates initial structured_output plus up to three corrective turns
+        // per candidate; an exhausted stage throws, never caches invalid success.
+        const validStructured = structured;
+        if (nativeFailure && name.startsWith("implement")) {
+          if (["provider", "abort"].includes(nativeFailure)) throw Object.assign(Error("provider structured_output transport failure"), { name: nativeFailure === "abort" ? "AbortError" : "Error" });
+          if (nativeFailure === "always" || name === "implement-b1-a1") structured = null;
+        }
+        for (let correction = 0; ; correction++) {
+          try { types.parse(options.schema, structured); break; }
+          catch {
+            events.push(`structured-invalid:${name}:${correction}`);
+            if (correction === 3) throw Error('Validation failed for tool "structured_output":\nmock contract validation error');
+            if (nativeFailure === "corrected") structured = validStructured;
+          }
         }
         const [model, reasoningLevel] = options.model.split(":");
         return { structured, modelAttempts: [{ model, reasoningLevel, success: true }] };
@@ -245,7 +274,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       })])),
       exit: (result) => { if (throwExit) throw Object.assign(new Error("Atomic terminal exit"), { exitResult: result }); return result; },
     };
-    const run = async () => { try { return await definition.run(context); } catch (error) { if (error.exitResult) return error.exitResult; if (unexpected) return { unexpected: error }; throw error; } };
+    const run = async () => { try { return await definition.run(context); } catch (error) { if (error.exitResult) return error.exitResult; if (unexpected || ["provider", "abort"].includes(nativeFailure)) return { unexpected: error }; throw error; } };
     const first = await run();
     if (replay) {
       const counts = { callbacks, stages, prompts };
@@ -264,6 +293,61 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
     }
     return { result: first.outputs ?? first, exit: first, events, files, root, cwd, revisions, committedTasks, toolOptions };
   }
+
+  async function findingChecks(finding) {
+    if (finding === "F2") {
+      const fixed = await execute({ wrongRules: "once" });
+      assert.equal(fixed.result.status, "completed-with-caveat", fixed.result.summary);
+      assert(fixed.events.includes("render-ruleset-diff-b1-a2"), "F2: semantic rejection must re-render");
+      assert.equal(fixed.toolOptions.get("validate-render-ruleset-diff-b1-a1").failureMode, "return");
+      const exhausted = await execute({ wrongRules: "always" });
+      assert.equal(exhausted.result.status, "blocked");
+      assert.equal(exhausted.events.filter((e) => /^render-ruleset-diff-b[12]-a[12]$/.test(e)).length, 4);
+      assert.equal(exhausted.events.filter((e) => e.startsWith("input:G3")).length, 1);
+      assert(!exhausted.events.some((e) => e.startsWith("select:G2") || e === "apply-rulesets"));
+      console.log("PASS F2: schema-valid wrong integration_id re-renders with feedback; four rejected proposals reach one G3 and never G2");
+    }
+    if (finding === "F3") for (const [option, gate, repair, next] of [
+      ["drift", "stable-s1-b1-a1", "diagnose-s1-b1-a1", "review-s1-s1-b1-a2"],
+      ["structuralFailure", "verify-structural-input-b1-a1", "diagnose-verify-structural-input-b1-a1", "verify-structural-input-b1-a2"],
+    ]) {
+      const fixed = await execute({ [option]: "once" });
+      assert.equal(fixed.result.status, "completed-with-caveat", fixed.result.summary);
+      assert.equal(fixed.toolOptions.get(gate).failureMode, "return");
+      assert(fixed.events.indexOf(repair) > fixed.events.indexOf(gate));
+      assert(fixed.events.indexOf(next) > fixed.events.indexOf(repair));
+      assert(fixed.events.some((e) => e.startsWith(`repair-${repair.slice(9).replace(/a1$/, "a2")}`)), "Diagnosis must invoke bounded repair");
+      const exhausted = await execute({ [option]: "always" });
+      assert.equal(exhausted.result.status, "blocked");
+      assert.equal(exhausted.events.filter((e) => e.startsWith("input:G3")).length, 1);
+      assert(!exhausted.events.includes("write-verify-observation"));
+      console.log(`PASS F3: ${option} returns gate failure, diagnoses/repairs and rechecks; repeated failures exhaust bounded batches`);
+    }
+    if (finding === "F4") {
+      const corrected = await execute({ nativeFailure: "corrected" });
+      assert.equal(corrected.result.status, "completed-with-caveat");
+      assert(!corrected.events.includes("implement-b1-a2"), "Native correction success must not consume a second proposal attempt");
+      assert.equal(corrected.events.filter((e) => e.startsWith("structured-invalid:")).length, 1);
+      const fixed = await execute({ nativeFailure: "once" });
+      assert.equal(fixed.result.status, "completed-with-caveat", fixed.result.summary);
+      assert.equal(fixed.events.filter((e) => e.startsWith("structured-invalid:implement-b1-a1:")).length, 4);
+      assert(fixed.events.includes("implement-b1-a2") && !fixed.events.includes("apply-implement-b1-a1"));
+      const exhausted = await execute({ nativeFailure: "always" });
+      assert.equal(exhausted.result.status, "blocked");
+      assert.equal(exhausted.events.filter((e) => e.startsWith("structured-invalid:")).length, 16);
+      assert.equal(exhausted.events.filter((e) => e.startsWith("input:G3")).length, 1);
+      for (const nativeFailure of ["provider", "abort"]) {
+        const fault = await execute({ nativeFailure });
+        assert(fault.exit.unexpected, "Provider/abort faults must propagate unchanged");
+        assert.equal(fault.exit.unexpected.name, nativeFailure === "abort" ? "AbortError" : "Error");
+        assert(!fault.events.includes("implement-b1-a2") && !fault.events.some((e) => e.startsWith("input:G3")));
+      }
+      console.log("PASS F4: native initial+three correction rejection consumes one proposal attempt; exhaustion reaches G3; provider/abort faults escape");
+    }
+  }
+  const onlyFinding = process.argv.find((arg) => /^--F[234]-only$/.test(arg));
+  if (onlyFinding) { await findingChecks(onlyFinding.slice(2, 4)); return; }
+  for (const finding of ["F2", "F3", "F4"]) await findingChecks(finding);
 
   const success = await execute();
   assert.equal(success.result.status, "completed-with-caveat", success.result.summary);
@@ -393,8 +477,22 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
   console.log("PASS 3.2 graph: commentary-only draft succeeds; extra invented claims retry inside bounded proposal loop");
   const interrupted = await execute({ transientFailure: true, resumeFailure: true });
   assert.equal(interrupted.exit.status, "failed"); assert.equal(interrupted.exit.resumable, true);
-  for (const name of ["G1-witnesses", "read-rulesets", "write-capable-identities"]) assert.deepEqual([success.toolOptions.get(name).retriesAllowed, success.toolOptions.get(name).maxAttempts], [true, 3]);
-  for (const [name, options] of success.toolOptions) if (options.retriesAllowed) assert(["G1-witnesses", "read-rulesets", "write-capable-identities"].includes(name), `Retry on effect: ${name}`);
+  assert.deepEqual([success.toolOptions.get("read-rulesets").retriesAllowed, success.toolOptions.get("read-rulesets").maxAttempts], [true, 3]);
+  for (const name of ["G1-witnesses", "write-capable-identities", "G1-mint-token", "identity-mint-token-4743700", "identity-mint-token-1234"]) {
+    assert.equal(success.toolOptions.get(name).retriesAllowed, undefined, `F1: ${name} must not retry`);
+    assert.equal(success.toolOptions.get(name).failureMode, "throw");
+  }
+  for (const [name, options] of success.toolOptions) if (options.retriesAllowed) assert.equal(name, "read-rulesets", `Retry on effect: ${name}`);
+  const toolSource = readFileSync(".atomic/workflows/gitea-mq/tools.ts", "utf8");
+  assertRetryableCallbacks(ts, main, toolSource, success.toolOptions);
+  // A helper's embedded Python is inspected, even if the outer callback looks like a probe.
+  const retry = new Map([["nested", { retriesAllowed: true }]]);
+  for (const command of ["gh api --method POST /tokens", "gh api --method PUT /rules", "gh api --method DELETE /ref", "jj log", "git push", "clan vars get", "terraform plan", "ssh host systemctl status queue"]) {
+    const nested = `const script = ${JSON.stringify(command)}; export const wrapper = () => run(script);`;
+    assert.throws(() => assertRetryableCallbacks(ts, 'tool("nested", () => t.wrapper())', nested, retry), /Retryable callback contains effect/);
+  }
+  assert.throws(() => assertRetryableCallbacks(ts, 'tool("nested", () => t.mintAppToken())', toolSource, retry), /Retryable callback contains effect/);
+  console.log("PASS F1 graph: App witnesses and isolated mint nodes never retry; transitive nested-command scan rejects retryable effects");
   for (const decline of ["G1", "G2", "G4", "G5"]) assert.equal((await execute({ decline })).exit.status, "cancelled");
   console.log("PASS 3.3: transient fatal tool exits failed/resumable and re-executes on resume; completed effects replay; only read probes retry; declines cancel");
   const index = JSON.parse(success.files.get(join(success.cwd, success.root, "ledger-index.json")));

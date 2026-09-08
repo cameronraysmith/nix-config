@@ -250,7 +250,7 @@ export async function generateVars(cwd: string, chain: Chain, signal: AbortSigna
   return { generated: true, noCommitEnvironment: "CLAN_NO_COMMIT=1", generators: varsAllowed };
 }
 
-export const appScript = `import base64,json,os,subprocess,sys,time,tempfile
+const appAuthScript = `import base64,json,os,subprocess,sys,time,tempfile
 
 def call(argv, **kw):
     p=subprocess.run(argv,stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=False,**kw)
@@ -269,30 +269,72 @@ def app_identity(app_id):
 def gh(path,token,method='GET'):
     env=dict(os.environ,GH_TOKEN=token,GH_HOST='github.com')
     return json.loads(call(['gh','api','--method',method,path],env=env))
-try:
-    app_id=int(sys.argv[1]); token=app_identity(app_id)
-    if sys.argv[2]=='hook':
-        hook=gh('/app/hook/config',token)
-        print(json.dumps({'url':hook.get('url')}))
-    else:
-        install=gh('/repos/cameronraysmith/vanixiets/installation',token)
-        assert install['app_id']==app_id and install['repository_selection']=='selected'
-        access=gh('/app/installations/'+str(install['id'])+'/access_tokens',token,'POST')['token']
-        repos=gh('/installation/repositories?per_page=100',access)
-        names=[r['full_name'] for r in repos['repositories']]
-        assert repos['total_count']==1 and names==['cameronraysmith/vanixiets']
-        print(json.dumps({'app_id':app_id,'installation_id':install['id'],'repositories':names}))
-except Exception:
-    print('App-identity probe unavailable or failed; credential/API bodies withheld',file=sys.stderr);sys.exit(1)
 `;
-export async function observeApp(cwd: string, root: string, reply: AppReply, signal: AbortSignal) {
+// Hook inspection remains non-retrying and never mints an installation token.
+export const appScript = appAuthScript + `try:
+    hook=gh('/app/hook/config',app_identity(int(sys.argv[1])))
+    print(json.dumps({'url':hook.get('url')}))
+except Exception:
+    print('App hook probe failed; credential/API bodies withheld',file=sys.stderr);sys.exit(1)
+`;
+// Reserve the private file BEFORE POST. An interrupted mint leaves a sentinel;
+// it cannot silently create another token when manually resumed.
+export const mintAppScript = appAuthScript + `import stat
+try:
+    app_id=int(sys.argv[1]); path=sys.argv[2]
+    if os.path.lexists(path):
+        with os.fdopen(os.open(path,os.O_RDONLY|os.O_NOFOLLOW)) as file:
+            assert stat.S_IMODE(os.fstat(file.fileno()).st_mode)==0o600
+            saved=json.load(file)
+        assert saved['app_id']==app_id and saved['token']
+    else:
+        with os.fdopen(os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600),'w') as file:
+            file.write('{}'); file.flush(); os.fsync(file.fileno())
+            token=app_identity(app_id)
+            install=gh('/repos/cameronraysmith/vanixiets/installation',token)
+            assert install['app_id']==app_id and install['repository_selection']=='selected'
+            access=gh('/app/installations/'+str(install['id'])+'/access_tokens',token,'POST')
+            file.seek(0); file.truncate()
+            json.dump({'app_id':app_id,'installation_id':install['id'],'token':access['token'],'expires_at':access['expires_at']},file)
+            file.flush(); os.fsync(file.fileno())
+except Exception:
+    print('App token mint incomplete; reconcile private token artifact before resume; credential/API bodies withheld',file=sys.stderr);sys.exit(1)
+`;
+export const installationScript = `import datetime,json,os,stat,subprocess,sys
+try:
+    with os.fdopen(os.open(sys.argv[1],os.O_RDONLY|os.O_NOFOLLOW)) as file:
+        assert stat.S_IMODE(os.fstat(file.fileno()).st_mode)==0o600
+        access=json.load(file)
+    app_id=int(sys.argv[2]); assert access['app_id']==app_id
+    assert datetime.datetime.fromisoformat(access['expires_at'].replace('Z','+00:00')) > datetime.datetime.now(datetime.timezone.utc)
+    env=dict(os.environ,GH_TOKEN=access['token'],GH_HOST='github.com')
+    response=subprocess.run(['gh','api','--method','GET','/installation/repositories?per_page=100'],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=False)
+    assert response.returncode==0
+    repos=json.loads(response.stdout); names=[r['full_name'] for r in repos['repositories']]
+    assert repos['total_count']==1 and names==['cameronraysmith/vanixiets']
+    print(json.dumps({'app_id':app_id,'installation_id':access['installation_id'],'repositories':names}))
+except Exception:
+    print('Installation GET failed or token expired/incomplete; reconcile token artifact; credential/API bodies withheld',file=sys.stderr);sys.exit(1)
+`;
+export type AppToken = { appId: number; file: string };
+export async function mintAppToken(cwd: string, root: string, label: string, appId: number, signal: AbortSignal): Promise<AppToken> {
+  assertExternalEvidence(cwd, root);
+  if (!/^[A-Za-z0-9-]+$/.test(label) || !Number.isSafeInteger(appId) || appId <= 0) throw new Blocked("Invalid App token identity");
+  const file = join(cwd, root, `${label}-${appId}.token.json`);
+  await run(cwd, `python3 -c ${quote(mintAppScript)} ${appId} ${quote(file)}`, signal);
+  return { appId, file }; // Opaque reference only; never checkpoint the secret.
+}
+export async function readInstallation(cwd: string, token: AppToken, signal: AbortSignal) {
+  return parse(AppInstallation, await json(cwd, `python3 -c ${quote(installationScript)} ${quote(token.file)} ${token.appId}`, signal));
+}
+export async function observeApp(cwd: string, root: string, reply: AppReply, token: AppToken, signal: AbortSignal) {
   const app = parse(App, await json(cwd, `gh api ${quote(`/apps/${reply.slug}`)}`, signal));
   const nixbot = parse(App, await json(cwd, "gh api /apps/sciexp-nixbot", signal));
   const permissions = { administration: "write", checks: "write", contents: "write", metadata: "read", pull_requests: "write", statuses: "read" };
   if (app.id !== reply.id || app.id === 4743700 || app.slug !== reply.slug || !isDeepStrictEqual(app.permissions, permissions) || !isDeepStrictEqual([...app.events].sort(), ["pull_request", "check_run", "status", "installation", "installation_repositories"].sort())) throw new Blocked("Queue App differs from G1 contract");
   if (nixbot.id !== 4743700 || !isDeepStrictEqual(nixbot.permissions, { checks: "write", contents: "read", members: "read", metadata: "read", pull_requests: "read" }) || !isDeepStrictEqual([...nixbot.events].sort(), ["check_run", "check_suite", "pull_request", "push"].sort())) throw new Blocked("sciexp-nixbot registration changed");
-  const installation = parse(AppInstallation,
-    await json(cwd, `python3 -c ${quote(appScript)} ${reply.id} installation`, signal));
+  if (token.appId !== reply.id) throw new Blocked("G1 token identity differs");
+  const installation = await readInstallation(cwd, token, signal);
   await save(cwd, `${root}/app.json`, { app, nixbot, installation });
   return { id: app.id, slug: app.slug, owner: app.owner.login, installation, evidence: `${root}/app.json` };
 }
@@ -770,7 +812,7 @@ export async function v3Witness(cwd: string, signal: AbortSignal) {
   return { ...selected, resolved };
 }
 
-export async function identityWitness(cwd: string, appId: number, appSlug: string, signal: AbortSignal) {
+export async function identityWitness(cwd: string, appId: number, appSlug: string, tokens: AppToken[], signal: AbortSignal) {
   if (await run(cwd, "gh api /user --jq .login", signal) !== "cameronraysmith") throw new Blocked("App inventory requires repository owner identity");
   const collaborators = parse(CollaboratorPages,
     await json(cwd, `gh api ${api}/collaborators --paginate --slurp`, signal)).flat();
@@ -804,8 +846,9 @@ export async function identityWitness(cwd: string, appId: number, appSlug: strin
   }
   const perApp = [];
   for (const id of [4743700, appId]) {
-    const observed = parse(AppInstallation,
-      await json(cwd, `python3 -c ${quote(appScript)} ${id} installation`, signal));
+    const token = tokens.find((token) => token.appId === id);
+    if (!token) throw new Blocked("Missing per-App token reference");
+    const observed = await readInstallation(cwd, token, signal);
     if (observed.app_id !== id || !observed.repositories.includes(repository) ||
         !repositoryInstallations.some((item) => item.app_id === id && item.id === observed.installation_id)) {
       throw new Blocked("Per-App installation check differs from owner-visible inventory");

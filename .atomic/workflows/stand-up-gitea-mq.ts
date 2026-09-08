@@ -10,7 +10,7 @@ import * as t from "./gitea-mq/tools.js";
 import * as p from "./gitea-mq/prompts.js";
 import { repairEffect, repairPaths, dnsChainLabel, dnsCandidateId, dnsRecovery, type DnsChainState, type RepairEffect, type GateEntry, type GateStatus } from "./gitea-mq/ledger.js";
 import type { LinearState } from "./gitea-mq/types.js";
-import { GateFailure, Stop, ProposalRejected, proposalValue, proposalLoop } from "./gitea-mq/control.js";
+import { GateFailure, Stop, ProposalRejected, proposalValue, proposalLoop, rejectStructuredContract } from "./gitea-mq/control.js";
 
 export default workflow({
   name: "stand-up-gitea-mq", description: "G1–G5 guarded gitea-mq implementation, pinned deployment, live validation and evidence-driven replanning.",
@@ -54,7 +54,7 @@ export default workflow({
     };
     const stage = async (name: string, options: WorkflowTaskOptions) => {
       validateModelPolicy(options);
-      const result = await ctx.task(name, { ...options, reads: [...new Set([...(options.reads || []), `${root}/ledger-index.json`])], context: "fresh", output: `${root}/${name}.md`, outputMode: "file-only", mcp: { allow: [] } });
+      const result = await ctx.task(name, { ...options, reads: [...new Set([...(options.reads || []), `${root}/ledger-index.json`])], context: "fresh", output: `${root}/${name}.md`, outputMode: "file-only", mcp: { allow: [] } }).catch(rejectStructuredContract);
       const actual = result.modelAttempts?.filter((attempt) => attempt.success).at(-1);
       ledger.push({ node: name, kind: "stage", model: actual?.model ?? result.model ?? null, thinking: actual?.reasoningLevel ?? null, attempts: result.modelAttempts ?? [] });
       index.push({ node: name, ok: !!actual, evidence: `${root}/metadata-${name}.json` });
@@ -158,7 +158,7 @@ export default workflow({
         const diff = await tool(`diff-${id}`, (signal) => t.diffArtifact(cwd, root, id, signal));
         const tree = await tool(`tree-${id}`, (signal) => t.snapshot(cwd, signal));
         const review = parse(Review, (await stage(`review-s1-${id}`, { ...MAX, ...READ_ONLY, reads: [...reads, diff.value, gate.evidence, `${root}/contracts.json`], schema: Review, prompt: p.reviewPrompt(cwd, root) })).structured);
-        await tool(`stable-${id}`, async (signal) => { t.assertSameInputs(tree.value, await t.snapshot(cwd, signal)); return { stable: true }; });
+        await tool(`stable-${id}`, async (signal) => { t.assertSameInputs(tree.value, await t.snapshot(cwd, signal)); return { stable: true }; }, 120_000, true);
         switch (review.verdict) { case "Approve": return gate; case "Reject": await persist(`rejection-${id}`, { findings: review.findings, reviewer: `${root}/review-s1-${id}.md`, diff: diff.value, gate: gate.evidence }); throw new GateFailure(id, `${root}/rejection-${id}.json`, review.findings.join("\n")); default: return unreachable(review); }
       });
       recordS1(s1Result.value, s1Result.evidence);
@@ -175,7 +175,8 @@ export default workflow({
       humanBaseline = (await tool("G1-operator-task", (signal) => t.tickOperator(cwd, "G1", `${root}/G1.json`, humanBaseline, signal))).value.humanBaseline;
       passed("G1", ["1.1"], `${root}/G1.json`, { kind: "Operator", decision: "approved" });
       const credentials = await tool("generate-vars", (signal) => t.generateVars(cwd, chain!, signal), timeout);
-      const app = await tool("G1-witnesses", (signal) => t.observeApp(cwd, root, appReply, signal), 120_000, false, true);
+      const g1Token = await tool("G1-mint-token", (signal) => t.mintAppToken(cwd, root, "G1", appReply.id, signal));
+      const app = await tool("G1-witnesses", (signal) => t.observeApp(cwd, root, appReply, g1Token.value, signal));
       const leaks = await tool("positive-controlled-leak-scan", (signal) => t.leakScan(cwd, signal), timeout);
       await implement("patch-app-id", postG1, `Set services.gitea-mq.github.appId to tool-observed ${app.value.id}; remove the placeholder, change no other settings.`);
       const patched = await bounded("post-g1-s1-gate", postG1, (id) => tool(id, async (signal) => {
@@ -220,8 +221,12 @@ export default workflow({
       await land("route-s2", s2, true, dnsCandidateId(dnsState));
 
       const beforeRules = await tool("read-rulesets", (signal) => t.readRules(cwd, root, signal), 120_000, false, true);
-      const draft = parse(RulesetDraft, (await stage("render-ruleset-diff", { ...MEDIUM, ...READ_ONLY, reads: [...reads, beforeRules.value.file, `${root}/app.json`], schema: RulesetDraft, prompt: p.rulesetPrompt(cwd, root) })).structured);
-      const rendered = await tool("validate-ruleset-diff", (signal) => t.approveDraft(cwd, root, draft, app.value.id, beforeRules.value.userId, signal));
+      const { draft, rendered } = await propose("render-ruleset-diff", async (id, feedback) => {
+        const draft = proposalValue(RulesetDraft, (await stage(id, { ...MEDIUM, ...READ_ONLY, reads: [...reads, beforeRules.value.file, `${root}/app.json`, ...feedback], schema: RulesetDraft, prompt: p.rulesetPrompt(cwd, root) })).structured);
+        const checked = await observe(`validate-${id}`, (signal) => t.approveDraft(cwd, root, draft, app.value.id, beforeRules.value.userId, signal));
+        if (!checked.ok) throw new ProposalRejected(`validate-${id}: ${JSON.stringify(checked.error)}; ${root}/validate-${id}.json`);
+        return { draft, rendered: { value: checked.value.evidence } };
+      });
       const hashes = await tool("G2-approved-body-hashes", async (signal) => { signal.throwIfAborted(); return { withUser: t.sha256(await readFile(join(cwd, rendered.value.withUser))), adminOnly: t.sha256(await readFile(join(cwd, rendered.value.adminOnly))) }; });
       const g2 = await ctx.ui.select(`G2 — Read full before/after/reverse at ${rendered.value.file}. ${draft.question}\nClassic main protection unchanged; allow_auto_merge=true; no PR/workflows rule. Do not edit tasks.md until the run terminates; the controller records 8.2 under the Operator receipt.`, ["approve with User bypass", "approve admin role only", "decline"] as const);
       if (g2 === "decline") throw new Stop("declined", "G2 declined");
@@ -231,7 +236,9 @@ export default workflow({
       humanBaseline = (await tool("G2-operator-task", (signal) => t.tickOperator(cwd, "G2", `${root}/G2.json`, humanBaseline, signal))).value.humanBaseline;
       passed("G2", ["8.2"], `${root}/G2.json`, { kind: "Operator", decision: "approved" });
       const rules = await tool("apply-rulesets", (signal) => t.applyRules(cwd, approved, approvedHash, beforeRules.value.file, signal));
-      const identities = await tool("write-capable-identities", (signal) => t.identityWitness(cwd, app.value.id, app.value.slug, signal), 120_000, false, true);
+      const identityTokens: t.AppToken[] = [];
+      for (const id of [4743700, app.value.id]) identityTokens.push((await tool(`identity-mint-token-${id}`, (signal) => t.mintAppToken(cwd, root, "identities", id, signal))).value);
+      const identities = await tool("write-capable-identities", (signal) => t.identityWitness(cwd, app.value.id, app.value.slug, identityTokens, signal));
       await tool("ruleset-ledger", (signal) => t.tick(cwd, ["8.1", "8.3", "8.4"], signal, humanBaseline));
       passed("rulesets-before", ["8.1"], beforeRules.evidence); passed("rulesets", ["8.3"], rules.evidence); passed("identities", ["8.4"], identities.evidence);
       await land("route-s3", report);
@@ -307,7 +314,7 @@ export default workflow({
       await land("route-docs", docs);
       await persist("validation", validation);
       for (const [gate, result] of Object.entries(validation)) passed(`${gate}-result`, [], `${root}/validation.json`, { kind: "Observed", result });
-      const structure = await tool("verify-structural-input", async (signal) => { await t.run(cwd, `openspec validate ${input.change} --strict`, signal); return { valid: true }; });
+      const structure = await bounded("verify-structural-input", { ...report, objective: "Repair change-scoped structural validation errors without weakening acceptance contracts or inventing task evidence." }, (id) => tool(id, async (signal) => { await t.run(cwd, `openspec validate ${input.change} --strict`, signal); return { valid: true }; }, 120_000, true));
       passed("structural-validation", [], structure.evidence);
       await persist("gate-ledger", gateLedger);
       const verification = await propose("write-verify", async (id, feedback) => proposalValue(VerifyDraft, (await stage(id, { ...MEDIUM, ...READ_ONLY, reads: [...reads.filter((path) => path !== tasks), `${root}/gate-ledger.json`, `${root}/ledger-index.json`, `${root}/validation.json`, "openspec/changes/stand-up-nixbot-on-magnetite/verify.md", ...feedback], schema: VerifyDraft, prompt: p.verifyPrompt(cwd, root) })).structured));

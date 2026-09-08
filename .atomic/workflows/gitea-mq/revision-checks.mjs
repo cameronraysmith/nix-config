@@ -32,7 +32,15 @@ export async function runRevisionChecks({ types, moduleUrl }) {
   assert.throws(() => types.parse(types.ProposedEdit, { path: "flake.nix", baseSha256: "bad", after: "new" }));
   const main = readFileSync(".atomic/workflows/stand-up-gitea-mq.ts", "utf8");
   assert(!main.includes("recheckDns"), "3.4: unreachable cross-slice DNS callback must be removed");
-  const { proposalLoop, ProposalRejected } = await import(moduleUrl(".atomic/workflows/gitea-mq/control.ts"));
+  assert(main.trimEnd().split("\n").length < 350, "Entry must remain under 350 lines");
+  const { proposalLoop, ProposalRejected, rejectStructuredContract } = await import(moduleUrl(".atomic/workflows/gitea-mq/control.ts"));
+  for (const message of ['Validation failed for tool "structured_output":\ninvalid arguments', "structured_output tool call failed schema validation.", "The model produced assistant text but never called structured_output", "The model produced an assistant message with empty text", "The model produced no assistant message after the prompt"]) {
+    assert.throws(() => rejectStructuredContract(Error(message)), ProposalRejected);
+  }
+  for (const error of [new TypeError("structured_output runtime failure"), Error("provider structured_output transport failure"), Object.assign(Error('Validation failed for tool "structured_output":\nabort'), { name: "AbortError" })]) {
+    assert.throws(() => rejectStructuredContract(error), (caught) => caught === error);
+  }
+  console.log("PASS F4 contracts: recognized Atomic schema/missing-output diagnostics bridge; provider/type/abort errors retain identity");
   for (const count of [1, 2, 3]) {
     const ids = [], records = new Map(); let prompts = 0;
     await assert.rejects(() => proposalLoop("patch", count, "root", async (id, feedback) => {

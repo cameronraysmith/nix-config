@@ -10,6 +10,7 @@ import { runReviewChecks } from "./review-checks.mjs";
 import { runProcessChecks } from "./process-checks.mjs";
 import { runBoundaryChecks } from "./boundary-checks.mjs";
 import { runRevisionChecks } from "./revision-checks.mjs";
+import { runCredentialChecks } from "./credential-checks.mjs";
 
 const require = createRequire(import.meta.url);
 const executable = realpathSync(execFileSync("bash", ["-c", "command -v atomic"], { encoding: "utf8" }).trim());
@@ -79,6 +80,7 @@ function moduleUrl(file) {
 const types = await import(moduleUrl(files[1]));
 const tools = await import(moduleUrl(files[2]));
 const slices = await import(moduleUrl(files[4]));
+if (process.argv.includes("--credentials-only")) { runCredentialChecks(tools); process.exit(0); }
 if (process.argv.includes("--commands-only")) {
   try { await runCommandChecks({ ts, source: readFileSync(files[2], "utf8"), moduleUrl, tools, slices, typeboxUrl: pathToFileURL(join(atomic, "node_modules/typebox/build/index.mjs")).href }); }
   catch (error) { console.error(String(error)); process.exit(1); }
@@ -160,6 +162,7 @@ console.log("PASS schemas, model policy, task ownership, DNS identity/reconcilia
 const { assertCompactCheckpoint } = await import(moduleUrl(".atomic/workflows/bump/tools.ts"));
 await runExecutionChecks({ ts, main: readFileSync(entry, "utf8"), moduleUrl, tools, types, slices, ledgerTools, assertCompactCheckpoint });
 if (process.argv.includes("--graph-only")) process.exit(0);
+runCredentialChecks(tools);
 await runProcessChecks({ ts, moduleUrl });
 try {
   await runCommandChecks({ ts, source: readFileSync(files[2], "utf8"), moduleUrl, tools, slices, typeboxUrl: pathToFileURL(join(atomic, "node_modules/typebox/build/index.mjs")).href });
