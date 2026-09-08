@@ -81,7 +81,7 @@ const types = await import(moduleUrl(files[1]));
 const tools = await import(moduleUrl(files[2]));
 const slices = await import(moduleUrl(files[4]));
 if (process.argv.includes("--credentials-only")) { runCredentialChecks(tools); process.exit(0); }
-if (process.argv.includes("--commands-only") || process.argv.includes("--vars-only")) {
+if (process.argv.includes("--commands-only") || process.argv.includes("--vars-only") || process.argv.includes("--vcs-only")) {
   try { await runCommandChecks({ ts, source: readFileSync(files[2], "utf8"), moduleUrl, tools, slices, typeboxUrl: pathToFileURL(join(atomic, "node_modules/typebox/build/index.mjs")).href }); }
   catch (error) { console.error(String(error)); process.exit(1); }
   process.exit(0);

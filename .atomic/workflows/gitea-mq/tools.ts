@@ -9,9 +9,9 @@ import {
   save,
   squashCommand, classifyScope, type Tree,
 } from "../omnigent/tools.js";
-import { snapshot, assertHealthy, oneId, ids, pathsIn } from "./vcs.js";
+import { snapshot, assertHealthy, oneId, ids, pathsIn, changeRef, identityRevset, oneRevision, uniqueProtected, ProtectedIdentityBlocked } from "./vcs.js";
 import {
-  resolveSource as sharedResolveSource, resolveRevisionSource, changeSha, committedSource, type DeploymentSource,
+  resolveSource as sharedResolveSource, resolveRevisionSource as sharedRevisionSource, committedSource, type DeploymentSource,
 } from "../omnigent/deployment.js";
 import { capture, captureStreaming, readResponse, assertExternalEvidence, canonicalExternalEvidence } from "./process.js";
 export { processCheckpoint, allocateEvidence } from "./process.js";
@@ -34,7 +34,10 @@ import {
 export { capture, save, snapshot };
 import { taskLedger, humanBoxes, assertHumanBoxes } from "./proposal-edits.js";
 export { applyStageEdits, assertTaskScope, taskLedger, humanBoxes, assertHumanBoxes } from "./proposal-edits.js";
-export const resolveSource = (cwd: string, tip: string, name: string, signal: AbortSignal) => sharedResolveSource(cwd, tip, name, signal, capture);
+/** Resolve protected identities locally; shared deployment code receives only a commit ID. */
+const changeSha = async (cwd: string, revision: string, signal: AbortSignal) => (await oneRevision(cwd, revision, signal)).commitId;
+const resolveRevisionSource = async (cwd: string, revision: string, name: string, signal: AbortSignal) => sharedRevisionSource(cwd, await changeSha(cwd, revision, signal), name, signal, capture);
+export const resolveSource = async (cwd: string, tip: string, name: string, signal: AbortSignal) => sharedResolveSource(cwd, await changeSha(cwd, tip, signal), name, signal, capture);
 export const runStreaming = async (cwd: string, command: string, signal: AbortSignal) => requireSuccess(await captureStreaming(cwd, command, signal));
 /** Only inputs owned by this slice (plus shared change/vars inputs) invalidate a proposal. */
 export function assertScopedInputs(before: Tree, after: Tree, slice: Slice): { foreignDrift: string[] } {
@@ -66,11 +69,12 @@ export async function detached(cwd: string, signal: AbortSignal): Promise<void> 
 export async function topology(cwd: string, chain: Chain, signal: AbortSignal): Promise<string[]> {
   await assertHealthy(cwd, chain.workingCopy, signal);
   await detached(cwd, signal);
+  for (const id of new Set([chain.workingCopy, chain.join, chain.seed, chain.tip, ...chain.changes.map((change) => change.id)])) await oneId(cwd, changeRef(id), signal);
   if (await oneId(cwd, "@-", signal) !== chain.join) throw new Blocked("@ no longer child of the join");
   let parent = chain.seed;
   for (const change of chain.changes) {
-    if (await oneId(cwd, `${parent}+`, signal) !== change.id ||
-        await oneId(cwd, `${change.id}-`, signal) !== parent) {
+    if (await oneId(cwd, `${changeRef(parent)}+ & ${changeRef(change.id)}`, signal) !== change.id ||
+        await oneId(cwd, `${changeRef(change.id)}-`, signal) !== parent) {
       throw new Blocked("Chain order changed");
     }
     const actual = await pathsIn(cwd, change.id, signal);
@@ -79,7 +83,7 @@ export async function topology(cwd: string, chain: Chain, signal: AbortSignal): 
     }
     parent = change.id;
   }
-  if (parent !== chain.tip || await oneId(cwd, `${parent}+`, signal) !== chain.join ||
+  if (parent !== chain.tip || await oneId(cwd, `${changeRef(parent)}+ & ${changeRef(chain.join)}`, signal) !== chain.join ||
       await oneId(cwd, "rollup-landing", signal) !== chain.tip) {
     throw new Blocked("rollup-landing tip/join mismatch");
   }
@@ -115,6 +119,7 @@ export async function forgeBaseline(cwd: string, adopted: boolean, signal: Abort
     if (provenance.sha !== null && await run(cwd, `git ls-tree ${quote(provenance.sha)} -- ${quote(aspect)}`, signal)) throw new Blocked("Pre-S1 source already contains S1 aspect");
     return { kind: "Evaluated" as const, adopted, provenance, evaluation: await evaluateForgePre(cwd, provenance.source, signal) };
   } catch (error) {
+    if (error instanceof ProtectedIdentityBlocked) throw error;
     signal.throwIfAborted();
     return { kind: "NotRun" as const, adopted, provenance, reason: `Pre-S1 evaluation unavailable: ${String(error)}` };
   }
@@ -143,11 +148,12 @@ async function observeForgePre(cwd: string, source: { source: string; sha: strin
 export async function committedForgePre(cwd: string, tip: string, observations: ReturnType<typeof s1Coverage>["observations"], signal: AbortSignal) {
   let sources: { baseline: DeploymentSource; candidate: DeploymentSource };
   try {
-    const candidate = await resolveRevisionSource(cwd, tip, "rollup-landing", signal, capture);
+    const candidate = await resolveRevisionSource(cwd, tip, "rollup-landing", signal);
     const parents = (await run(cwd, `git rev-list --parents -n 1 ${quote(candidate.sha)}`, signal)).split(/\s+/);
     if (parents.length !== 2 || parents[0] !== candidate.sha || !/^[a-f0-9]{40}$/.test(parents[1]!)) throw new Blocked("Routed S1 revision must have exactly one committed parent");
     sources = { baseline: committedSource(cwd, parents[1]!, "rollup-landing"), candidate };
   } catch (error) {
+    if (error instanceof ProtectedIdentityBlocked) throw error;
     signal.throwIfAborted();
     return { kind: "NotRun" as const, reason: `Immutable S1 source resolution unavailable: ${String(error)}`, baseline: null, candidate: null, comparison: { equal: null, projection: forgeProjection }, verifiedTasks: [] as string[] };
   }
@@ -188,7 +194,7 @@ const routedPaths = ["flake.nix", "flake.lock", aspect, machine] as const;
 /** Chain adoption must recognize the routed change by its description, not by a supplied id. */
 async function describedIds(cwd: string, revset: string, signal: AbortSignal): Promise<{ id: string; description: string }[]> {
   const template = 'change_id ++ " " ++ description.first_line() ++ "\\n"';
-  return lines(await run(cwd, `jj --ignore-working-copy log --no-graph -r ${quote(revset)} -T ${quote(template)}`, signal)).map((row) => {
+  return lines(await run(cwd, `jj --ignore-working-copy log --no-graph -r ${quote(identityRevset(revset))} -T ${quote(template)}`, signal)).map((row) => {
     const match = /^([k-z]+)(?: (.*))?$/.exec(row.trimEnd());
     if (!match) throw new Blocked(`Unparsable change description row: ${row}`);
     return { id: match[1]!, description: match[2] ?? "" };
@@ -197,11 +203,11 @@ async function describedIds(cwd: string, revset: string, signal: AbortSignal): P
 /** The aspect on disk is only acceptable when the chain itself, not this run, produced it. */
 async function routedS1Evidence(cwd: string, pending: readonly string[], signal: AbortSignal): Promise<RoutedS1> {
   const described = await describedIds(cwd, "::rollup-landing & mutable()", signal);
-  const matches = described.filter((row) => row.description.startsWith(routedDescription));
+  const matches = [...new Map(described.filter((row) => row.description.startsWith(routedDescription)).map((row) => [row.id, row])).values()];
   if (matches.length !== 1) throw new Blocked(`adopt_routed_s1 requires exactly one chain change described '${routedDescription}...'; found ${matches.length}`);
   const change = matches[0]!;
-  if ((await ids(cwd, `${change.id} & ::rollup-landing`, signal)).length !== 1) throw new Blocked(`Routed S1 change ${change.id} is not an ancestor of rollup-landing`);
-  const { source, sha } = await resolveRevisionSource(cwd, change.id, "rollup-landing", signal, capture);
+  const { source, sha } = await resolveRevisionSource(cwd, change.id, "rollup-landing", signal);
+  if ((await ids(cwd, `${changeRef(change.id)} & ::rollup-landing`, signal)).length !== 1) throw new Blocked(`Routed S1 change ${change.id} is not an ancestor of rollup-landing`);
   const parents = (await run(cwd, `git rev-list --parents -n 1 ${quote(sha)}`, signal)).split(/\s+/);
   if (parents.length !== 2 || parents[0] !== sha || !/^[a-f0-9]{40}$/.test(parents[1]!)) throw new Blocked("Routed S1 revision must have exactly one committed parent");
   const parent = parents[1]!;
@@ -265,7 +271,7 @@ export async function preflight(cwd: string, splice: string, signal: AbortSignal
   const workingCopy = await oneId(cwd, "@", signal);
   const joinId = await oneId(cwd, "@-", signal);
   const seed = await oneId(cwd, splice, signal);
-  if ((await ids(cwd, `${joinId}-`, signal)).length < 2) throw new Blocked("@ parent is not a development join");
+  if ((await ids(cwd, `${changeRef(joinId)}-`, signal)).length < 2) throw new Blocked("@ parent is not a development join");
   const chain: Chain = { workingCopy, join: joinId, seed, tip: seed, changes: [] };
   await topology(cwd, chain, signal);
   await run(cwd, "gh auth status\nclan vars --help", signal);
@@ -328,8 +334,8 @@ async function routedResources(cwd: string, source: string, signal: AbortSignal)
 /** Re-verify the routed identity and content immediately before the run depends on it. */
 export async function adoptRoutedS1(cwd: string, file: string, humanBaseline: string, signal: AbortSignal) {
   const evidence = parse(RoutedS1, JSON.parse(await readFile(join(cwd, file), "utf8")));
-  if (await changeSha(cwd, evidence.changeId, signal, capture) !== evidence.commit) throw new Blocked(`Routed S1 change ${evidence.changeId} no longer resolves to ${evidence.commit}`);
-  if ((await ids(cwd, `${evidence.changeId} & ::rollup-landing`, signal)).length !== 1) throw new Blocked(`Routed S1 change ${evidence.changeId} left the rollup-landing ancestry`);
+  if (await changeSha(cwd, evidence.changeId, signal) !== evidence.commit) throw new Blocked(`Routed S1 change ${evidence.changeId} no longer resolves to ${evidence.commit}`);
+  if ((await ids(cwd, `${changeRef(evidence.changeId)} & ::rollup-landing`, signal)).length !== 1) throw new Blocked(`Routed S1 change ${evidence.changeId} left the rollup-landing ancestry`);
   const disk = lines(await run(cwd, `git hash-object -- ${evidence.paths.map(quote).join(" ")}`, signal));
   evidence.paths.forEach((path, index) => {
     if (disk[index] !== evidence.blobs[path]) throw new Blocked(`Working copy ${path} drifted from routed S1 revision ${evidence.commit} after preflight`);
@@ -408,10 +414,12 @@ export async function route(cwd: string, chain: Chain, slice: Slice, reviewed: T
   const paths = await pendingPaths(cwd, slice, signal);
   if (!paths.length) throw new Blocked("Cannot route empty change");
   if (into !== null && !chain.changes.some((change) => change.id === into)) throw new Blocked("Amendment target is not on the owned chain");
-  if (into === null) await run(cwd, `jj new --no-edit -A ${quote(chain.tip)} -m ${quote(`feat(gitea-mq): ${slice.name}`)}`, signal);
-  const id = into ?? await oneId(cwd, `${chain.tip}+`, signal);
-  await run(cwd, squashCommand(id, paths, slice.allowedPaths), signal);
-  if (into === null) await run(cwd, `jj bookmark set rollup-landing -r ${quote(id)}`, signal);
+  if (into === null) await run(cwd, `jj new --no-edit -A ${quote(changeRef(chain.tip))} -B ${quote(changeRef(chain.join))} -m ${quote(`feat(gitea-mq): ${slice.name}`)}`, signal);
+  const id = into ?? await oneId(cwd, `${changeRef(chain.tip)}+ & ${changeRef(chain.join)}-`, signal);
+  // Retain the shared helper's path/id validation, but never emit its bare-ID target.
+  const squash = squashCommand(id, paths, slice.allowedPaths).replace(`--into ${quote(id)}`, `--into ${quote(changeRef(id))}`);
+  await run(cwd, squash, signal);
+  if (into === null) await run(cwd, `jj bookmark set rollup-landing -r ${quote(changeRef(id))}`, signal);
   const next = { ...chain, tip: into === null ? id : chain.tip, changes: into === null ? [...chain.changes, { id, paths }] : chain.changes.map((change) => change.id === id ? { id, paths: [...new Set([...change.paths, ...paths])] } : change) };
   await topology(cwd, next, signal);
   if ((await pendingPaths(cwd, slice, signal)).length) throw new Blocked("Routed paths remain in @");
@@ -485,13 +493,12 @@ async function observeCredentialListing(cwd: string, signal: AbortSignal) {
   return { command, receipt: result.logPath.replace(/\.log$/, ".json"), value: parseCredentialListing(requireSuccess(result)) };
 }
 type ClanRevision = { changeId: string; commitId: string };
-/** Capture commit identities as well as change IDs: a rewrite is also observable.
- * @'s content commit may legitimately change as Clan/another agent snapshots it;
- * its change identity and parent commits, and all join ancestors, may not. */
+/** Only workflow-owned identities are protected, not foreign join ancestors.
+ * @ content may change; its identity and parent commits may not. */
 async function clanTopologySnapshot(cwd: string, chain: Chain, signal: AbortSignal) {
   const workingCopy = await oneId(cwd, "@", signal);
   const landing = await oneId(cwd, "rollup-landing", signal);
-  const ancestorIds = await ids(cwd, `::${chain.join}`, signal);
+  const ancestorIds = await ids(cwd, `::${changeRef(chain.join)}`, signal);
   // Commit IDs bind ancestor parentage already. Do not repeat all parent hashes
   // in this global listing: the live repository has ~9k changes (1 MiB cap).
   const template = 'change_id ++ " " ++ commit_id ++ "\\n"';
@@ -501,17 +508,24 @@ async function clanTopologySnapshot(cwd: string, chain: Chain, signal: AbortSign
     if (!row) throw new Blocked("Unparseable Clan topology snapshot");
     return { changeId: row[1]!, commitId: row[2]! };
   });
-  const unique = (id: string) => {
-    const matches = revisions.filter((revision) => revision.changeId === id);
-    if (matches.length !== 1) throw new Blocked(`Missing/divergent protected topology identity: ${id}`);
-    return matches[0]!;
-  };
-  if (!ancestorIds.includes(chain.join) || !ancestorIds.includes(landing)) throw new Blocked("rollup-landing left the join ancestry");
-  const ancestors = [...new Set(ancestorIds)].sort().map(unique);
-  unique(workingCopy);
+  const byChange = new Map<string, ClanRevision[]>();
+  for (const revision of revisions) byChange.set(revision.changeId, [...(byChange.get(revision.changeId) ?? []), revision]);
+  const unique = (id: string) => uniqueProtected(id, byChange.get(id) ?? []);
   const parents = (await run(cwd, `jj --ignore-working-copy log --no-graph -r '@' -T 'parents.map(|p| p.commit_id()).join(",")'`, signal)).split(",");
   if (!parents.length || parents.some((id) => !/^[a-f0-9]{40}$/.test(id))) throw new Blocked("Unparseable working-copy parent identities");
-  return { revisions, topology: { workingCopy, parents, landing: unique(landing), ancestors } };
+  const parentIds = parents.map((commit) => uniqueProtected(`@ parent ${commit}`, revisions.filter((row) => row.commitId === commit)).changeId);
+  const protectedIds = new Set([workingCopy, chain.workingCopy, ...parentIds, chain.join, landing, chain.seed, chain.tip, ...chain.changes.map((change) => change.id)]);
+  for (const id of protectedIds) unique(id);
+  if (workingCopy !== chain.workingCopy || landing !== chain.tip) throw new Blocked("Clan-window protected topology identity moved");
+  const ancestors = [...protectedIds].filter((id) => id !== workingCopy).sort().map((id) => {
+    if (!ancestorIds.includes(id)) throw new Blocked(`Protected identity ${id} left the join ancestry`);
+    return unique(id);
+  });
+  const foreignDivergent = [...byChange].filter(([id]) => !protectedIds.has(id)).sort(([a], [b]) => a.localeCompare(b)).flatMap(([id, rows]) => {
+    const candidates = rows.map((row) => row.commitId).sort();
+    return candidates.length > 1 ? [{ changeId: id, candidates }] : [];
+  });
+  return { revisions, foreignDivergent, topology: { workingCopy, parents, landing: unique(landing), ancestors } };
 }
 async function checkClanTopology(cwd: string, chain: Chain, before: Awaited<ReturnType<typeof clanTopologySnapshot>>, signal: AbortSignal) {
   const after = await clanTopologySnapshot(cwd, chain, signal);
@@ -526,7 +540,10 @@ async function checkClanTopology(cwd: string, chain: Chain, before: Awaited<Retu
   }
   foreignChanges.sort((a, b) => a.commitId.localeCompare(b.commitId));
   const summary = (value: typeof before.topology) => ({ ...value, ancestors: { count: value.ancestors.length, sha256: sha256(JSON.stringify(value.ancestors)) } });
-  return { topology: { before: summary(before.topology), after: summary(after.topology) }, foreignChanges };
+  const divergent = new Map<string, Set<string>>();
+  for (const row of [...before.foreignDivergent, ...after.foreignDivergent]) divergent.set(row.changeId, new Set([...(divergent.get(row.changeId) ?? []), ...row.candidates]));
+  const foreignDivergent = [...divergent].sort(([a], [b]) => a.localeCompare(b)).map(([changeId, candidates]) => ({ changeId, candidates: [...candidates].sort() }));
+  return { topology: { before: summary(before.topology), after: summary(after.topology) }, foreignChanges, foreignDivergent };
 }
 export async function generateVars(cwd: string, chain: Chain, signal: AbortSignal) {
   await topology(cwd, chain, signal);

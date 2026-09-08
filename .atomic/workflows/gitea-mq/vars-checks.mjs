@@ -16,13 +16,13 @@ export async function runVarsChecks({ actual, mock, files, cwd, signal, setHandl
     mock.oneId = async (_cwd, rev) => {
       if (after && drift === "foreign" && rev.endsWith("+")) throw Error("Foreign sibling makes the global sole-child query ambiguous");
       return rev === "@" ? (after && drift === "identity" ? "xxxx" : "wwww")
-        : rev === "@-" || rev.endsWith("+") ? "rrrr"
+        : rev === "@-" || rev.endsWith("+") || rev.includes("+ & ") ? "rrrr"
         : rev === "rollup-landing" && after && drift === "landing" ? "kkkk" : "ssss";
     };
-    mock.ids = async (_cwd, rev) => rev === "::rrrr" ? ["rrrr", "ssss"]
+    mock.ids = async (_cwd, rev) => rev === "::rrrr" || rev === "::change_id(rrrr)" ? ["rrrr", "ssss", ...(["foreign-divergent", "foreign-new-divergent"].includes(drift) ? ["kkkk"] : [])]
       : after && ["foreign", "vars", "rewrite"].includes(drift) ? ["wwww", "rrrr", "ssss", "kkkk"] : ["wwww", "rrrr", "ssss"];
     mock.pathsIn = async (_cwd, rev) => {
-      assert.equal(rev, sha("4"), "Inspect the exact new commit, not a mutable change id");
+      assert.equal(rev, sha(drift === "foreign-new-divergent" ? "7" : "4"), "Inspect the exact new commit, not a mutable change id");
       return [drift === "vars" || drift === "rewrite" ? "vars/per-machine/magnetite/another-generator/secret/secret" : "docs/foreign.md"];
     };
     mock.snapshot = async () => after && drift === "foreign" ? { "docs/foreign.md": "100644:new" } : {};
@@ -33,6 +33,10 @@ export async function runVarsChecks({ actual, mock, files, cwd, signal, setHandl
       if (command.startsWith("jj --ignore-working-copy log") && command.includes("all()")) {
         const rows = [`ssss ${sha(after && drift === "ancestry" ? "9" : "1")}`, `rrrr ${sha("2")}`, `wwww ${sha(after ? "5" : "3")}`];
         if (after && ["foreign", "vars", "rewrite"].includes(drift)) rows.push(`${drift === "rewrite" ? "ssss" : "kkkk"} ${sha("4")}`);
+        if (drift === "foreign-divergent") rows.push(`kkkk ${sha("6")}`, `kkkk ${sha("7")}`);
+        if (drift === "foreign-new-divergent") rows.push(`kkkk ${sha("6")}`, ...(after ? [`kkkk ${sha("7")}`] : []));
+        if (drift === "protected-divergent") rows.push(`ssss ${sha("8")}`);
+        if (drift === "protected-absent") rows.splice(0, 1);
         return observation(rows.join("\n") + "\n");
       }
       if (command.startsWith("jj --ignore-working-copy log") && command.includes("parents.map")) return observation(after && drift === "parentage" ? `${sha("2")},${sha("1")}` : sha("2"));
@@ -63,6 +67,21 @@ export async function runVarsChecks({ actual, mock, files, cwd, signal, setHandl
     assert.equal(files.get(secretFile), envelope);
     assert.equal(present.noCommitEnvironment, "CLAN_NO_COMMIT=1");
     console.log("PASS vars existing: no generation; already-present observable binds the list receipt; operator envelope retained");
+
+    run = await fixture({ drift: "foreign-divergent" });
+    const divergent = await run.result;
+    assert.deepEqual(divergent.foreignDivergent, [{ changeId: "kkkk", candidates: [sha("6"), sha("7")] }]);
+    assert.deepEqual(divergent.topology.before, divergent.topology.after);
+    run = await fixture({ drift: "foreign-new-divergent" });
+    const newlyDivergent = await run.result;
+    assert.deepEqual(newlyDivergent.foreignDivergent, divergent.foreignDivergent);
+    assert.deepEqual(newlyDivergent.foreignChanges, [{ changeId: "kkkk", commitId: sha("7"), paths: ["docs/foreign.md"] }]);
+    assert.deepEqual(newlyDivergent.topology.before, newlyDivergent.topology.after);
+    run = await fixture({ drift: "protected-divergent" });
+    await assert.rejects(() => run.result, (error) => /protected.*ssss/i.test(String(error)) && String(error).includes(sha("1")) && String(error).includes(sha("8")));
+    run = await fixture({ drift: "protected-absent" });
+    await assert.rejects(() => run.result, /protected.*ssss.*candidates: \[\]/i);
+    console.log("PASS divergence regressions: foreign ancestor divergence is evidence; protected divergent/absent identities block with candidate commit ids; singleton unchanged");
 
     run = await fixture({ listing: `${app}: ********\n${webhook}: <not set>` });
     const missing = await run.result;

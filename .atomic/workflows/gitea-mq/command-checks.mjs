@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { resolve, join } from "node:path";
 import { mkdtemp, mkdir, symlink, rm, realpath } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { runVarsChecks } from "./vars-checks.mjs";
+import { runVcsChecks } from "./vcs-checks.mjs";
 
 const dataUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`;
 const observed = (stdout = "", exitCode = 0, stderr = "") => ({
@@ -41,7 +43,7 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
     readResponse: async (path) => get(path),
     pathsIn: async () => [],
     assertHealthy: async () => {},
-    oneId: async (_cwd, revset) => revset === "@-" || revset.endsWith("+") ? "jjjj" : "ssss",
+    oneId: async (_cwd, revset) => revset === "@-" || revset.includes("+ & ") ? "rrrr" : "ssss",
     ids: async () => ["ssss"],
     capture: async (_cwd, command, actualSignal) => {
       assert.equal(actualSignal, signal, "Every command forwards the cancellation signal");
@@ -59,7 +61,9 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   const sharedModule = dataUrl(`export * from "${moduleUrl(".atomic/workflows/omnigent/tools.ts")}";\n` + ["capture", "save", "snapshot", "pathsIn"].map(port).join("\n"));
   const deployModule = dataUrl(`export * from "${moduleUrl(".atomic/workflows/omnigent/deployment.ts")}";\n` + ["applyDns", "updateMachine"].map(port).join("\n"));
   const processModule = dataUrl(`export * from "${moduleUrl(".atomic/workflows/gitea-mq/process.ts")}";\n` + ["capture", "captureStreaming", "readResponse"].map(port).join("\n"));
-  const vcsModule = dataUrl(`export * from "${moduleUrl(".atomic/workflows/gitea-mq/vcs.ts")}";\n` + ["snapshot", "pathsIn", "assertHealthy", "oneId", "ids"].map(port).join("\n"));
+  let vcsCode = ts.transpileModule(readFileSync(".atomic/workflows/gitea-mq/vcs.ts", "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText;
+  vcsCode = vcsCode.replace(/from "([^"]+)"/g, (whole, name) => name === "./process.js" ? `from "${processModule}"` : name.startsWith(".") ? `from "${moduleUrl(resolve(".atomic/workflows/gitea-mq", name.replace(/\.js$/, ".ts")))}"` : whole);
+  const vcsModule = dataUrl(`export * from "${dataUrl(vcsCode)}";\n` + ["snapshot", "pathsIn", "assertHealthy", "oneId", "ids"].map(port).join("\n"));
   let code = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText;
   code = code.replace(/from "([^"]+)"/g, (whole, name) => {
     if (name === "node:fs/promises") return `from "${fsModule}"`;
@@ -73,6 +77,8 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   });
   code = code.replace('from "typebox"', `from "${typeboxUrl}"`);
   const actual = await import(dataUrl(code));
+  await runVcsChecks({ vcs: await import(dataUrl(vcsCode)), actual, mock: globalThis.__mqCommandMock, signal, setHandler: (next) => { handler = next; } });
+  if (process.argv.includes("--vcs-only")) return;
   if (process.argv.includes("--vars-only")) {
     await runVarsChecks({ actual, mock: globalThis.__mqCommandMock, files, cwd: "/mock", signal, setHandler: (next) => { handler = next; }, varsAllowed: slices.varsAllowed });
     return;
@@ -109,6 +115,9 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
     const taskText = "- [ ] 1.1 G1\n- [ ] 8.2 G2\n- [ ] 2.1 input";
     files.set(join(repo, slices.tasks), taskText);
     handler = (command) => command === "git symbolic-ref -q HEAD" ? observed("", 1)
+      : command.includes('change_id ++ " " ++ commit_id') ? observed(`ssss ${"a".repeat(40)}`)
+      : command.includes("-T commit_id") ? observed("a".repeat(40))
+      : command.startsWith("git cat-file") || command === "jj git export" ? observed("", 1, "export unavailable")
       : command.startsWith("nix eval ") ? observed({ pre: null }) : observed();
     const result = await actual.preflight(repo, "ssss", signal);
     assert(commands.includes("gh auth status\nclan vars --help"), "Preflight probes Clan with its supported vars help command");
@@ -143,7 +152,7 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
     assert.equal(receipt.stat, "adopted scoped diff stat");
     assert.equal(JSON.parse(adopted.lock).nodes.nixbot.locked, "parent", "Adoption must not bless edited build-service locks as its baseline");
     assert.equal(adopted.baseline.kind, "NotRun", "Adoption cannot use a dirty candidate when committed baseline resolution fails");
-    assert.match(adopted.baseline.reason, /commit id/);
+    assert.match(adopted.baseline.reason, /exit 1/);
     assert(commands.some((command) => command.includes("diff -r @ --stat --") && adoptedPaths.every((path) => command.includes(`'${path}'`))));
     assert.deepEqual(adopted.foreign, foreign);
     await assert.rejects(() => actual.preflight(repo, "ssss", signal), /Preexisting workflow changes/);
@@ -152,7 +161,7 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
       await assert.rejects(() => actual.preflight(repo, "ssss", signal, { root: evidenceRoot }), /outside S1/);
     }
     pending = adoptedPaths;
-    for (const revset of ["rollup-landing", "ssss+", "@-"]) {
+    for (const revset of ["rollup-landing", "change_id(ssss)+ & change_id(rrrr)", "@-"]) {
       mock.oneId = async (cwd, rev, signal) => rev === revset ? "kkkk" : original.oneId(cwd, rev, signal);
       await assert.rejects(() => actual.preflight(repo, "ssss", signal, { root: evidenceRoot }), /tip\/join mismatch|child of the join/);
     }
@@ -186,6 +195,7 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
     const routedHandler = (command) => {
       if (command.includes("dynamicUser")) return observed(resources);
       if (command.includes("description.first_line()")) return observed(`${routedId} ${description}\nxxxxxxxx feat(gitea-mq): add magnetite credentials`);
+      if (command.includes('change_id ++ " " ++ commit_id')) return observed(`ssss ${routedSha}`);
       if (command.includes("-T commit_id")) return observed(routedSha);
       if (command.startsWith("git cat-file -e")) return observed();
       if (command.startsWith("git rev-list --parents")) return observed(`${routedSha} ${parentSha}`);
@@ -369,6 +379,7 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   await assert.rejects(() => actual.planDns(cwd, "root", "saved", savedPlan, signal), /outside the source tree/);
   await assert.rejects(() => actual.planDns(cwd, "../root", "saved", { source: "path:/mock", sha: savedPlan.sha }, signal), /committed git\+file/);
   handler = (command) => {
+    if (command.includes('change_id ++ " " ++ commit_id')) return observed(`ssss ${savedPlan.sha}`);
     if (command.includes("-T commit_id")) return observed(savedPlan.sha);
     if (command.startsWith("git cat-file")) return observed();
     if (command.includes("show-ref --verify")) return observed(`${savedPlan.sha} refs/heads/rollup-landing`);
@@ -395,14 +406,14 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   console.log("PASS R2 commands: snapshot forwards signal; git show hash and record grep bind the resolved DNS rev before planning");
   const oldPathsIn = globalThis.__mqCommandMock.pathsIn, oldOneId = globalThis.__mqCommandMock.oneId;
   let pending = true;
-  const owned = { workingCopy: "wwww", join: "jjjj", seed: "ssss", tip: "kkkk", changes: [{ id: "kkkk", paths: [dnsPath, slices.tasks] }] };
+  const owned = { workingCopy: "wwww", join: "rrrr", seed: "ssss", tip: "kkkk", changes: [{ id: "kkkk", paths: [dnsPath, slices.tasks] }] };
   globalThis.__mqCommandMock.pathsIn = async (_cwd, rev) => rev === "@" ? pending ? [dnsPath, slices.tasks] : [] : [dnsPath, slices.tasks];
-  globalThis.__mqCommandMock.oneId = async (_cwd, rev) => ({ "@-": "jjjj", "ssss+": "kkkk", "kkkk-": "ssss", "kkkk+": "jjjj", "rollup-landing": "kkkk" })[rev];
+  globalThis.__mqCommandMock.oneId = async (_cwd, rev) => ({ "@-": "rrrr", "change_id(ssss)+ & change_id(kkkk)": "kkkk", "change_id(kkkk)-": "ssss", "change_id(kkkk)+ & change_id(rrrr)": "rrrr", "rollup-landing": "kkkk" })[rev] ?? /^change_id\(([k-z]+)\)$/.exec(rev)?.[1];
   const amendmentStart = commands.length;
   handler = (command) => {
     if (command === "git symbolic-ref -q HEAD") return observed("", 1);
     if (command === "jj debug snapshot") return observed();
-    if (command.startsWith("jj squash")) { assert(command.includes("--into 'kkkk'")); pending = false; return observed(); }
+    if (command.startsWith("jj squash")) { assert(command.includes("--into 'change_id(kkkk)'")); pending = false; return observed(); }
     throw Error(`Unexpected candidate mutation: ${command}`);
   };
   const routeSnapshot = globalThis.__mqCommandMock.snapshot;
@@ -414,6 +425,29 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   assert.deepEqual(amended.foreignDrift, [foreignDns]);
   globalThis.__mqCommandMock.snapshot = routeSnapshot;
   assert(!commands.slice(amendmentStart).some((command) => command.startsWith("jj new") || command.includes("abandon")));
+  pending = true;
+  const ownedEdges = globalThis.__mqCommandMock.oneId;
+  let inserted = false, bookmarked = false;
+  globalThis.__mqCommandMock.oneId = async (cwd, rev, signal) => {
+    if (rev === "rollup-landing") return bookmarked ? "kkkk" : "ssss";
+    if (rev === "change_id(ssss)+ & change_id(rrrr)") { assert(!inserted); return "rrrr"; }
+    if (rev === "change_id(ssss)+ & change_id(rrrr)-") { assert(inserted); return "kkkk"; }
+    assert(!/^(?:ssss|kkkk)\+$/.test(rev), "A foreign sibling must not enter an unscoped sole-child lookup");
+    return ownedEdges(cwd, rev, signal);
+  };
+  const amendmentHandler = handler;
+  handler = (command) => {
+    if (command.startsWith("jj new")) {
+      assert(command.includes("-A 'change_id(ssss)' -B 'change_id(rrrr)'"), "Constrain routing to the protected tip/join, leaving foreign siblings alone");
+      inserted = true; return observed();
+    }
+    if (command.startsWith("jj bookmark set")) { assert(command.includes("-r 'change_id(kkkk)'")); bookmarked = true; return observed(); }
+    return amendmentHandler(command);
+  };
+  const appended = await actual.route(cwd, { ...owned, tip: "ssss", changes: [] }, slices.s2, {}, signal);
+  assert.equal(appended.tip, "kkkk"); assert.equal(appended.changes.length, 1);
+  assert(inserted && bookmarked);
+  console.log("PASS routing divergence isolation: explicit change_id targets, owned-edge lookup, tip/join-only insertion leaves foreign siblings alone");
   globalThis.__mqCommandMock.pathsIn = oldPathsIn; globalThis.__mqCommandMock.oneId = oldOneId;
   console.log("PASS R4 commands: candidate repair squashes --into the same owned change without appending or abandoning");
 
@@ -455,7 +489,8 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
     const s1Handler = handler, sha = "e".repeat(40), candidateSha = "f".repeat(40), pinned = `git+file:///mock?ref=rollup-landing&rev=${sha}`;
     let failedSide = "", baselineContainsS1 = false, candidatePre = ["original forge pre-start"];
     handler = (command) => {
-      if (command.endsWith("-T commit_id")) return observed(command.includes("'routed-s1'") ? candidateSha : sha);
+      if (command.includes('change_id ++ " " ++ commit_id')) return observed(`${command.includes("'routed-s1'") || command.includes("change_id(rrrr)") ? `rrrr ${candidateSha}` : `ssss ${sha}`}`);
+      if (command.endsWith("-T commit_id")) return observed(command.includes("'routed-s1'") || command.includes(candidateSha) ? candidateSha : sha);
       if (command.startsWith("git cat-file")) return observed();
       if (command.startsWith("git --no-pager show-ref")) return observed(`${command.includes("rollup-landing") ? sha : candidateSha} refs/heads/rollup-landing`);
       if (command.startsWith("git rev-list")) { assert(command.includes(candidateSha)); return observed(`${candidateSha} ${sha}`); }
