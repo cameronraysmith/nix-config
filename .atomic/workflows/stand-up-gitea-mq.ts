@@ -2,10 +2,10 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import process from "node:process";
 import { workflow, type WorkflowSerializableValue, type WorkflowTaskOptions } from "@bastani/atomic/workflows";
-import { Blocked, witness, unreachable, type Witness } from "./bump/types.js";
+import { Blocked, witness, unreachable, within, type Witness } from "./bump/types.js";
 import { inputs, outputs, HIGH, MEDIUM, MAX, READ_ONLY, StageOutput, VerifyDraft, Diagnosis, Review, RulesetDraft, AppReply, parse, assertCatalog, catalogPort, validateModelPolicy, validateModelAttempts, nextBatch, completedRun, attemptsFor, normalizeToolOutcome, type Batch, type Validation } from "./gitea-mq/types.js";
 import { Validation as ValidationSchema } from "./gitea-mq/types.js";
-import { tasks, design, verify, reads, s1, postG1, s2, s4, docs, report, negativeControls, type Slice } from "./gitea-mq/slices.js";
+import { dir, tasks, design, verify, reads, s1, postG1, s2, s4, docs, report, negativeControls, type Slice } from "./gitea-mq/slices.js";
 import * as t from "./gitea-mq/tools.js";
 import * as p from "./gitea-mq/prompts.js";
 import { repairEffect, repairPaths, dnsChainLabel, dnsCandidateId, dnsRecovery, type DnsChainState, type RepairEffect, type GateEntry, type GateStatus } from "./gitea-mq/ledger.js";
@@ -23,10 +23,9 @@ export default workflow({
     const ledger: unknown[] = [], linearTransitions: LinearState[] = [], cleanupTokens = t.appTokenCleanup(cwd, root);
     let retainTokens = false;
     const index: { node: string; ok: boolean; evidence: string }[] = [];
-    let lockedDeclaration: string | null = null;
-    let humanBaseline = "";
+    let lockedDeclaration: string | null = null, humanBaseline = "";
     let dnsState: DnsChainState = { kind: "Absent" };
-    const gateLedger: GateEntry[] = [];
+    const gateLedger: GateEntry[] = []; let pendingChangeProposals: string[] = [];
     const passed = (gate: string, taskIds: string[], evidence: string, status: GateStatus = { kind: "Passed" }) => gateLedger.push({ gate, taskIds, evidence, status });
     const recordS1 = (gate: Awaited<ReturnType<typeof t.s1Gate>>, evidence: string) => { for (const row of gate.observations) passed("s1", [row.taskId], evidence, row.missing.length ? { kind: "Unverified", reason: row.missing.join(", ") } : { kind: "Passed" }); };
     let chain: t.Chain | null = null, tracked: Witness<string[]> | null = null, deployed: Witness<boolean> | null = null, written: Witness<boolean> | null = null;
@@ -73,6 +72,9 @@ export default workflow({
         await t.applyStageEdits(cwd, patch.edits, slice, signal, humanBaseline, replan); const tree = await t.snapshot(cwd, signal); return { tree, foreignDrift, effect: repairEffect(current, tree) };
       });
       if (!scoped.ok) throw new ProposalRejected(`apply-${id}: ${JSON.stringify(scoped.error)}; ${root}/apply-${id}.json`);
+      if (patch.edits.some((edit) => within(edit.path, dir))) {
+        pendingChangeProposals.push(`${root}/apply-${id}.json`); for (const entry of gateLedger) if (entry.gate.endsWith("-openspec")) entry.status = { kind: "Invalidated", reason: `Change proposal apply-${id}` };
+      }
       await tool(`snapshot-wc-after-${id}`, (signal) => t.snapshotWorkingCopy(cwd, signal));
       return scoped.value.evidence.effect;
     });
@@ -97,12 +99,14 @@ export default workflow({
         attempts: for (const attempt of attemptsFor(input.max_repair_attempts)) {
           const id = `${name}-b${batch}-a${attempt}`;
           try {
-            if (instructions) {
-              pendingPaths.push(...repairPaths(await implement(`repair-${id}`, slice, instructions, false, false, diagnosisArtifact)));
-            }
+            if (instructions) pendingPaths.push(...repairPaths(await implement(`repair-${id}`, slice, instructions, false, false, diagnosisArtifact)));
             if (slice.allowedPaths.includes("flake.nix")) {
               const lock = await tool(`relock-${id}`, (signal) => t.lockInput(cwd, lockedDeclaration, humanBaseline, signal), timeout, true);
               lockedDeclaration = lock.value.declaration;
+            }
+            if (pendingChangeProposals.length) {
+              const validated = await tool(`validate-change-${id}`, (signal) => t.validateChange(cwd, [...pendingChangeProposals], signal), 120_000, true);
+              passed(`${name}-openspec`, [], validated.evidence); await persist(`gate-ledger-openspec-${id}`, gateLedger); pendingChangeProposals = [];
             }
             if (instructions && prepareRepair) {
               const effect: RepairEffect = pendingPaths.length ? { kind: "Changed", paths: [...new Set(pendingPaths)] } : { kind: "Noop" };
@@ -145,11 +149,9 @@ export default workflow({
         const models = catalogPort(ctx);
         const catalog = models ? await models.listModels() : null;
         await t.save(cwd, `${root}/model-catalog.json`, catalog ?? { note: "Model catalog port unavailable; native resolution and post-call model/thinking rejection apply. Implicit host fallback risk accepted by operator." });
-        if (catalog !== null) assertCatalog(catalog);
-        return t.preflight(cwd, input.splice_after, signal, input.adopt_working_copy ? { root } : null);
+        if (catalog !== null) assertCatalog(catalog); return t.preflight(cwd, input.splice_after, signal, input.adopt_working_copy ? { root } : null);
       }, timeout);
-      chain = initial.value.chain;
-      humanBaseline = initial.value.humanBoxes;
+      chain = initial.value.chain; humanBaseline = initial.value.humanBoxes;
       passed("preflight-task-baseline", initial.value.taskIds, initial.evidence, { kind: "Unverified", reason: "No tool observation yet" });
       await persist("contracts", { s1, postG1, s2, s4, docs, report, negativeControls });
       const adoption = "adoption" in initial.value ? initial.value.adoption : null;
@@ -241,7 +243,6 @@ export default workflow({
       await tool("ruleset-ledger", (signal) => t.tick(cwd, ["8.1", "8.3", "8.4"], signal, humanBaseline));
       passed("rulesets-before", ["8.1"], beforeRules.evidence); passed("rulesets", ["8.3"], rules.evidence); passed("identities", ["8.4"], identities.evidence);
       await land("route-s3", report);
-
       const repairDeployment = async (id: string, effect: RepairEffect) => {
         switch (effect.kind) {
           case "Noop": return;
@@ -306,7 +307,6 @@ export default workflow({
           passed("V2", ["11.7"], v2.evidence);
         } else throw new Stop("declined", "G4 declined");
       } else validation = { ...validation, v2: { kind: "NotRun", reason: "deploy=false" }, v3: { kind: "NotRun", reason: "deploy=false" }, v6: { kind: "NotRun", reason: "deploy=false; no G5 ref mutation" } };
-
       await implement("docs", docs, "", false, true);
       const builtDocs = await bounded("docs-build", docs, (id) => tool(id, async (signal) => { await t.runStreaming(cwd, "just docs-build\njust docs-linkcheck", signal); return { built: true }; }, timeout, true));
       await tool("docs-ledger", (signal) => t.tick(cwd, ["10.1"], signal, humanBaseline)); passed("docs", ["10.1"], builtDocs.evidence);

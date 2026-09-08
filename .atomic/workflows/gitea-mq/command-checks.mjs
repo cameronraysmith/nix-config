@@ -117,6 +117,8 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
     assert.equal(receipt.sha256[slices.aspect], tools.sha256(slices.aspect));
     assert.equal(receipt.stat, "adopted scoped diff stat");
     assert.equal(JSON.parse(adopted.lock).nodes.nixbot.locked, "parent", "Adoption must not bless edited build-service locks as its baseline");
+    assert.equal(adopted.baseline.kind, "NotRun", "Adoption cannot use a dirty candidate when committed baseline resolution fails");
+    assert.match(adopted.baseline.reason, /commit id/);
     assert(commands.some((command) => command.includes("diff -r @ --stat --") && adoptedPaths.every((path) => command.includes(`'${path}'`))));
     assert.deepEqual(adopted.foreign, foreign);
     await assert.rejects(() => actual.preflight(repo, "ssss", signal), /Preexisting workflow changes/);
@@ -338,6 +340,9 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   };
   const firstGate = await actual.s1Gate(cwd, JSON.stringify(lock), { pre: null }, signal);
   assert(!firstGate.verifiedTasks.includes("4.1"));
+  assert(!firstGate.verifiedTasks.includes("5.3"), "A legacy dirty baseline without provenance must not verify task 5.3");
+  assert.equal(firstGate.forgePre.kind, "NotRun");
+  assert(!firstGate.observations.find((row) => row.taskId === "5.3").observed.includes("forge-pre-unchanged"));
   const completeApp = await actual.s1Gate(cwd, JSON.stringify(lock), { pre: null }, signal, 1234);
   assert(completeApp.verifiedTasks.includes("4.1"));
   for (const task of ["2.1", "3.1", "4.2", "4.4", "5.1"]) {
@@ -347,6 +352,58 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   for (const arm of ["bindings", "ownership", "environment"]) { badArm = arm; await assert.rejects(() => actual.s1Gate(cwd, JSON.stringify(lock), { pre: null }, signal, 1234), /pinned contract/); }
   badArm = "";
   await assert.rejects(() => actual.s1Gate(cwd, JSON.stringify(lock), { pre: null }, signal, 999), /App-id/);
+  {
+    const s1Handler = handler, sha = "e".repeat(40), pinned = `git+file:///mock?ref=rollup-landing&rev=${sha}`;
+    let failBaseline = false, baselineContainsS1 = false, candidatePre = ["original forge pre-start"];
+    handler = (command) => {
+      if (command.endsWith("-T commit_id")) { assert(command.includes("'rollup-landing'")); return observed(sha); }
+      if (command.startsWith("git cat-file")) return observed();
+      if (command.startsWith("git --no-pager show-ref")) return observed(`${sha} refs/heads/rollup-landing`);
+      if (command.startsWith("git ls-tree")) return observed(baselineContainsS1 ? "100644 blob S1" : "");
+      if (command.includes("--apply 'c: { pre =")) {
+        const committed = command.includes(pinned);
+        if (committed && failBaseline) return observed("", 1, "immutable eval unavailable");
+        return { ...observed({ pre: committed ? ["original forge pre-start"] : candidatePre }), logPath: committed ? "baseline-eval.log" : "candidate-eval.log" };
+      }
+      return s1Handler(command);
+    };
+    const start = commands.length, adopted = await actual.forgeBaseline(cwd, true, signal);
+    assert.equal(adopted.kind, "Evaluated");
+    assert.deepEqual(adopted.provenance, { kind: "CommittedPreS1", source: pinned, sha });
+    assert(commands.slice(start).filter((command) => command.startsWith("nix eval")).every((command) => command.includes(pinned)), "Adoption baseline must never evaluate dirty candidate");
+    const gate = await actual.s1Gate(cwd, JSON.stringify(lock), adopted, signal);
+    assert.equal(gate.forgePre.kind, "Passed"); assert(gate.verifiedTasks.includes("5.3"));
+    assert.equal(gate.forgePre.baseline.evaluation.receipt, "baseline-eval.json");
+    assert.equal(gate.forgePre.candidate.receipt, "candidate-eval.json");
+    assert.equal(gate.forgePre.baseline.evaluation.command.split(" --apply ")[1], gate.forgePre.candidate.command.split(" --apply ")[1]);
+    assert.equal(gate.forgePre.comparison.equal, true);
+    const ordinary = await actual.forgeBaseline(cwd, false, signal);
+    assert.deepEqual(ordinary.provenance, { kind: "PreflightWorkingCopy", source: ".", sha: null });
+    assert((await actual.s1Gate(cwd, JSON.stringify(lock), ordinary, signal)).verifiedTasks.includes("5.3"));
+    const dirty = await actual.s1Gate(cwd, JSON.stringify(lock), { ...ordinary, adopted: true }, signal);
+    assert.equal(dirty.forgePre.kind, "NotRun"); assert(!dirty.verifiedTasks.includes("5.3"));
+    candidatePre = ["changed by S1"];
+    await assert.rejects(() => actual.s1Gate(cwd, JSON.stringify(lock), adopted, signal), /Forge ExecStartPre changed.*"equal":false/);
+    failBaseline = true;
+    const failStart = commands.length, unavailable = await actual.forgeBaseline(cwd, true, signal);
+    assert.equal(unavailable.kind, "NotRun"); assert.equal(unavailable.provenance.sha, sha);
+    assert(commands.slice(failStart).filter((command) => command.startsWith("nix eval")).every((command) => command.includes(pinned)));
+    const skipped = await actual.s1Gate(cwd, JSON.stringify(lock), unavailable, signal);
+    assert.equal(skipped.forgePre.kind, "NotRun"); assert(!skipped.verifiedTasks.includes("5.3"));
+    baselineContainsS1 = true;
+    assert.match((await actual.forgeBaseline(cwd, true, signal)).reason, /already contains S1/);
+    handler = s1Handler;
+    console.log("PASS forge pre-S1 provenance: adoption pins rollup rev, identical projections and both receipts; dirty/legacy/unavailable baselines cannot pass 5.3; changed projection fails");
+  }
+  {
+    const previous = handler, proposals = ["apply-replan.json", "apply-repair.json"];
+    handler = (command) => { assert.equal(command, `openspec validate '${slices.dir.split("/").at(-1)}' --strict`); return { ...observed(), logPath: "strict-change.log" }; };
+    assert.deepEqual(await actual.validateChange(cwd, proposals, signal), { valid: true, proposals, command: `openspec validate '${slices.dir.split("/").at(-1)}' --strict`, receipt: "strict-change.json" });
+    handler = () => observed("", 1, "invalid changed proposal");
+    await assert.rejects(() => actual.validateChange(cwd, proposals, signal), /exit 1/);
+    handler = previous;
+    console.log("PASS strict change validation command: exact change/strict flags, process receipt and applied proposal binding; nonzero exit rejects");
+  }
   console.log("PASS F7: task-arm receipts, unobserved tasks unverified, credential/ownership/environment negative controls");
 
   for (const path of [slices.varsAllowed[0] + "/key.pem/secret", slices.varsAllowed[1] + "/secret/secret"]) files.set(join(cwd, path), '{"sops":{},"secret":"ENC[opaque]"}');

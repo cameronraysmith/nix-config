@@ -11,7 +11,7 @@ import {
 } from "../omnigent/tools.js";
 import { snapshot, assertHealthy, oneId, ids, pathsIn } from "./vcs.js";
 import {
-  resolveSource as sharedResolveSource, type DeploymentSource,
+  resolveSource as sharedResolveSource, committedSource, type DeploymentSource,
 } from "../omnigent/deployment.js";
 import { capture, captureStreaming, readResponse, assertExternalEvidence, canonicalExternalEvidence } from "./process.js";
 export { processCheckpoint, allocateEvidence } from "./process.js";
@@ -85,6 +85,58 @@ export async function topology(cwd: string, chain: Chain, signal: AbortSignal): 
   }
   return chain.changes.map((c) => c.id);
 }
+const ForgePre = Type.Object({ pre: Type.Union([Type.String(), Type.Array(Type.String()), Type.Null()]) });
+const forgeProjection = 'c: { pre = c.systemd.services.gitea.serviceConfig.ExecStartPre or null; }';
+const forgeCommand = (source: string) => `nix eval --no-write-lock-file --json ${quote(`${source}#nixosConfigurations.magnetite.config`)} --apply ${quote(forgeProjection)}`;
+const ForgeProvenance = Type.Union([
+  Type.Object({ kind: Type.Literal("CommittedPreS1"), source: Type.String(), sha: Type.String({ pattern: "^[a-f0-9]{40}$" }) }),
+  Type.Object({ kind: Type.Literal("PreflightWorkingCopy"), source: Type.Literal("."), sha: Type.Null() }),
+]);
+const ForgeBaseline = Type.Union([
+  Type.Object({ kind: Type.Literal("Evaluated"), adopted: Type.Boolean(), provenance: ForgeProvenance,
+    evaluation: Type.Object({ command: Type.String(), receipt: Type.String({ minLength: 1 }), value: ForgePre }) }),
+  Type.Object({ kind: Type.Literal("NotRun"), adopted: Type.Boolean(), provenance: Type.Union([ForgeProvenance, Type.Null()]), reason: Type.String() }),
+]);
+async function evaluateForgePre(cwd: string, source: string, signal: AbortSignal) {
+  const command = forgeCommand(source), result = await capture(cwd, command, signal);
+  const value = parse(ForgePre, JSON.parse(requireSuccess(result)));
+  return { command, receipt: result.logPath.replace(/\.log$/, ".json"), value };
+}
+/** Adoption must never bless the already-implemented candidate as pre-S1. */
+export async function forgeBaseline(cwd: string, adopted: boolean, signal: AbortSignal) {
+  let provenance: { kind: "CommittedPreS1"; source: string; sha: string } | { kind: "PreflightWorkingCopy"; source: "."; sha: null } | null = null;
+  try {
+    if (adopted) {
+      const source = await resolveSource(cwd, "rollup-landing", "rollup-landing", signal);
+      provenance = { kind: "CommittedPreS1", ...source };
+      if (await run(cwd, `git ls-tree ${quote(source.sha)} -- ${quote(aspect)}`, signal)) throw new Blocked("rollup-landing source already contains S1 aspect");
+    } else provenance = { kind: "PreflightWorkingCopy", source: ".", sha: null };
+    return { kind: "Evaluated" as const, adopted, provenance, evaluation: await evaluateForgePre(cwd, provenance.source, signal) };
+  } catch (error) {
+    signal.throwIfAborted();
+    if (!adopted) throw error;
+    return { kind: "NotRun" as const, adopted, provenance, reason: `Immutable pre-S1 evaluation unavailable: ${String(error)}` };
+  }
+}
+export async function compareForgePre(cwd: string, baseline: unknown, signal: AbortSignal) {
+  let checked;
+  try { checked = parse(ForgeBaseline, baseline); }
+  catch { return { kind: "NotRun" as const, reason: "No evaluated pre-S1 baseline with provenance" }; }
+  if (checked.kind === "NotRun") return { kind: "NotRun" as const, reason: checked.reason, baseline: checked };
+  if (checked.adopted && checked.provenance.kind !== "CommittedPreS1" ||
+      checked.provenance.kind === "CommittedPreS1" && checked.provenance.source !== committedSource(cwd, checked.provenance.sha, "rollup-landing").source ||
+      checked.evaluation.command !== forgeCommand(checked.provenance.source)) {
+    return { kind: "NotRun" as const, reason: "Baseline provenance does not establish pre-S1 source", baseline: checked };
+  }
+  const candidate = await evaluateForgePre(cwd, ".", signal);
+  const equal = isDeepStrictEqual(checked.evaluation.value, candidate.value);
+  return { kind: equal ? "Passed" as const : "Failed" as const, baseline: checked, candidate, comparison: { equal, projection: forgeProjection } };
+}
+export async function validateChange(cwd: string, proposals: string[], signal: AbortSignal) {
+  const command = `openspec validate ${quote(dir.split("/").at(-1)!)} --strict`;
+  const result = await capture(cwd, command, signal); requireSuccess(result);
+  return { valid: true, proposals, command, receipt: result.logPath.replace(/\.log$/, ".json") };
+}
 export async function preflight(cwd: string, splice: string, signal: AbortSignal, adoption: { root: string } | null = null) {
   if (resolve(cwd) !== "/Users/crs58/projects/vanixiets") throw new Blocked("Wrong repository cwd");
   await run(cwd, `openspec validate ${quote(dir.split("/").at(-1)!)} --strict`, signal);
@@ -115,11 +167,7 @@ export async function preflight(cwd: string, splice: string, signal: AbortSignal
   const nodes = parse(Type.Object({ nodes: Type.Record(Type.String(), Type.Unknown()) }),
     JSON.parse(adoption ? await run(cwd, "jj --ignore-working-copy file show -r @- flake.lock", signal) : await readFile(join(cwd, "flake.lock"), "utf8"))).nodes;
   const lock = JSON.stringify({ nodes: { nixbot: nodes.nixbot, "buildbot-nix": nodes["buildbot-nix"] } });
-  const baselineSchema = Type.Object({
-    pre: Type.Union([Type.String(), Type.Array(Type.String()), Type.Null()]),
-  });
-  const baseline = parse(baselineSchema, await json(cwd,
-    `nix eval --no-write-lock-file --json .#nixosConfigurations.magnetite.config --apply ${quote('c: { pre = c.systemd.services.gitea.serviceConfig.ExecStartPre or null; }')}`, signal));
+  const baseline = await forgeBaseline(cwd, !!adoption, signal);
   const taskText = await readFile(join(cwd, tasks), "utf8");
   const baselineResult = { chain, lock, baseline, foreign, taskIds: [...taskLedger(taskText).keys()], humanBoxes: humanBoxes(taskText) };
   if (!adoption) return baselineResult;
@@ -254,11 +302,14 @@ export async function s1Gate(cwd: string, baselineLock: string, baseline: unknow
   }`;
   const config = parse(S1Configuration, await json(cwd,
     `nix eval --json --no-write-lock-file .#nixosConfigurations.magnetite.config --apply ${quote(expression)}`, signal));
-  if (![config.values, config.service, config.resources, config.credentials, config.bindings, config.ownership, config.environment, config.vhost, config.nixbot].every(Boolean) || !isDeepStrictEqual({ pre: config.pre }, baseline)) throw new Blocked("S1 evaluated configuration differs from pinned contract");
+  if (![config.values, config.service, config.resources, config.credentials, config.bindings, config.ownership, config.environment, config.vhost, config.nixbot].every(Boolean)) throw new Blocked("S1 evaluated configuration differs from pinned contract");
   if (expectedAppId !== null && config.appId !== expectedAppId) throw new Blocked("App-id differs from tool observation");
-  const observed: S1Arm[] = ["host-derivation", "four-negative-controls", "build-locks-unchanged", "build-metadata-unchanged", "build-aspects-unchanged", "landing-settings", "landing-environment", "service-settings", "database-declaration", "credential-root-restart", "credential-bindings", "ensure-users-ownership", "vhost", "nixbot-domain", "dynamic-user", "cache-directory", "no-static-user", "loopback-listener", "forge-pre-unchanged"];
+  const forgePre = await compareForgePre(cwd, baseline, signal);
+  if (forgePre.kind === "Failed") throw new Blocked(`Forge ExecStartPre changed: ${JSON.stringify(forgePre)}`);
+  const observed: S1Arm[] = ["host-derivation", "four-negative-controls", "build-locks-unchanged", "build-metadata-unchanged", "build-aspects-unchanged", "landing-settings", "landing-environment", "service-settings", "database-declaration", "credential-root-restart", "credential-bindings", "ensure-users-ownership", "vhost", "nixbot-domain", "dynamic-user", "cache-directory", "no-static-user", "loopback-listener"];
+  if (forgePre.kind === "Passed") observed.push("forge-pre-unchanged");
   if (expectedAppId !== null) observed.push("observed-app-id");
-  return { drv, negativeControls: negativeControls.map((c) => c.setting), ...s1Coverage(observed) };
+  return { drv, forgePre, negativeControls: negativeControls.map((c) => c.setting), ...s1Coverage(observed) };
 }
 export async function generateVars(cwd: string, chain: Chain, signal: AbortSignal) {
   await topology(cwd, chain, signal);

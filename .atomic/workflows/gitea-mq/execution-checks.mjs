@@ -11,7 +11,7 @@ const dataUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).toStr
 export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, slices, ledgerTools, assertCompactCheckpoint }) {
   const { s1Coverage } = await import(moduleUrl(".atomic/workflows/gitea-mq/s1-observations.ts"));
   const report = await import(moduleUrl(".atomic/workflows/gitea-mq/verify-report.ts"));
-  async function execute({ adoptWorkingCopy = false, g3Recovery = "", blockedDiagnosis = false, declineG2 = false, decline = "", rejectS1 = false, revisePlan = false, createFailure = false, cleanupFailure = false, exhaust = false, replay = false, probeFailure = false, repairNix = false, v3Failure = false, repairEvalFailure = false, dnsReject = false, dnsRejectOnce = false, rejectRoborev = false, throwExit = false, noHostnameEdit = false, proposalFailure = "", extraClaims = false, transientFailure = false, resumeFailure = false, unexpected = "", wrongRules = "", drift = "", structuralFailure = "", nativeFailure = "", nativeMessage = "", tokenDirectory = "", terminalRecordFailure = false, postMintFailure = false, catalog, proposalDrift = "" } = {}) {
+  async function execute({ changeProposal = false, proposalValidateFailure = false, adoptWorkingCopy = false, g3Recovery = "", blockedDiagnosis = false, declineG2 = false, decline = "", rejectS1 = false, revisePlan = false, createFailure = false, cleanupFailure = false, exhaust = false, replay = false, probeFailure = false, repairNix = false, v3Failure = false, repairEvalFailure = false, dnsReject = false, dnsRejectOnce = false, rejectRoborev = false, throwExit = false, noHostnameEdit = false, proposalFailure = "", extraClaims = false, transientFailure = false, resumeFailure = false, unexpected = "", wrongRules = "", drift = "", structuralFailure = "", nativeFailure = "", nativeMessage = "", tokenDirectory = "", terminalRecordFailure = false, postMintFailure = false, catalog, proposalDrift = "" } = {}) {
     const files = new Map();
     const events = [];
     const cache = new Map();
@@ -22,7 +22,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
     const revisions = new Map(), committedTasks = new Map();
     const dnsPath = "modules/terranix/cloudflare.nix", dnsContent = 'resource.cloudflare_dns_record.mq = { name = "mq"; type = "CNAME"; content = "magnetite.scientistexperience.net"; proxied = false; };';
     let root = "", live = false, failProbe = probeFailure, failV3 = v3Failure, failRepairEval = repairEvalFailure, rejectReview = rejectS1, failCreate = createFailure, failCleanup = cleanupFailure;
-    let failProposal = !!proposalFailure, failClaims = extraClaims, failTransient = transientFailure;
+    let failProposal = !!proposalFailure, failClaims = extraClaims, failTransient = transientFailure, changeValidations = 0;
     let gateExhausted = exhaust || g3Recovery === "gate", proposalExhausted = g3Recovery === "proposal";
     let failRules = !!wrongRules, failDrift = !!drift, failStructure = !!structuralFailure;
     const toolOptions = new Map();
@@ -90,6 +90,12 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       },
       adoptS1: async (_cwd, file) => ({ ...JSON.parse(get(join(cwd, file))), file }),
       lockInput: async () => ({ declaration: tree["flake.nix"] ?? "declaration", relocked: true }),
+      validateChange: async (_cwd, proposals, actualSignal) => {
+        assert.equal(actualSignal, signal);
+        changeValidations++;
+        if (proposalValidateFailure === true || proposalValidateFailure === "after-first" && changeValidations > 1) throw Error("fresh strict change validation failed");
+        return { valid: true, proposals, command: `openspec validate '${types.change}' --strict`, receipt: "fresh-validate.json" };
+      },
       s1Gate: async () => {
         if (gateExhausted || failRepairEval && events.at(-1)?.startsWith("eval-repair-")) {
           failRepairEval = false;
@@ -241,6 +247,8 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
         const edits = [];
         const propose = (path, after) => edits.push({ path, baseSha256: files.has(join(cwd, path)) ? tools.sha256(get(join(cwd, path))) : null, after });
         if (name.startsWith("implement")) propose("flake.nix", "input");
+        if (changeProposal && name.startsWith("implement")) propose(slices.design, "edited acceptance design");
+        if (changeProposal && (name.startsWith("repair-") || name.startsWith("replan-"))) propose(slices.design, `change repair ${name}`);
         if (name.startsWith("patch-app-id")) propose(slices.aspect, "app 1234");
         if (name.startsWith("hostname") && !noHostnameEdit) { propose(dnsPath, dnsContent); propose(slices.tasks, get(join(cwd, slices.tasks)).replace("[ ] 6.1", "[x] 6.1")); }
         if (name.startsWith("repair-dns")) propose(dnsPath, `${dnsContent}\n# ${name}`);
@@ -329,6 +337,29 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
     }
     return { result: first.outputs ?? first, exit: first, events, files, root, cwd, revisions, committedTasks, toolOptions, nativeError };
   }
+  const missingValidation = await execute({ changeProposal: true, proposalValidateFailure: true });
+  assert.equal(missingValidation.result.status, "blocked", "A change-directory proposal without successful fresh validation must fail its gate");
+  assert(!missingValidation.events.includes("gate-s1-b1-a1"));
+  assert(!missingValidation.events.includes("route-s1"));
+  assert(missingValidation.events.includes("diagnose-s1-b1-a1"));
+  const freshValidation = await execute({ changeProposal: true, replay: true });
+  assert.equal(freshValidation.result.status, "completed-with-caveat");
+  assert(freshValidation.events.indexOf("validate-change-s1-b1-a1") > freshValidation.events.indexOf("apply-implement-b1-a1"));
+  assert(freshValidation.events.indexOf("validate-change-s1-b1-a1") < freshValidation.events.indexOf("gate-s1-b1-a1"));
+  const changeLedger = JSON.parse(freshValidation.files.get(join(freshValidation.cwd, freshValidation.root, "gate-ledger-openspec-s1-b1-a1.json")));
+  assert(changeLedger.some((entry) => entry.gate === "s1-openspec" && entry.status.kind === "Passed" && entry.evidence.endsWith("validate-change-s1-b1-a1.json")));
+  const validateReceipt = JSON.parse(freshValidation.files.get(join(freshValidation.cwd, freshValidation.root, "validate-change-s1-b1-a1.json"))).value.evidence;
+  assert.deepEqual(validateReceipt.proposals, [`${freshValidation.root}/apply-implement-b1-a1.json`]);
+  const staleValidation = await execute({ changeProposal: true, proposalValidateFailure: "after-first", rejectS1: true });
+  assert.equal(staleValidation.result.status, "blocked");
+  assert(staleValidation.events.includes("validate-change-s1-b1-a2"));
+  assert(!staleValidation.events.includes("gate-s1-b1-a2"), "Old strict validation cannot authorize a newly edited proposal");
+  assert(!staleValidation.events.includes("route-s1"));
+  const repairedChange = await execute({ changeProposal: true, rejectS1: true, revisePlan: true, replay: true });
+  assert.equal(repairedChange.result.status, "completed-with-caveat");
+  const repairValidation = JSON.parse(repairedChange.files.get(join(repairedChange.cwd, repairedChange.root, "validate-change-s1-b1-a2.json"))).value.evidence;
+  assert.deepEqual(repairValidation.proposals, [`${repairedChange.root}/apply-replan-s1-b1-a1-b1-a1.json`, `${repairedChange.root}/apply-repair-s1-b1-a2-b1-a1.json`]);
+  console.log("PASS change proposal gate: fresh strict validation required before S1; failure blocks routing; receipt/proposal binding and replay retained");
   assert.equal(types.inputs.adopt_working_copy.default, false);
   const adoptedRun = await execute({ adoptWorkingCopy: true, replay: true });
   assert.equal(adoptedRun.result.status, "completed-with-caveat");
