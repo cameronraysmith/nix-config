@@ -2,7 +2,7 @@
 title: Omnigent server deployment plan
 status: working-note
 date: 2026-09-06
-amended: 2026-09-07
+amended: 2026-09-08
 ---
 
 # Omnigent server deployment plan
@@ -75,7 +75,7 @@ The replacement interpreter must import Omnigent under `env -i` and isolated mod
 The vanixiets `pkgs/by-name` tree is flat with `pkgsNameSeparator = "-"`, so the file is `pkgs/by-name/omnigent/package.nix` and the attribute is `flake.packages.<system>.omnigent` (`github:cameronraysmith/vanixiets@590f75195cc7acbb3926d39397bf860c2c6efc65:modules/nixpkgs/per-system.nix:51-52`).
 The delta between `v0.12.0` and the pinned revision is 285 commits, but of the OIDC surface only `omnigent/server/routes/auth.py` changed, and that change extracts JWKS validation into `_validate_id_token` and adds the optional `reauth=1` path while leaving `email` and `email_verified` handling unchanged (`github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:omnigent/server/routes/auth.py:847-882`; `github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:omnigent/server/routes/auth.py:885-913`); `omnigent/server/oidc.py` is byte-identical between tag and pin.
 The runner surface is likewise stable: the tunnel path, the `~/.omnigent/config.yaml` identity, the harness version floors, and the native-spec `sandbox.type: none` stance are unchanged, and the pin adds only `omnigent host reset-id`, a tightened cross-owner rejection, creation of missing `write_paths`, and OIDC-mode device consent (`github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:omnigent/host/identity.py:188-200`; `github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:omnigent/server/routes/host_tunnel.py:216-249`; `github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:omnigent/inner/bwrap_sandbox.py:509-530`; `github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:omnigent/server/routes/device_auth.py:24-28`), none of which the first deployment depends on.
-Runtime tools for sessions (`tmux`, `git`, `uv`, `nodejs_22`, `bubblewrap`, and the harness CLIs) are supplied by the runner unit's `path` in D7 rather than baked into the package wrapper, so the package stays harness-agnostic and the server unit carries no agent toolchain.
+Runtime tools for sessions (`tmux`, `git`, `uv`, `nodejs_22`, bare `python3`, `bubblewrap`, and the harness CLIs) are supplied by the runner unit's `path` in D7 rather than baked into the package wrapper, so the package stays harness-agnostic and the server unit carries no agent toolchain.
 `psycopg` is not a baseline dependency at either revision and appears only in the `databricks` extra, so D3 needs the PostgreSQL driver added explicitly, as in the upstream server image (`github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:pyproject.toml:282-287`; `github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:deploy/docker/Dockerfile:157-159`).
 The Nix derivation substitutes `python3Packages.psycopg` for upstream's `psycopg[binary]`; pinned nixpkgs propagates `psycopg-c` linked against Nix `libpq` (`/nix/store/0r5rmqimlyq2qf8vjv9xk035shvfmrsm-source/pkgs/development/python-modules/psycopg/default.nix:61-88,165-168`).
 The Python line is the pinned nixpkgs default `python3Packages`, and any dependency the wheel pins tighter than nixpkgs ships is relaxed with `pythonRelaxDeps`.
@@ -176,8 +176,44 @@ The CLI-to-daemon environment filter drops `PI_*` values before the host-to-runn
 Use the explicit `--server` option rather than relying on positional shorthand; systemd owns the foreground process and its lifecycle.
 The `cameron` account receives the Home Manager `ai` aggregate, including Atomic, so the runner can use the same `~/.claude`, `~/.codex`, `~/.pi/agent`, and `~/.atomic/agent` state as the operator (`modules/home/users/aliases.nix:17-22`; `modules/home/users/crs58/meta.nix:15-32`; `modules/home/ai/atomic/default.nix:33-70,116`).
 The declarative form is a system service rather than a Home Manager user service because the clan `host` role emits a `nixosModule`, because a system unit needs neither `loginctl enable-linger` nor a user session to start at boot, and because vanixiets already runs an agent under a named user this way: the hermes-agent clan service defaults `serviceUser` to `cameron`, derives the home from `config.users.users.${serviceUser}.home`, and sets `User = settings.serviceUser` on a system unit (`github:cameronraysmith/vanixiets@590f75195cc7acbb3926d39397bf860c2c6efc65:modules/clan/services/hermes-agent/flake-module.nix:22-24`; `github:cameronraysmith/vanixiets@590f75195cc7acbb3926d39397bf860c2c6efc65:modules/clan/services/hermes-agent/flake-module.nix:141`; `github:cameronraysmith/vanixiets@590f75195cc7acbb3926d39397bf860c2c6efc65:modules/clan/services/hermes-agent/flake-module.nix:449`); upstream's own `omnigent host enable` writes only a per-user unit, so a system unit is vanixiets-authored (`github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:omnigent/host/service.py:42-68`), and the Home Manager alternative is Q1.
-Set `HOME` from `config.users.users.${cfg.user}.home` and set the unit's `path` explicitly to repository `claude-code` and `atomic`, `llm-agents` `codex` and `pi`, plus `bun`, `nodejs_22`, `tmux`, `git`, `uv`, and `bubblewrap`.
+Set `HOME` from `config.users.users.${cfg.user}.home` and set the unit's required `path` explicitly to repository `claude-code` and `atomic`, `llm-agents` `codex` and `pi`, plus `bun`, `nodejs_22`, bare `pkgs.python3`, `tmux`, `git`, `uv`, and `bubblewrap`, before appending `cfg.extraPackages`.
 Home Manager installation alone does not populate a system service's PATH; `bunx`, `atomic`, and the native CLIs must be resolvable from the host's inherited PATH (`/Users/crs58/ghq/github.com/omnigent-ai/omnigent@ea89e38cb2488c003cec06ae123640be0c97eb5d:omnigent/host/connect.py:431-491`; `omnigent/inner/agent_env.py:36-108` at the same pin).
+
+Harness-visible environment is declared once at the service boundary, in the unit or a shared `flake.lib.omnigentACP`-style value, never inside an individual agent's own settings file.
+An agent applies settings-file environment late to its own process; peer processes cannot see that rewrite and may disagree about shared roots.
+S5 corrects two runtime configuration defects under this rule, without changing upstream Omnigent.
+
+The S5 diagnosis reported on 2026-09-08 found that Claude hooks validated a bridge root under `/tmp/claude`, while the runner had created the bridge under `/tmp`.
+Both derive their trusted root through `tempfile.gettempdir()`, but `modules/home/ai/claude-code/default.nix` set `settings.env.TMPDIR = "/tmp/claude"` and `TMPPREFIX = "/tmp/claude/zsh"` after exec.
+Validation therefore failed before `hooks.jsonl` and `state.json` were written, leaving the cursor at zero; the forwarder also gates `message_deltas.jsonl` consumption on a known `transcript_path`.
+The local Omnigent pin `ea89e38cb2488c003cec06ae123640be0c97eb5d` shows the root derivation and rejection in `omnigent/claude_native_bridge.py:90-92,514-519`, and the transcript gate in `omnigent/claude_native_forwarder.py:958-976`.
+Delete both base settings and let `modules/home/ai/claude-code/wrappers.nix:30-38` carry that deletion into GLM and Cerebras through its existing inheritance.
+Do not replace them with a shared `TMPDIR`, a tmpfiles rule, a unit `Environment=TMPDIR`, or an agent-local replacement root or filter.
+Deletion lets session peers inherit the same ambient temp root; preserve ownership checks, sandbox scratch handling, service isolation, and forwarding restrictions.
+
+The overrides came from vanixiets commit `2e71149d3` on 2026-02-12, whose message claimed temp-pollution prevention and cited `anthropics/claude-code` issues #17989 and #22667.
+The S5 investigation found that both reports concern sandbox defects, not temp pollution; the suggested workaround was `TMPPREFIX`, never an ambient `TMPDIR` override, and neither remedy came from a maintainer.
+Claude Code's CHANGELOG records the cwd/sandbox regression fix in 2.1.45, associated with #21654 and underlying #22667, and the sandboxed zsh heredoc fix in 2.1.47, associated with #25990 and the same defect as #17989.
+Both fixes predate deployed Claude Code 2.1.263, whose sandbox child-environment construction sets `TMPDIR`, `CLAUDE_CODE_TMPDIR`, and derived `TMPPREFIX` together.
+Our `sandbox.enabled = false` leaves that path inactive; deletion does not alter the sandbox configuration.
+The local reference `/Users/crs58/ghq/github.com/mirkolenz/infra` added the settings in `74202d94` on February 3 and removed them in `9288d6ce` on February 14, 2026, in `home/mlenz/common/programs/claude.nix`.
+Deletion returns auxiliary audio clips, Chrome screenshots, and history prefetch to the ambient temp directory instead of concentrating them under `/tmp/claude`.
+Core prompt and staging storage uses `CLAUDE_CODE_TMPDIR` or literal `/tmp` and was never governed by `TMPDIR`.
+The controller records this deletion justification in the S5 commit message; the scoped writer does not mutate version control.
+
+The second S5 diagnosis found that Files becomes empty after Resume because the runner PATH lacks `python3`.
+The supplied reproduction exited 127 with zero stdout under the runner PATH, then exited 0 with 32 entries when bare Python was available.
+The awake listing subprocess imports only standard-library `os` and `json`, then runs through `os_env.shell`; nonzero exit status becomes an error and raises before the JSON fallback.
+This is a failed listing, not successful empty JSON; the asleep producer is a different host-tunnel `WorkspaceReader`.
+At the same local Omnigent pin, see `omnigent/runner/environment_filesystem.py:560-592` and `omnigent/inner/os_env.py:1496-1501`.
+Add bare `pkgs.python3` to the runner module's required runtime list, not a host-only `extraPackages` entry or a `withPackages` environment.
+This corrects the missing executable in D7's 2026-09-07 PATH list and is separate from D2's Omnigent-containing interpreter for isolated hooks.
+
+Direnv remains an operator-deferred hazard, not a behavior change in S5.
+`modules/home/ai/agent-settings.nix:67-81` enables the direnv extension for Pi and Atomic; the S5 investigation found that the deployed extension copies every `direnv export json` key into `process.env` without a protected-root filter.
+A project `.envrc` exporting `TMPDIR`, `HOME`, or an XDG root can reproduce this class of ACP session failure, and Atomic is now a live Omnigent harness.
+The candidate remedies are filtering protected variables or scoping the extension; the decision is explicitly deferred to the operator, and neither is implemented here.
+
 Expose `services.omnigent-host.environment` as an `attrsOf str` option, default `{ }`, and merge it into `systemd.services.omnigent-host.environment` alongside HOME.
 For magnetite, configure these three values, deriving the home-dependent path from the selected user's home rather than shell expansion:
 
@@ -294,7 +330,8 @@ Files to add or modify, without implementation commands.
 - Add `pkgs/by-name/omnigent/package.nix`: `buildPythonPackage` from the `v0.12.0` wheel with `python3Packages.psycopg` and `pythonRelaxDeps`, then expose the two commands using the interpreter of a Python environment containing that library and its dependencies (D2); retain `flake.packages.<system>.omnigent` and `checks.<system>.package-omnigent`.
 - Add `modules/nixos/omnigent.nix` as `flake.modules.nixos.omnigent`: options `services.omnigent.enable`, `package` (`mkPackageOption`), `domain`, `port`, `environmentFiles`, `cookieSecretGenerator` (default `omnigent-cookie-secret`), and `oidc.{issuer,clientId,allowedDomains}` with allowed domains unset by default; effects are the static account, additive PostgreSQL database/ownership declarations, a single-worker server unit ordered after and requiring `postgresql.target`, `StateDirectory = "omnigent"`, secret environment files, the D4 admin roster and `OMNIGENT_ADMIN_LIST_PATH`, memory limits, the named cookie generator, and the D6 nginx vhost.
 - Add `modules/home/ai/omnigent/{acp.nix,default.nix,merge-config.sh}` for the shared ACP value, `programs.omnigent` options, package installation, and writable runner configuration merge; the server module consumes the same value through its store-backed `OMNIGENT_CONFIG_HOME` (D7).
-- Add `modules/nixos/omnigent-host.nix` as `flake.modules.nixos.omnigent-host`: options `services.omnigent-host.enable`, `package`, `serverUrl`, `user`, `hostName`, `extraPackages`, and `environment` (`attrsOf str`, default `{ }`); emit the D7 foreground unit, `User = cfg.user`, HOME derived from that user, explicit PATH including Atomic and Bun, merged environment, `NoNewPrivileges = true`, and memory limits without namespace-restricting hardening.
+- Add `modules/nixos/omnigent-host.nix` as `flake.modules.nixos.omnigent-host`: options `services.omnigent-host.enable`, `package`, `serverUrl`, `user`, `hostName`, `extraPackages`, and `environment` (`attrsOf str`, default `{ }`); emit the D7 foreground unit, `User = cfg.user`, HOME derived from that user, required PATH including Atomic, Bun, and bare `pkgs.python3` before `cfg.extraPackages`, merged environment, `NoNewPrivileges = true`, and memory limits without namespace-restricting hardening.
+- Modify `modules/home/ai/claude-code/default.nix` by deleting `settings.env.TMPDIR` and `TMPPREFIX`; GLM and Cerebras inherit the deletion through the unchanged wrapper settings merge (D7).
 - Add `modules/clan/services/omnigent/flake-module.nix` and its `README.md`, following only the existing services' directory and manifest layout: `_class = "clan.service"`, `manifest.name = "omnigent"`, server interface `domain`/`port`, host interface `extraPackages`/`environment`; `perMachine.nixosModule` imports both plain modules once, and the server role enables its module and sets `cookieSecretGenerator = "omnigent-cookie-secret-${instanceName}"`.
   The host role asserts `lib.length (lib.attrNames roles.server.machines) == 1` with exact message `Omnigent requires exactly one server`, derives `serverUrl` from that server's `settings.domain`, enables its module with `user = "cameron"` and `hostName = machine.name`, and forwards host environment settings; the Darwin role remains a documented stub.
 - Add `modules/clan/inventory/services/omnigent.nix`: declare `clan.inventory.instances.omnigent` with `module = { name = "omnigent"; input = "self"; }`, `roles.server.machines.magnetite.settings.domain = "omni.scientistexperience.net"`, and magnetite host settings carrying the D7 environment values.
@@ -335,6 +372,10 @@ The `.#` examples below name attributes for local exploration; the current S1–
 - Generators: `nix eval .#nixosConfigurations.magnetite.config.clan.core.vars.generators --apply builtins.attrNames` contains `kanidm-oauth2-omnigent` and `omnigent-cookie-secret-omnigent`.
 - Runner hardening: `nix eval .#nixosConfigurations.magnetite.config.systemd.services.omnigent-host.serviceConfig` shows `User = "cameron"`, `NoNewPrivileges = true`, and no `RestrictNamespaces`, `SystemCallFilter`, `ProtectKernelTunables`, `ProtectKernelLogs`, `ProtectHostname`, or `ProcSubset` key.
 - Runner environment: evaluate `.systemd.services.omnigent-host.environment` and `.serviceConfig.ExecStart` against all three D7 values and the foreground `--server` command, with neither `--background` nor `host enable`.
+- S5 runtime configuration: for both `crs58@aarch64-darwin` and magnetite's `cameron`, evaluate the base Claude settings attrset and check rendered GLM and Cerebras JSON for absent `TMPDIR`, `TMPPREFIX`, and `/tmp/claude` text.
+  The base `settings.json` is installed by `home.activation.claudeCodeMutableSettings`, whose generated store file pure evaluation cannot realize; verify the deployed base file separately through the deploy-phase `probe-claude-hook-env`.
+  Evaluate the runner with `extraPackages = [ ]` and prove that its required PATH still contains bare `pkgs.python3`, before appending `cfg.extraPackages`.
+  The controller owns the literal `slice-5.json` gates, including rendered-wrapper builds and the single remote machine build; source inspection or focused module evaluation does not replace composed Home Manager, rendered-file, or deployment verification.
 - ACP configuration: compare the operator-seeded YAML with the exact D7 stanza and verify `pi` and `acp:atomic` are both offered before testing a session; configuration alone is not session evidence.
 - Machine: evaluate the composed toplevel `drvPath`, then the controller runs the single remote build gate for `.#checks.x86_64-linux.nixos-magnetite`; do not repeat an unchanged-input closure build in the writer.
 - Post-deployment, read-only: `GET https://accounts.scientistexperience.net/oauth2/openid/omnigent/.well-known/openid-configuration` returns `issuer` equal to the D4 string; `kanidm person get <name>` on `magnetite` shows a `mail` line for the operator; one browser login reaches the Omnigent UI; one session streams events end to end with `proxy_buffering off;` in place; the `magnetite` host appears online in the UI within 90 seconds of `omnigent-host.service` starting.
@@ -357,6 +398,7 @@ printf '%s' "$TOK" | python3 -c 'import sys,json,base64; t=json.load(sys.stdin);
 - `pyrite` and `stibnite` runner rollout as the next increment, including the `darwinModule` with a Home Manager `launchd.agents` entry.
 - Migration of the runner to a dedicated `omnigent-host` user after Home Manager aspect PRs #2957, #2980, and #2982 merge.
 - `enforce_sandbox` policy for native sessions after the dedicated-user migration, including the `PrivateUsers` and namespace-hardening review that enforcement requires.
+- Direnv protected-root handling for Pi and Atomic: operator decision between filtering protected variables and scoping the extension, with behavior unchanged in S5 (D7).
 - Activation of any API-key fallback provider only after OAuth login for each harness is verified in a session.
 - Separate Omnigent identities per runner or per person, if the single-owner model proves limiting.
 - `omnigent host reset-id` and other post-`v0.12.0` runner features, taken when the package moves past the tag.

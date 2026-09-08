@@ -196,8 +196,6 @@
                 # DISABLE_ERROR_REPORTING = "1";
                 # DISABLE_TELEMETRY = "1";
                 MAX_MCP_OUTPUT_TOKENS = "40000";
-                TMPDIR = "/tmp/claude";
-                TMPPREFIX = "/tmp/claude/zsh";
                 UV_NO_SYNC = "1";
               };
               teammateMode = "tmux";

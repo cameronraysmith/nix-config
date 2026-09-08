@@ -58,6 +58,7 @@
             inputs.llm-agents.packages.${system}.pi
             pkgs.bun
             pkgs.nodejs_22
+            pkgs.python3
             pkgs.tmux
             pkgs.git
             pkgs.uv
