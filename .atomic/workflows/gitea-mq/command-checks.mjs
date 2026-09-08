@@ -75,7 +75,7 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   // Shared @ may contain unrelated edits; all commands below remain mocked.
   {
     const repo = "/Users/crs58/projects/vanixiets", mock = globalThis.__mqCommandMock;
-    const original = { pathsIn: mock.pathsIn, ids: mock.ids, snapshot: mock.snapshot };
+    const original = { pathsIn: mock.pathsIn, ids: mock.ids, snapshot: mock.snapshot, oneId: mock.oneId };
     const foreign = [".atomic/workflows/deploy-omnigent.ts", ".atomic/todos/x.md"];
     let pending = [...foreign];
     mock.pathsIn = async () => pending;
@@ -102,6 +102,46 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
       pending = [...foreign, path];
       await assert.rejects(() => actual.preflight(repo, "ssss", signal), (error) => error.message.includes(path));
     }
+    const evidenceRoot = "../external/evidence";
+    const adoptedPaths = ["flake.nix", "flake.lock", slices.aspect, slices.machine, slices.tasks];
+    const adoptedTree = Object.fromEntries(adoptedPaths.map((path) => [path, `100644:${tools.sha256(path)}`]));
+    mock.snapshot = async () => adoptedTree;
+    pending = [...foreign, ...adoptedPaths];
+    files.set(join(repo, slices.aspect), "existing implementation");
+    const preflightHandler = handler;
+    handler = (command) => command.includes("diff -r @ --stat --") ? observed("adopted scoped diff stat") : command === "jj --ignore-working-copy file show -r @- flake.lock" ? observed({ nodes: { nixbot: { locked: "parent" } } }) : preflightHandler(command);
+    const adopted = await actual.preflight(repo, "ssss", signal, { root: evidenceRoot });
+    const receipt = JSON.parse(files.get(join(repo, evidenceRoot, "adopted-s1.json")));
+    assert.equal(receipt.adopted, true);
+    assert.deepEqual(receipt.paths, adoptedPaths);
+    assert.equal(receipt.sha256[slices.aspect], tools.sha256(slices.aspect));
+    assert.equal(receipt.stat, "adopted scoped diff stat");
+    assert.equal(JSON.parse(adopted.lock).nodes.nixbot.locked, "parent", "Adoption must not bless edited build-service locks as its baseline");
+    assert(commands.some((command) => command.includes("diff -r @ --stat --") && adoptedPaths.every((path) => command.includes(`'${path}'`))));
+    assert.deepEqual(adopted.foreign, foreign);
+    await assert.rejects(() => actual.preflight(repo, "ssss", signal), /Preexisting workflow changes/);
+    for (const path of ["modules/terranix/cloudflare.nix", "packages/docs/test.md", ...slices.varsAllowed.map((path) => `${path}/secret`)]) {
+      pending = [...adoptedPaths, path];
+      await assert.rejects(() => actual.preflight(repo, "ssss", signal, { root: evidenceRoot }), /outside S1/);
+    }
+    pending = adoptedPaths;
+    for (const revset of ["rollup-landing", "ssss+", "@-"]) {
+      mock.oneId = async (cwd, rev, signal) => rev === revset ? "kkkk" : original.oneId(cwd, rev, signal);
+      await assert.rejects(() => actual.preflight(repo, "ssss", signal, { root: evidenceRoot }), /tip\/join mismatch|child of the join/);
+    }
+    mock.oneId = original.oneId;
+    files.set(join(repo, slices.tasks), taskText.replace("[ ] 2.1", "[x] 2.1"));
+    await actual.adoptS1(repo, adopted.adoption.file, tools.humanBoxes(taskText), signal);
+    assert(files.get(join(repo, slices.tasks)).includes("[x] 2.1"), "adopt-s1 itself is observation-only");
+    await actual.resetTasks(repo, slices.s1.taskIds, signal, tools.humanBoxes(taskText));
+    assert.equal(files.get(join(repo, slices.tasks)), taskText, "Adoption clears stale implementation ticks without ticking any task");
+    files.set(join(repo, slices.tasks), taskText.replace("[ ] 1.1", "[x] 1.1"));
+    await assert.rejects(() => actual.adoptS1(repo, adopted.adoption.file, tools.humanBoxes(taskText), signal), /Operator-owned task/);
+    files.set(join(repo, slices.tasks), taskText);
+    mock.snapshot = async () => ({ ...adoptedTree, "flake.nix": `100644:${tools.sha256("drift")}` });
+    await assert.rejects(() => actual.adoptS1(repo, adopted.adoption.file, tools.humanBoxes(taskText), signal), /Scoped inputs changed/);
+    files.delete(join(repo, slices.aspect));
+    console.log("PASS adoption preflight: existing S1 accepted with scoped sha256/stat evidence; default and non-S1 scope reject; adoption drift blocks");
     Object.assign(mock, original);
     console.log("PASS preflight shared @: foreign paths recorded and baseline-preserved; preexisting workflow scope blocks; relock allows foreign drift as evidence but rejects other S1 input drift");
   }

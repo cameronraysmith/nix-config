@@ -3,7 +3,7 @@ import { join } from "node:path";
 import process from "node:process";
 import { workflow, type WorkflowSerializableValue, type WorkflowTaskOptions } from "@bastani/atomic/workflows";
 import { Blocked, witness, unreachable, type Witness } from "./bump/types.js";
-import { inputs, outputs, HIGH, MEDIUM, MAX, READ_ONLY, StageOutput, VerifyDraft, Diagnosis, Review, RulesetDraft, AppReply, parse, assertCatalog, catalogPort, validateModelPolicy, validateModelAttempts, nextBatch, completedRun, batches, attemptsFor, normalizeToolOutcome, type Validation } from "./gitea-mq/types.js";
+import { inputs, outputs, HIGH, MEDIUM, MAX, READ_ONLY, StageOutput, VerifyDraft, Diagnosis, Review, RulesetDraft, AppReply, parse, assertCatalog, catalogPort, validateModelPolicy, validateModelAttempts, nextBatch, completedRun, attemptsFor, normalizeToolOutcome, type Batch, type Validation } from "./gitea-mq/types.js";
 import { Validation as ValidationSchema } from "./gitea-mq/types.js";
 import { tasks, design, verify, reads, s1, postG1, s2, s4, docs, report, negativeControls, type Slice } from "./gitea-mq/slices.js";
 import * as t from "./gitea-mq/tools.js";
@@ -11,7 +11,6 @@ import * as p from "./gitea-mq/prompts.js";
 import { repairEffect, repairPaths, dnsChainLabel, dnsCandidateId, dnsRecovery, type DnsChainState, type RepairEffect, type GateEntry, type GateStatus } from "./gitea-mq/ledger.js";
 import type { LinearState } from "./gitea-mq/types.js";
 import { GateFailure, Stop, ProposalRejected, proposalValue, proposalLoop, rejectStructuredContract } from "./gitea-mq/control.js";
-
 export default workflow({
   name: "stand-up-gitea-mq", description: "G1–G5 guarded gitea-mq implementation, pinned deployment, live validation and evidence-driven replanning.",
   autoAttach: true, inputs, outputs,
@@ -94,7 +93,7 @@ export default workflow({
     };
     const bounded = async <T>(name: string, slice: Slice, execute: (id: string) => Promise<T>, prepareRepair?: (id: string, effect: RepairEffect) => Promise<void>): Promise<T> => {
       let instructions = "", failure: GateFailure | null = null, pendingPaths: string[] = [], diagnosisArtifact: string[] = [];
-      for (const batch of batches) {
+      const runBatch = async (batch: Batch): Promise<T> => {
         attempts: for (const attempt of attemptsFor(input.max_repair_attempts)) {
           const id = `${name}-b${batch}-a${attempt}`;
           try {
@@ -133,12 +132,13 @@ export default workflow({
             default: unreachable(diagnosis);
           }
         }
-        if (nextBatch(batch) === null) throw new Stop("blocked", `${name} exhausted both bounded batches; ${failure?.receipt}; reconcile effects before a fresh run`);
+        const next = nextBatch(batch); if (next === null) throw new Stop("blocked", `${name} exhausted both bounded batches; ${failure?.receipt}; reconcile effects before a fresh run`);
         const answer = await ctx.ui.input(`G3 — ${name}: ${failure?.receipt}. Diagnosis: ${instructions}. Read the diagnosis artifact in ${root}. Supply repair instructions to authorize exactly one extra batch of ${input.max_repair_attempts} attempts, or cancel to block.`);
         if (!answer?.trim()) throw new Stop("blocked", `G3 declined: ${failure?.receipt}`);
-        instructions = answer; await persist(`G3-${name}`, { batch: 2, instructions, evidence: failure?.receipt }); diagnosisArtifact = [`${root}/G3-${name}.json`]; instructions = "Apply the G3 instructions supplied via reads.";
-      }
-      throw new Blocked("Unreachable batch state");
+        instructions = answer; await persist(`G3-${name}`, { batch: next, nextAttempt: `${name}-b${next}-a1`, instructions, evidence: failure?.receipt }); diagnosisArtifact = [`${root}/G3-${name}.json`]; instructions = "Apply the G3 instructions supplied via reads.";
+        return runBatch(next); // A consumed authorization must enter the next batch, not fall through.
+      };
+      return runBatch(1);
     };
     try {
       const initial = await tool("preflight", async (signal) => {
@@ -146,17 +146,18 @@ export default workflow({
         const catalog = models ? await models.listModels() : null;
         await t.save(cwd, `${root}/model-catalog.json`, catalog ?? { note: "Model catalog port unavailable; native resolution and post-call model/thinking rejection apply. Implicit host fallback risk accepted by operator." });
         if (catalog !== null) assertCatalog(catalog);
-        return t.preflight(cwd, input.splice_after, signal);
+        return t.preflight(cwd, input.splice_after, signal, input.adopt_working_copy ? { root } : null);
       }, timeout);
       chain = initial.value.chain;
       humanBaseline = initial.value.humanBoxes;
       passed("preflight-task-baseline", initial.value.taskIds, initial.evidence, { kind: "Unverified", reason: "No tool observation yet" });
       await persist("contracts", { s1, postG1, s2, s4, docs, report, negativeControls });
-      await implement("implement", s1);
+      const adoption = "adoption" in initial.value ? initial.value.adoption : null;
+      if (adoption) { await tool("adopt-s1", (signal) => t.adoptS1(cwd, adoption.file, humanBaseline, signal)); await tool("adopt-s1-reset-tasks", (signal) => t.resetTasks(cwd, s1.taskIds, signal, humanBaseline)); } else await implement("implement", s1);
       // Locking and relocking are distinct controller nodes inside the bounded gate.
       const s1Result = await bounded("s1", s1, async (id) => {
         const gate = await tool(`gate-${id}`, (signal) => t.s1Gate(cwd, initial.value.lock, initial.value.baseline, signal), timeout, true);
-        const diff = await tool(`diff-${id}`, (signal) => t.diffArtifact(cwd, root, id, signal));
+        const diff = await tool(`diff-${id}`, (signal) => t.diffArtifact(cwd, root, id, signal, input.adopt_working_copy ? s1.allowedPaths : undefined));
         const tree = await tool(`tree-${id}`, (signal) => t.snapshot(cwd, signal));
         const review = parse(Review, (await stage(`review-s1-${id}`, { ...MAX, ...READ_ONLY, reads: [...reads, diff.value, gate.evidence, `${root}/contracts.json`], schema: Review, prompt: p.reviewPrompt(cwd, root) })).structured);
         await tool(`stable-${id}`, async (signal) => ({ stable: true, ...t.assertScopedInputs(tree.value, await t.snapshot(cwd, signal), s1) }), 120_000, true);

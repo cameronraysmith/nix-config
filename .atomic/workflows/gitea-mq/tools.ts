@@ -18,7 +18,7 @@ export { processCheckpoint, allocateEvidence } from "./process.js";
 export { appTokenCleanup } from "./credentials.js";
 import { s1Coverage, type S1Arm } from "./s1-observations.js";
 import {
-  parse, Ruleset, AppReply, type RulesetDraft, type VResult,
+  parse, AdoptedS1, Ruleset, AppReply, type RulesetDraft, type VResult,
   type LinearState, type LinearOutcome, type VerifyCommentary,
 } from "./types.js";
 import {
@@ -85,17 +85,20 @@ export async function topology(cwd: string, chain: Chain, signal: AbortSignal): 
   }
   return chain.changes.map((c) => c.id);
 }
-export async function preflight(cwd: string, splice: string, signal: AbortSignal) {
+export async function preflight(cwd: string, splice: string, signal: AbortSignal, adoption: { root: string } | null = null) {
   if (resolve(cwd) !== "/Users/crs58/projects/vanixiets") throw new Blocked("Wrong repository cwd");
   await run(cwd, `openspec validate ${quote(dir.split("/").at(-1)!)} --strict`, signal);
   await run(cwd, "jj debug snapshot", signal);
   const allowed = [...new Set([s1, postG1, s2, s4, docs, report].flatMap((slice) => slice.allowedPaths))];
   const workingPaths = await pathsIn(cwd, "@", signal);
   const owned = workingPaths.filter((path) => allowed.some((prefix) => within(path, prefix)));
-  if (owned.length) throw new Blocked(`Preexisting workflow changes require ownership reconciliation: ${owned.join(", ")}`);
+  if (adoption) {
+    const outside = owned.filter((path) => !s1.allowedPaths.some((prefix) => within(path, prefix)));
+    if (outside.length) throw new Blocked(`Adoption has pending workflow paths outside S1: ${outside.join(", ")}`);
+  } else if (owned.length) throw new Blocked(`Preexisting workflow changes require ownership reconciliation: ${owned.join(", ")}`);
   // Retain unrelated edits in the working tree and subsequent full-tree stage baselines.
   const foreign = workingPaths.filter((path) => !allowed.some((prefix) => within(path, prefix)));
-  try {
+  if (!adoption) try {
     await lstat(join(cwd, aspect));
     throw new Blocked("gitea-mq aspect already exists");
   } catch (error) {
@@ -110,7 +113,7 @@ export async function preflight(cwd: string, splice: string, signal: AbortSignal
   await run(cwd, "gh auth status\nclan vars --help", signal);
   await run(cwd, ssh("true"), signal);
   const nodes = parse(Type.Object({ nodes: Type.Record(Type.String(), Type.Unknown()) }),
-    JSON.parse(await readFile(join(cwd, "flake.lock"), "utf8"))).nodes;
+    JSON.parse(adoption ? await run(cwd, "jj --ignore-working-copy file show -r @- flake.lock", signal) : await readFile(join(cwd, "flake.lock"), "utf8"))).nodes;
   const lock = JSON.stringify({ nodes: { nixbot: nodes.nixbot, "buildbot-nix": nodes["buildbot-nix"] } });
   const baselineSchema = Type.Object({
     pre: Type.Union([Type.String(), Type.Array(Type.String()), Type.Null()]),
@@ -118,7 +121,23 @@ export async function preflight(cwd: string, splice: string, signal: AbortSignal
   const baseline = parse(baselineSchema, await json(cwd,
     `nix eval --no-write-lock-file --json .#nixosConfigurations.magnetite.config --apply ${quote('c: { pre = c.systemd.services.gitea.serviceConfig.ExecStartPre or null; }')}`, signal));
   const taskText = await readFile(join(cwd, tasks), "utf8");
-  return { chain, lock, baseline, foreign, taskIds: [...taskLedger(taskText).keys()], humanBoxes: humanBoxes(taskText) };
+  const baselineResult = { chain, lock, baseline, foreign, taskIds: [...taskLedger(taskText).keys()], humanBoxes: humanBoxes(taskText) };
+  if (!adoption) return baselineResult;
+  assertHumanBoxes(baselineResult.humanBoxes, taskText);
+  const tree = scopedS1Tree(await snapshot(cwd, signal));
+  const evidence: AdoptedS1 = { adopted: true, paths: owned, tree,
+    sha256: Object.fromEntries(owned.map((path) => [path, tree[path]?.replace(/^\d{6}:/, "") ?? null])),
+    stat: owned.length ? await run(cwd, `jj --ignore-working-copy diff -r @ --stat -- ${owned.map(quote).join(" ")}`, signal) : "",
+  };
+  const file = `${adoption.root}/adopted-s1.json`; await save(cwd, file, evidence);
+  return { ...baselineResult, adoption: { adopted: true as const, file } };
+}
+const scopedS1Tree = (tree: Tree): Tree => Object.fromEntries(Object.entries(tree).filter(([path]) => s1.allowedPaths.some((prefix) => within(path, prefix))));
+export async function adoptS1(cwd: string, file: string, humanBaseline: string, signal: AbortSignal) {
+  const evidence = parse(AdoptedS1, JSON.parse(await readFile(join(cwd, file), "utf8")));
+  assertScopedInputs(evidence.tree, scopedS1Tree(await snapshot(cwd, signal)), s1);
+  assertHumanBoxes(humanBaseline, await readFile(join(cwd, tasks), "utf8"));
+  return { adopted: true as const, file, paths: evidence.paths };
 }
 export function resetTaskText(text: string, ids: readonly string[]): string {
   return text.split("\n").map((line) =>
@@ -199,10 +218,10 @@ export async function route(cwd: string, chain: Chain, slice: Slice, reviewed: T
   if ((await pendingPaths(cwd, slice, signal)).length) throw new Blocked("Routed paths remain in @");
   return { ...next, foreignDrift };
 }
-export async function diffArtifact(cwd: string, root: string, name: string, signal: AbortSignal) {
+export async function diffArtifact(cwd: string, root: string, name: string, signal: AbortSignal, paths?: readonly string[]) {
   await run(cwd, "jj debug snapshot", signal);
   const file = `${root}/${name}.diff`;
-  await writeFile(join(cwd, file), await run(cwd, "jj --ignore-working-copy diff -r @", signal));
+  await writeFile(join(cwd, file), await run(cwd, `jj --ignore-working-copy diff -r @${paths ? ` -- ${paths.map(quote).join(" ")}` : ""}`, signal));
   return file;
 }
 export async function s1Gate(cwd: string, baselineLock: string, baseline: unknown, signal: AbortSignal, expectedAppId: number | null = null) {

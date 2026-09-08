@@ -16,12 +16,19 @@ export const inputs = {
     description: "Current rollup-landing chain tip change id; never @ or the join.",
   }),
   deploy: Type.Boolean({ default: true }),
+  adopt_working_copy: Type.Boolean({ default: false, description: "Adopt pending S1 implementation instead of requesting an initial proposal; all gates still run." }),
   max_repair_attempts: Type.Union([Type.Literal(1), Type.Literal(2), Type.Literal(3)], {
     default: 3, description: "Attempts per bounded batch, including the first gate execution.",
   }),
   build_timeout_minutes: Type.Integer({ minimum: 1, maximum: 180, default: 45 }),
   app_slug_hint: Type.Optional(Type.String({ pattern: "^[a-z0-9][a-z0-9-]*$" })),
 };
+export const AdoptedS1 = Type.Object({
+  adopted: Type.Literal(true), paths: Type.Array(Type.String()),
+  sha256: Type.Record(Type.String(), Type.Union([Type.String({ pattern: "^[0-9a-f]{64}$" }), Type.Null()])),
+  tree: Type.Record(Type.String(), Type.String()), stat: Type.String(),
+}, { additionalProperties: false });
+export type AdoptedS1 = Static<typeof AdoptedS1>;
 export const Batch = Type.Union([Type.Literal(1), Type.Literal(2)]);
 export type Batch = Static<typeof Batch>;
 export type BatchSchedule = readonly [1, 2];

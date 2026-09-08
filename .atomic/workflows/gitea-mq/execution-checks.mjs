@@ -11,7 +11,7 @@ const dataUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).toStr
 export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, slices, ledgerTools, assertCompactCheckpoint }) {
   const { s1Coverage } = await import(moduleUrl(".atomic/workflows/gitea-mq/s1-observations.ts"));
   const report = await import(moduleUrl(".atomic/workflows/gitea-mq/verify-report.ts"));
-  async function execute({ declineG2 = false, decline = "", rejectS1 = false, revisePlan = false, createFailure = false, cleanupFailure = false, exhaust = false, replay = false, probeFailure = false, repairNix = false, v3Failure = false, repairEvalFailure = false, dnsReject = false, dnsRejectOnce = false, rejectRoborev = false, throwExit = false, noHostnameEdit = false, proposalFailure = "", extraClaims = false, transientFailure = false, resumeFailure = false, unexpected = "", wrongRules = "", drift = "", structuralFailure = "", nativeFailure = "", nativeMessage = "", tokenDirectory = "", terminalRecordFailure = false, postMintFailure = false, catalog, proposalDrift = "" } = {}) {
+  async function execute({ adoptWorkingCopy = false, g3Recovery = "", blockedDiagnosis = false, declineG2 = false, decline = "", rejectS1 = false, revisePlan = false, createFailure = false, cleanupFailure = false, exhaust = false, replay = false, probeFailure = false, repairNix = false, v3Failure = false, repairEvalFailure = false, dnsReject = false, dnsRejectOnce = false, rejectRoborev = false, throwExit = false, noHostnameEdit = false, proposalFailure = "", extraClaims = false, transientFailure = false, resumeFailure = false, unexpected = "", wrongRules = "", drift = "", structuralFailure = "", nativeFailure = "", nativeMessage = "", tokenDirectory = "", terminalRecordFailure = false, postMintFailure = false, catalog, proposalDrift = "" } = {}) {
     const files = new Map();
     const events = [];
     const cache = new Map();
@@ -23,6 +23,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
     const dnsPath = "modules/terranix/cloudflare.nix", dnsContent = 'resource.cloudflare_dns_record.mq = { name = "mq"; type = "CNAME"; content = "magnetite.scientistexperience.net"; proxied = false; };';
     let root = "", live = false, failProbe = probeFailure, failV3 = v3Failure, failRepairEval = repairEvalFailure, rejectReview = rejectS1, failCreate = createFailure, failCleanup = cleanupFailure;
     let failProposal = !!proposalFailure, failClaims = extraClaims, failTransient = transientFailure;
+    let gateExhausted = exhaust || g3Recovery === "gate", proposalExhausted = g3Recovery === "proposal";
     let failRules = !!wrongRules, failDrift = !!drift, failStructure = !!structuralFailure;
     const toolOptions = new Map();
     const nativeError = Object.assign(Error(nativeMessage || "provider structured_output transport failure"), { name: nativeFailure === "abort" ? "AbortError" : "Error" });
@@ -31,6 +32,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
     assert(initialTasks.length > 8192);
     assert.throws(() => assertCompactCheckpoint({ evidence: { taskText: initialTasks } }), /8 KB/);
     files.set(join(cwd, slices.tasks), initialTasks);
+    if (adoptWorkingCopy) { tree["flake.nix"] = "adopted input"; tree[slices.aspect] = "adopted aspect"; files.set(join(cwd, slices.tasks), initialTasks.replace("[ ] 2.1", "[x] 2.1")); }
     const get = (path) => {
       if (!files.has(path)) throw Object.assign(new Error(`Missing mock file: ${path}`), { code: "ENOENT" });
       return files.get(path);
@@ -55,6 +57,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       processCheckpoint: async (_root, _name, action) => { const result = { receipt: [], evidence: await action() }; assertCompactCheckpoint(result); return result; },
       applyStageEdits: async (_cwd, edits, _slice, _signal, baseline) => {
         tools.assertHumanBoxes(baseline, get(join(cwd, slices.tasks)));
+        if (proposalExhausted && events.at(-1).startsWith("apply-implement")) throw Error("awaiting G3 proposal instructions");
         if (failProposal && events.at(-1).startsWith("apply-implement")) { failProposal = proposalFailure === "always"; throw Error("rejected proposal: stale hash or forbidden task"); }
         for (const edit of edits) {
           files.set(join(cwd, edit.path), edit.after);
@@ -77,16 +80,27 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       snapshotWorkingCopy: async (_cwd, actualSignal) => { assert.equal(actualSignal, signal); snapshotted = await snapshot(); return { snapshotted: true }; },
       scope: snapshot,
       topology: async (_cwd, chain) => chain.changes.map((change) => change.id),
-      preflight: async () => ({ chain: { workingCopy: "wwww", join: "jjjj", seed: "ssss", tip: "ssss", changes: [] }, lock: "baseline", baseline: {}, taskIds: [...tools.taskLedger(initialTasks).keys()], humanBoxes: tools.humanBoxes(initialTasks) }),
+      preflight: async (_cwd, _splice, _signal, adoption) => {
+        assert.equal(!!adoption, adoptWorkingCopy);
+        const baseline = { chain: { workingCopy: "wwww", join: "jjjj", seed: "ssss", tip: "ssss", changes: [] }, lock: "baseline", baseline: {}, taskIds: [...tools.taskLedger(initialTasks).keys()], humanBoxes: tools.humanBoxes(initialTasks) };
+        if (!adoption) return baseline;
+        const file = `${adoption.root}/adopted-s1.json`;
+        files.set(join(cwd, file), JSON.stringify({ adopted: true, paths: Object.keys(tree) }));
+        return { ...baseline, adoption: { adopted: true, file } };
+      },
+      adoptS1: async (_cwd, file) => ({ ...JSON.parse(get(join(cwd, file))), file }),
       lockInput: async () => ({ declaration: tree["flake.nix"] ?? "declaration", relocked: true }),
       s1Gate: async () => {
-        if (exhaust || failRepairEval && events.at(-1)?.startsWith("eval-repair-")) {
+        if (gateExhausted || failRepairEval && events.at(-1)?.startsWith("eval-repair-")) {
           failRepairEval = false;
           throw Error("mock assertion/eval failed");
         }
         return { drv: "/nix/store/mock.drv", ...s1Coverage(["host-derivation", "four-negative-controls", "build-locks-unchanged", "build-metadata-unchanged", "build-aspects-unchanged", "nixbot-domain"]) };
       },
-      diffArtifact: async (_cwd, evidence, name) => `${evidence}/${name}.diff`,
+      diffArtifact: async (_cwd, evidence, name, _signal, paths) => {
+        assert.deepEqual(paths, adoptWorkingCopy ? slices.s1.allowedPaths : undefined);
+        const file = `${evidence}/${name}.diff`; files.set(join(cwd, file), adoptWorkingCopy ? "adopted input diff" : "proposal diff"); return file;
+      },
       route: async (_cwd, chain, slice, _reviewed, actualSignal, into = null) => {
         assert.equal(actualSignal, signal);
         snapshotted = await snapshot();
@@ -207,7 +221,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
     const context = {
       cwd,
       models: catalog === undefined ? undefined : { listModels() { return catalog; } },
-      inputs: { change: types.change, splice_after: "ssss", deploy: true, max_repair_attempts: 2, build_timeout_minutes: 1 },
+      inputs: { change: types.change, splice_after: "ssss", deploy: true, max_repair_attempts: 2, build_timeout_minutes: 1, ...(adoptWorkingCopy ? { adopt_working_copy: true } : {}) },
       tool: (name, args, action, options) => durable(`tool:${name}`, args, async () => {
         callbacks++; events.push(name);
         assert(options.timeoutMs > 0 && ["return", "throw"].includes(options.failureMode));
@@ -235,6 +249,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
         if (repairNix && name.startsWith("repair-")) propose(slices.aspect, name);
         let structured = { summary: "mock implementation", edits };
         if (name.startsWith("review-") || name === "roborev") {
+          if (adoptWorkingCopy && name.startsWith("review-s1")) assert(options.reads.some((path) => files.get(join(cwd, path)) === "adopted input diff"));
           structured = rejectReview || name === "roborev" && rejectRoborev ? { verdict: "Reject", findings: ["unique reviewer defect"] } : { verdict: "Approve" };
           rejectReview = false;
         }
@@ -245,6 +260,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
             assert.match(rejection.reviewer, /review-s1.*\.md$/); assert.match(rejection.diff, /\.diff$/);
           }
           structured = revisePlan ? { kind: "RevisePlan", designDelta: "unique design delta", tasksDelta: "unique tasks delta", instructions: "unique repair payload" } : { kind: "Repair", instructions: "Re-probe or repair the witnessed failure" };
+          if (blockedDiagnosis) structured = { kind: "Blocked", reason: "Operator instructions needed" };
         }
         if (name.startsWith("repair-") || name.startsWith("replan-")) {
           assert(options.reads.some((path) => /(?:diagnosis-|G3-).*\.json$/.test(path)));
@@ -284,6 +300,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       }),
       ui: Object.fromEntries(["input", "confirm", "select"].map((method) => [method, (question) => durable(`prompt:${promptIndex++}`, question, async () => {
         prompts++; events.push(`${method}:${question}`);
+        if (question.startsWith("G3") && g3Recovery) { gateExhausted = false; proposalExhausted = false; }
         if (method === "input") return question.startsWith("G3") ? decline === "G3" ? null : "One more bounded batch" : decline === "G1" ? null : JSON.stringify({ slug: "queue", id: 1234 });
         if (method === "select") return declineG2 || decline === "G2" ? "decline" : "approve with User bypass";
         return !decline || !question.startsWith(decline);
@@ -312,6 +329,31 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
     }
     return { result: first.outputs ?? first, exit: first, events, files, root, cwd, revisions, committedTasks, toolOptions, nativeError };
   }
+  assert.equal(types.inputs.adopt_working_copy.default, false);
+  const adoptedRun = await execute({ adoptWorkingCopy: true, replay: true });
+  assert.equal(adoptedRun.result.status, "completed-with-caveat");
+  assert(adoptedRun.events.includes("adopt-s1"));
+  assert(!adoptedRun.events.some((event) => /^implement-b/.test(event)));
+  const adoptionLedger = JSON.parse(adoptedRun.files.get(join(adoptedRun.cwd, adoptedRun.root, "ledger.json")));
+  assert.equal(adoptionLedger.find((row) => row.node === "adopt-s1").result.value.evidence.adopted, true);
+  assert(adoptedRun.events.indexOf("s1-ledger") > adoptedRun.events.indexOf("review-s1-s1-b1-a1"));
+  assert(adoptedRun.events.indexOf("adopt-s1-reset-tasks") < adoptedRun.events.indexOf("gate-s1-b1-a1"));
+  assert(adoptedRun.committedTasks.get("change-0").includes("[ ] 2.1"), "Unobserved imported implementation tick must not land as completed");
+  const adoptedRepair = await execute({ adoptWorkingCopy: true, rejectS1: true });
+  assert(adoptedRepair.events.includes("repair-s1-b1-a2-b1-a1"));
+  assert(adoptedRepair.events.includes("route-s1"));
+  console.log("PASS adoption graph: no initial implement stage; adopted tool ledger/review diff, gate-only ticks, proposal repair and replay retained");
+  for (const [g3Recovery, blockedDiagnosis] of [["proposal", false], ["gate", false], ["gate", true]]) {
+    const recovered = await execute({ g3Recovery, blockedDiagnosis, replay: true });
+    const nextStage = g3Recovery === "proposal" ? "implement-b2-a1" : "repair-s1-b2-a1-b1-a1";
+    const prompt = recovered.events.findIndex((event) => event.startsWith("input:G3"));
+    assert(prompt >= 0 && recovered.events.indexOf(nextStage) > prompt, "G3 answer must schedule the next batch's first stage");
+    assert.equal(recovered.result.status, "completed-with-caveat");
+    assert.equal(recovered.events.filter((event) => event.startsWith("input:G3")).length, 1);
+    const authorization = JSON.parse(recovered.files.get(join(recovered.cwd, recovered.root, g3Recovery === "proposal" ? "G3-proposal-implement.json" : "G3-s1.json")));
+    assert.equal(authorization.nextAttempt, g3Recovery === "proposal" ? "implement-b2-a1" : "s1-b2-a1");
+  }
+  console.log("PASS G3 continuation graph: answered proposal/exhausted gate/Blocked diagnosis runs batch-2 first stage successfully; replay consumes no second prompt");
   for (const path of [".atomic/workflows/stand-up-gitea-mq.ts", "modules/terranix/cloudflare.nix", "flake.nix"]) {
     const run = await execute({ proposalDrift: path });
     const evidence = JSON.parse(run.files.get(join(run.cwd, run.root, "apply-implement-b1-a1.json")));

@@ -1,6 +1,6 @@
 import type { Static, TSchema } from "typebox";
 import { Blocked } from "../bump/types.js";
-import { attemptsFor, batches, nextBatch, parse } from "./types.js";
+import { attemptsFor, nextBatch, parse, type Batch } from "./types.js";
 
 export class GateFailure extends Error { constructor(readonly gate: string, readonly receipt: string, reason: string) { super(reason); } }
 export class Stop extends Blocked { constructor(readonly status: "blocked" | "declined" | "needs_rework", message: string) { super(message); } }
@@ -37,7 +37,7 @@ export async function proposalLoop<T>(
   input: (question: string) => Promise<string | null | undefined>,
 ): Promise<T> {
   let feedback: string[] = [], authorization: string[] = [];
-  for (const batch of batches) {
+  const runBatch = async (batch: Batch): Promise<T> => {
     for (const attempt of attemptsFor(count)) {
       const id = `${name}-b${batch}-a${attempt}`;
       try { return await execute(id, feedback); }
@@ -47,11 +47,13 @@ export async function proposalLoop<T>(
         feedback = [...authorization, `${root}/proposal-rejection-${id}.json`];
       }
     }
-    if (nextBatch(batch) === null) throw new Stop("blocked", `${name} proposals exhausted both bounded batches; ${feedback.join(", ")}`);
+    const next = nextBatch(batch);
+    if (next === null) throw new Stop("blocked", `${name} proposals exhausted both bounded batches; ${feedback.join(", ")}`);
     const answer = await input(`G3 — ${name}: rejected proposals; read ${feedback.join(", ")}. Supply instructions for exactly one additional batch of ${count} attempts, or cancel.`);
     if (!answer?.trim()) throw new Stop("blocked", `G3 declined: ${feedback.join(", ")}`);
-    await persist(`G3-proposal-${name}`, { batch: 2, instructions: answer });
+    await persist(`G3-proposal-${name}`, { batch: next, nextAttempt: `${name}-b${next}-a1`, instructions: answer });
     authorization = [`${root}/G3-proposal-${name}.json`]; feedback.push(...authorization);
-  }
-  throw new Blocked("Unreachable proposal batch state");
+    return runBatch(next); // Explicit continuation after the durable answer/receipt.
+  };
+  return runBatch(1);
 }
