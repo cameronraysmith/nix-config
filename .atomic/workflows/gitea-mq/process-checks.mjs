@@ -23,6 +23,7 @@ export async function runProcessChecks({ ts, moduleUrl }) {
   globalThis.__mqProcessMock = {
     appendFileSync: (_path, data) => { diskBytes += Buffer.byteLength(data); },
     writeFile: async () => {}, mkdir: async () => {}, mkdtemp: async () => "/outside/run",
+    realpath: async () => { throw Error("Unmocked realpath"); },
     open: async () => {
       let offset = 0;
       return { close: async () => {}, read: async (buffer, start, length) => {
@@ -47,7 +48,7 @@ export async function runProcessChecks({ ts, moduleUrl }) {
   };
   const port = (name) => `export const ${name} = (...args) => globalThis.__mqProcessMock.${name}(...args);`;
   const bumpModule = dataUrl(`export * from "${moduleUrl(".atomic/workflows/bump/tools.ts")}";\n${port("save")}`);
-  const fsModule = dataUrl(["writeFile", "mkdir", "mkdtemp", "open"].map(port).join("\n"));
+  const fsModule = dataUrl(["writeFile", "mkdir", "mkdtemp", "open", "realpath"].map(port).join("\n"));
   let code = ts.transpileModule(readFileSync(".atomic/workflows/gitea-mq/process.ts", "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText;
   code = code.replace(/from "([^"]+)"/g, (whole, name) => {
     if (name === "node:child_process") return `from "${dataUrl(port("spawn"))}"`;

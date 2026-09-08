@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { resolve, join } from "node:path";
+import { mkdtemp, mkdir, symlink, rm, realpath } from "node:fs/promises";
+import { tmpdir } from "node:os";
 
 const dataUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`;
 const observed = (stdout = "", exitCode = 0, stderr = "") => ({
@@ -63,6 +65,24 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   });
   code = code.replace('from "typebox"', `from "${typeboxUrl}"`);
   const actual = await import(dataUrl(code));
+  // Real physical paths, closed process port: even old code cannot execute POST.
+  const physical = await mkdtemp(join(tmpdir(), "gitea-mq-confinement-"));
+  try {
+    const repo = join(physical, "repo"), external = join(physical, "external"), alias = join(physical, "outside-parent");
+    await mkdir(join(repo, "evidence"), { recursive: true }); await mkdir(external);
+    await symlink(repo, alias); await symlink(repo, join(physical, "repo-alias"));
+    handler = () => observed();
+    const start = commands.length;
+    for (const cwd of [repo, join(physical, "repo-alias")]) {
+      await assert.rejects(() => actual.mintAppToken(cwd, join(alias, "evidence"), "G1", 1234, signal), /Evidence must be outside the source tree/);
+      assert.equal(commands.length, start, "External-parent symlink must reject before any command/POST");
+    }
+    await symlink(external, join(physical, "external-alias"));
+    const token = await actual.mintAppToken(repo, join(physical, "external-alias"), "G1", 1234, signal);
+    assert.equal(token.file, join(await realpath(external), "G1-1234.token.json"), "Accepted token path must use canonical evidence root");
+    assert.equal(commands.length, start + 1);
+  } finally { await rm(physical, { recursive: true, force: true }); }
+  console.log("PASS R2 token confinement: external-parent symlink into repo rejects before any POST (including repo alias); external alias mints at canonical path");
   const cwd = "/mock";
   const approved = tools.expectedRuleset(1234, 1);
   const before = { ...approved, name: "nixbot" };

@@ -13,8 +13,9 @@ import { snapshot, assertHealthy, oneId, ids, pathsIn } from "./vcs.js";
 import {
   resolveSource as sharedResolveSource, type DeploymentSource,
 } from "../omnigent/deployment.js";
-import { capture, captureStreaming, readResponse, assertExternalEvidence } from "./process.js";
+import { capture, captureStreaming, readResponse, assertExternalEvidence, canonicalExternalEvidence } from "./process.js";
 export { processCheckpoint, allocateEvidence } from "./process.js";
+export { appTokenCleanup } from "./credentials.js";
 import { s1Coverage, type S1Arm } from "./s1-observations.js";
 import {
   parse, Ruleset, AppReply, type RulesetDraft, type VResult,
@@ -318,9 +319,9 @@ except Exception:
 `;
 export type AppToken = { appId: number; file: string };
 export async function mintAppToken(cwd: string, root: string, label: string, appId: number, signal: AbortSignal): Promise<AppToken> {
-  assertExternalEvidence(cwd, root);
+  const evidence = await canonicalExternalEvidence(cwd, root);
   if (!/^[A-Za-z0-9-]+$/.test(label) || !Number.isSafeInteger(appId) || appId <= 0) throw new Blocked("Invalid App token identity");
-  const file = join(cwd, root, `${label}-${appId}.token.json`);
+  const file = join(evidence, `${label}-${appId}.token.json`);
   await run(cwd, `python3 -c ${quote(mintAppScript)} ${appId} ${quote(file)}`, signal);
   return { appId, file }; // Opaque reference only; never checkpoint the secret.
 }

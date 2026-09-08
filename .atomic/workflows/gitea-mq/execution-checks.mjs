@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { resolve, join } from "node:path";
-import { readFileSync } from "node:fs";
+import { resolve, join, relative } from "node:path";
+import { readFileSync, readdirSync } from "node:fs";
+import { mkdtemp, writeFile, readdir, rm, mkdir, readFile, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { assertRetryableCallbacks } from "./credential-checks.mjs";
 
 const dataUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`;
@@ -9,7 +11,7 @@ const dataUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).toStr
 export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, slices, ledgerTools, assertCompactCheckpoint }) {
   const { s1Coverage } = await import(moduleUrl(".atomic/workflows/gitea-mq/s1-observations.ts"));
   const report = await import(moduleUrl(".atomic/workflows/gitea-mq/verify-report.ts"));
-  async function execute({ declineG2 = false, decline = "", rejectS1 = false, revisePlan = false, createFailure = false, cleanupFailure = false, exhaust = false, replay = false, probeFailure = false, repairNix = false, v3Failure = false, repairEvalFailure = false, dnsReject = false, dnsRejectOnce = false, rejectRoborev = false, throwExit = false, noHostnameEdit = false, proposalFailure = "", extraClaims = false, transientFailure = false, resumeFailure = false, unexpected = "", wrongRules = "", drift = "", structuralFailure = "", nativeFailure = "" } = {}) {
+  async function execute({ declineG2 = false, decline = "", rejectS1 = false, revisePlan = false, createFailure = false, cleanupFailure = false, exhaust = false, replay = false, probeFailure = false, repairNix = false, v3Failure = false, repairEvalFailure = false, dnsReject = false, dnsRejectOnce = false, rejectRoborev = false, throwExit = false, noHostnameEdit = false, proposalFailure = "", extraClaims = false, transientFailure = false, resumeFailure = false, unexpected = "", wrongRules = "", drift = "", structuralFailure = "", nativeFailure = "", nativeMessage = "", tokenDirectory = "", terminalRecordFailure = false, postMintFailure = false } = {}) {
     const files = new Map();
     const events = [];
     const cache = new Map();
@@ -23,6 +25,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
     let failProposal = !!proposalFailure, failClaims = extraClaims, failTransient = transientFailure;
     let failRules = !!wrongRules, failDrift = !!drift, failStructure = !!structuralFailure;
     const toolOptions = new Map();
+    const nativeError = Object.assign(Error(nativeMessage || "provider structured_output transport failure"), { name: nativeFailure === "abort" ? "AbortError" : "Error" });
     let callbacks = 0, stages = 0, prompts = 0, promptIndex = 0;
     const initialTasks = [...new Set(["1.1", "8.2", ...slices.s1.taskIds, "1.2", "1.3", "1.4", "3.2", "3.3", "6.1", "6.2", "8.1", "8.3", "8.4", "9.1", "10.1", ...Array.from({ length: 9 }, (_, i) => `11.${i + 1}`)])].map((id) => `- [ ] ${id} ${"task details ".repeat(30)}`).join("\n");
     assert(initialTasks.length > 8192);
@@ -43,7 +46,11 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       return { ...tree, [slices.tasks]: tools.sha256(get(join(cwd, slices.tasks))), ...(files.has(join(cwd, slices.verify)) ? { [slices.verify]: tools.sha256(get(join(cwd, slices.verify))) } : {}) };
     };
     const mocked = {
-      allocateEvidence: async () => "../evidence/run",
+      allocateEvidence: async () => tokenDirectory ? relative(cwd, tokenDirectory) : "../evidence/run",
+      appTokenCleanup: (_cwd, evidence) => {
+        const cleanup = tokenDirectory ? tools.appTokenCleanup(_cwd, evidence) : async () => {};
+        return () => { events.push("delete-app-tokens"); return cleanup(); };
+      },
       processCheckpoint: async (_root, _name, action) => { const result = { receipt: [], evidence: await action() }; assertCompactCheckpoint(result); return result; },
       applyStageEdits: async (_cwd, edits, _slice, _signal, baseline) => {
         tools.assertHumanBoxes(baseline, get(join(cwd, slices.tasks)));
@@ -61,7 +68,10 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       proposalBases: tools.proposalBases,
       assertTaskScope: tools.assertTaskScope,
       assertSameInputs: tools.assertSameInputs,
-      save: async (_cwd, file, value) => files.set(join(cwd, file), JSON.stringify(value)),
+      save: async (_cwd, file, value) => {
+        if (terminalRecordFailure && file.endsWith("/terminal.json")) throw Error("terminal record failed");
+        return files.set(join(cwd, file), JSON.stringify(value));
+      },
       snapshot,
       snapshotWorkingCopy: async (_cwd, actualSignal) => { assert.equal(actualSignal, signal); snapshotted = await snapshot(); return { snapshotted: true }; },
       scope: snapshot,
@@ -102,8 +112,12 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       },
       runStreaming: async () => "",
       generateVars: async () => { if (failTransient) { failTransient = false; throw Error("transient connection failure"); } return { generated: true }; },
-      mintAppToken: async (_cwd, evidence, label, appId) => ({ appId, file: `${evidence}/${label}-${appId}.token.json` }),
-      observeApp: async (_cwd, _root, reply, token) => { assert.equal(token.appId, reply.id); return { id: 1234, slug: "queue" }; },
+      mintAppToken: async (_cwd, evidence, label, appId) => {
+        const file = resolve(_cwd, evidence, `${label}-${appId}.token.json`);
+        if (tokenDirectory) await writeFile(file, "SECRET-SENTINEL", { mode: 0o600 });
+        events.push(`minted:${label}-${appId}`); return { appId, file };
+      },
+      observeApp: async (_cwd, _root, reply, token) => { if (postMintFailure) throw Error("post-mint transient failure"); assert.equal(token.appId, reply.id); return { id: 1234, slug: "queue" }; },
       leakScan: async () => ({ leaked: false }),
       reviewDnsContent: async () => ({ sha256: tools.sha256(tree[dnsPath] ?? "") }),
       verifyDnsSource: async (_cwd, source, reviewed) => {
@@ -252,14 +266,14 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
         // per candidate; an exhausted stage throws, never caches invalid success.
         const validStructured = structured;
         if (nativeFailure && name.startsWith("implement")) {
-          if (["provider", "abort"].includes(nativeFailure)) throw Object.assign(Error("provider structured_output transport failure"), { name: nativeFailure === "abort" ? "AbortError" : "Error" });
+          if (["provider", "abort"].includes(nativeFailure)) throw nativeError;
           if (nativeFailure === "always" || name === "implement-b1-a1") structured = null;
         }
         for (let correction = 0; ; correction++) {
           try { types.parse(options.schema, structured); break; }
           catch {
             events.push(`structured-invalid:${name}:${correction}`);
-            if (correction === 3) throw Error('Validation failed for tool "structured_output":\nmock contract validation error');
+            if (correction === 3) throw Error(nativeMessage || 'Validation failed for tool "structured_output":\nmock contract validation error');
             if (nativeFailure === "corrected") structured = validStructured;
           }
         }
@@ -272,7 +286,10 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
         if (method === "select") return declineG2 || decline === "G2" ? "decline" : "approve with User bypass";
         return !decline || !question.startsWith(decline);
       })])),
-      exit: (result) => { if (throwExit) throw Object.assign(new Error("Atomic terminal exit"), { exitResult: result }); return result; },
+      exit: (result) => {
+        if (tokenDirectory && !result.resumable) assert.deepEqual(readdirSync(tokenDirectory).filter((name) => name.endsWith(".token.json")), [], "Delete before ctx.exit, including throwing Atomic exit");
+        if (throwExit) throw Object.assign(new Error("Atomic terminal exit"), { exitResult: result }); return result;
+      },
     };
     const run = async () => { try { return await definition.run(context); } catch (error) { if (error.exitResult) return error.exitResult; if (unexpected || ["provider", "abort"].includes(nativeFailure)) return { unexpected: error }; throw error; } };
     const first = await run();
@@ -291,7 +308,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       assert.equal(events.filter((event) => event === "generate-vars").length, 2);
       assert.equal(events.filter((event) => event === "route-s1").length, 1);
     }
-    return { result: first.outputs ?? first, exit: first, events, files, root, cwd, revisions, committedTasks, toolOptions };
+    return { result: first.outputs ?? first, exit: first, events, files, root, cwd, revisions, committedTasks, toolOptions, nativeError };
   }
 
   async function findingChecks(finding) {
@@ -336,6 +353,19 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       assert.equal(exhausted.result.status, "blocked");
       assert.equal(exhausted.events.filter((e) => e.startsWith("structured-invalid:")).length, 16);
       assert.equal(exhausted.events.filter((e) => e.startsWith("input:G3")).length, 1);
+      for (const detail of ["The model produced assistant text but never called structured_output", "The model produced an assistant message with empty text", "The model produced no assistant message after the prompt"]) {
+        const nativeMessage = `atomic-workflows: stage configured with schema must finish by calling structured_output. ${detail}`;
+        const missing = await execute({ nativeFailure: "always", nativeMessage });
+        assert.equal(missing.result.status, "blocked", detail);
+        assert.equal(missing.events.filter((e) => e.startsWith("structured-invalid:")).length, 16, detail);
+        assert.equal(missing.events.filter((e) => e.startsWith("input:G3")).length, 1, detail);
+        assert(!missing.events.some((e) => e.startsWith("apply-implement")), detail);
+        for (const nativeFailure of ["provider", "abort"]) {
+          const fault = await execute({ nativeFailure, nativeMessage: nativeFailure === "abort" ? nativeMessage : `${nativeMessage} (provider transport failure)` });
+          assert.equal(fault.exit.unexpected, fault.nativeError, "Unrecognized/provider/abort error identity must survive ctx.task");
+          assert(!fault.events.some((e) => e.startsWith("input:G3")));
+        }
+      }
       for (const nativeFailure of ["provider", "abort"]) {
         const fault = await execute({ nativeFailure });
         assert(fault.exit.unexpected, "Provider/abort faults must propagate unchanged");
@@ -343,10 +373,64 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
         assert(!fault.events.includes("implement-b1-a2") && !fault.events.some((e) => e.startsWith("input:G3")));
       }
       console.log("PASS F4: native initial+three correction rejection consumes one proposal attempt; exhaustion reaches G3; provider/abort faults escape");
+      console.log("PASS F4 native missing-output: all three exact combined diagnostics exhaust throwing ctx.task through four proposals/one G3; provider/abort identity preserved");
     }
+  }
+  async function tokenLifecycleChecks() {
+    for (const options of [{}, { replay: true }, { decline: "G2", throwExit: true }, { wrongRules: "always", throwExit: true }, { rejectRoborev: true }, { unexpected: "abort", dnsReject: true }, { terminalRecordFailure: true, decline: "G2" }, { postMintFailure: true }]) {
+      const tokenDirectory = await mkdtemp(join(tmpdir(), "gitea-mq-lifecycle-"));
+      try {
+        await writeFile(join(tokenDirectory, "receipt.json"), "keep");
+        let result;
+        try { result = await execute({ ...options, tokenDirectory }); }
+        catch (error) { if (!options.terminalRecordFailure) throw error; assert(error instanceof AggregateError); assert(error.errors.some((cause) => /terminal record failed/.test(String(cause)))); }
+        const artifacts = (await readdir(tokenDirectory)).filter((name) => name.endsWith(".token.json"));
+        if (options.postMintFailure) {
+          assert.equal(result.exit.resumable, true); assert.deepEqual(artifacts, ["G1-1234.token.json"]);
+          assert(!result.events.includes("delete-app-tokens"));
+        } else {
+          assert.deepEqual(artifacts, [], `Plaintext tokens remain on ${JSON.stringify(options)}`);
+          if (result) assert(result.events.some((event) => event.startsWith("minted:")), "Exercise minted artifacts, not vacuous no-token exits");
+        }
+        if (!Object.keys(options).length) {
+          assert.equal(result.result.status, "completed-with-caveat");
+          assert.equal(result.events.filter((event) => event.startsWith("minted:")).length, 3);
+        }
+        assert((await readdir(tokenDirectory)).includes("receipt.json"));
+      } finally { await rm(tokenDirectory, { recursive: true, force: true }); }
+    }
+    const tokenDirectory = await mkdtemp(join(tmpdir(), "gitea-mq-deletion-error-"));
+    try {
+      await mkdir(join(tokenDirectory, "bad.token.json"));
+      await assert.rejects(() => execute({ tokenDirectory }), /App token deletion failed/);
+      assert.deepEqual(await readdir(tokenDirectory), ["bad.token.json"], "Every deletable artifact must be removed even when another deletion fails");
+    } finally { await rm(tokenDirectory, { recursive: true, force: true }); }
+    const local = await mkdtemp(join(tmpdir(), "gitea-mq-finalizer-"));
+    try {
+      await writeFile(join(local, "keep.json"), "do not follow");
+      await symlink(join(local, "keep.json"), join(local, "leaf.token.json"));
+      await writeFile(join(local, "incomplete.token.json"), "{}");
+      const cleanup = tools.appTokenCleanup(local, "."), first = cleanup();
+      assert.equal(cleanup(), first, "Repeated finalization must share the same promise"); await first;
+      assert.deepEqual(await readdir(local), ["keep.json"]);
+      assert.equal(await readFile(join(local, "keep.json"), "utf8"), "do not follow");
+      await tools.appTokenCleanup(local, ".")(); // Fresh-run idempotence after deletion.
+      await mkdir(join(local, "bad.token.json"));
+      const failing = tools.appTokenCleanup(local, "."), failure = failing();
+      assert.equal(failing(), failure); await assert.rejects(failure, /App token deletion failed/);
+      await rm(join(local, "bad.token.json"), { recursive: true });
+      await writeFile(join(local, "not-retried.token.json"), "{}");
+      assert.equal(failing(), failure); await assert.rejects(failing(), /App token deletion failed/);
+      assert((await readdir(local)).includes("not-retried.token.json"), "A rejected cleanup must not start a second deletion pass");
+      await assert.rejects(tools.appTokenCleanup(local, "keep.json")(), /App token deletion failed: cannot enumerate/);
+    } finally { await rm(local, { recursive: true, force: true }); }
+    console.log("PASS R1 finalizer: incomplete sentinels and leaf symlinks removed without following targets; idempotence, shared success/rejection promise, no retry after deletion error, enumeration errors loud");
+    console.log("PASS R1 token lifecycle: real files absent after completion/replay, declined/blocked/needs_rework, abort and terminal-record failure; only explicit resumable failure retains; deletion errors fail loudly after attempting all artifacts");
   }
   const onlyFinding = process.argv.find((arg) => /^--F[234]-only$/.test(arg));
   if (onlyFinding) { await findingChecks(onlyFinding.slice(2, 4)); return; }
+  if (process.argv.includes("--tokens-only")) { await tokenLifecycleChecks(); return; }
+  await tokenLifecycleChecks();
   for (const finding of ["F2", "F3", "F4"]) await findingChecks(finding);
 
   const success = await execute();

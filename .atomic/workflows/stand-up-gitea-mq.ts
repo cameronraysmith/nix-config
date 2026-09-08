@@ -21,7 +21,8 @@ export default workflow({
       signal.throwIfAborted();
       return t.allocateEvidence(cwd);
     }, { failureMode: "throw", timeoutMs: 120_000 }).catch((error: unknown) => ctx.exit({ status: "failed", resumable: true, reason: `Evidence allocation failed: ${String(error)}` }));
-    const ledger: unknown[] = [], linearTransitions: LinearState[] = [];
+    const ledger: unknown[] = [], linearTransitions: LinearState[] = [], cleanupTokens = t.appTokenCleanup(cwd, root);
+    let retainTokens = false;
     const index: { node: string; ok: boolean; evidence: string }[] = [];
     let lockedDeclaration: string | null = null;
     let humanBaseline = "";
@@ -167,7 +168,6 @@ export default workflow({
       await tool("first-task-witness", async (signal) => { signal.throwIfAborted(); if (!/^- \[x\] /m.test(await readFile(join(cwd, tasks), "utf8"))) throw new Blocked("No first completed task"); return { started: true }; });
       await transition("T2", "In Progress", `Implementation has started for CAM-56. Evidence is recorded in ${root}.`);
       await land("route-s1", s1);
-
       await tool("G1-material", async (signal) => { signal.throwIfAborted(); await writeFile(join(cwd, `${root}/G1.md`), p.registration); return { file: `${root}/G1.md` }; });
       const reply = await ctx.ui.input(`${p.registration}\nMaterial: ${root}/G1.md\nSuggested slug: ${input.app_slug_hint ?? "sciexp-gitea-mq"}`);
       if (!reply?.trim()) throw new Stop("declined", "G1 declined");
@@ -190,7 +190,6 @@ export default workflow({
       await tool("post-g1-s1-ledger", (signal) => t.tick(cwd, patched.value.verifiedTasks, signal, humanBaseline));
       validation.v9 = { kind: "Pass", evidence: patched.evidence };
       await land("route-post-g1", postG1);
-
       await implement("hostname", s2);
       let dnsApplyAttempted = false;
       const dnsGate = (name: string) => bounded(name, s2, async (id) => {
@@ -219,7 +218,6 @@ export default workflow({
       await tool("dns-ledger", (signal) => t.tick(cwd, ["6.1", "6.2"], signal, humanBaseline));
       passed("dns", ["6.1", "6.2"], dns.evidence);
       await land("route-s2", s2, true, dnsCandidateId(dnsState));
-
       const beforeRules = await tool("read-rulesets", (signal) => t.readRules(cwd, root, signal), 120_000, false, true);
       const { draft, rendered } = await propose("render-ruleset-diff", async (id, feedback) => {
         const draft = proposalValue(RulesetDraft, (await stage(id, { ...MEDIUM, ...READ_ONLY, reads: [...reads, beforeRules.value.file, `${root}/app.json`, ...feedback], schema: RulesetDraft, prompt: p.rulesetPrompt(cwd, root) })).structured);
@@ -343,7 +341,8 @@ export default workflow({
       catch (recordError) { throw new AggregateError([error, recordError], summary); }
       if (!(error instanceof Blocked) && !(error instanceof GateFailure)) throw error;
       const exit = error instanceof Stop ? { status: error.status === "declined" ? "cancelled" as const : "blocked" as const } : { status: "failed" as const, resumable: true };
+      if ("resumable" in exit && exit.resumable) retainTokens = true; else await cleanupTokens();
       return ctx.exit({ ...exit, reason: summary, outputs: { status, summary, evidence_root: root } });
-    }
+    } finally { if (!retainTokens) await cleanupTokens(); }
   },
 });

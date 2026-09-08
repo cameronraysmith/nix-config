@@ -10,6 +10,12 @@ export function proposalValue<T extends TSchema>(schema: T, value: unknown): Sta
   catch (error) { if (error instanceof Blocked) throw new ProposalRejected(String(error)); throw error; }
 }
 
+const missingOutput = "atomic-workflows: stage configured with schema must finish by calling structured_output.";
+const missingOutputDetails = [
+  "The model produced assistant text but never called structured_output",
+  "The model produced an assistant message with empty text",
+  "The model produced no assistant message after the prompt",
+];
 /** Atomic 0.9.18 rejects ctx.task with an ordinary Error after its per-candidate
  * initial turn + three corrections. Match only native contract diagnostics;
  * provider, cancellation, policy and runtime faults must retain their identity. */
@@ -17,11 +23,8 @@ export function rejectStructuredContract(error: unknown): never {
   if (error instanceof Error && error.name === "Error" && (
     /^Validation failed for tool "structured_output":\n/.test(error.message) ||
     /^atomic-workflows: structured_output returned a non-serializable value: /.test(error.message) ||
-    ["structured_output tool call failed schema validation.",
-      "atomic-workflows: stage configured with schema must finish by calling structured_output.",
-      "The model produced assistant text but never called structured_output",
-      "The model produced an assistant message with empty text",
-      "The model produced no assistant message after the prompt"].includes(error.message)
+    error.message === "structured_output tool call failed schema validation." || error.message === missingOutput ||
+    missingOutputDetails.some((detail) => error.message === detail || error.message === `${missingOutput} ${detail}`)
   )) throw new ProposalRejected(error.message);
   throw error;
 }

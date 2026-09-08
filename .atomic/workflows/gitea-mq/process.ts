@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { spawn } from "node:child_process";
 import { appendFileSync } from "node:fs";
-import { mkdir, mkdtemp, writeFile, open } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile, open, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve, relative, join } from "node:path";
 import { Blocked } from "../bump/types.js";
@@ -16,11 +16,19 @@ export function assertExternalEvidence(cwd: string, root: string): void {
   const path = relative(resolve(cwd), resolve(cwd, root));
   if (path !== ".." && !path.startsWith(`../`)) throw new Blocked("Evidence must be outside the source tree");
 }
+/** Both roots must exist. Return the physical destination so minting does not
+ * subsequently follow a lexically external evidence ancestor into the repo. */
+export async function canonicalExternalEvidence(cwd: string, root: string): Promise<string> {
+  assertExternalEvidence(cwd, root);
+  const [repository, evidence] = await Promise.all([realpath(cwd), realpath(resolve(cwd, root))]);
+  assertExternalEvidence(repository, evidence);
+  return evidence;
+}
 export async function allocateEvidence(cwd: string): Promise<string> {
   const base = resolve(process.env.XDG_STATE_HOME ?? join(homedir(), ".local/state"), "atomic/gitea-mq");
   assertExternalEvidence(cwd, base);
   await mkdir(base, { recursive: true, mode: 0o700 });
-  return relative(cwd, await mkdtemp(join(base, "run-")));
+  return relative(cwd, await canonicalExternalEvidence(cwd, await mkdtemp(join(base, "run-"))));
 }
 export async function processCheckpoint<T>(root: string, node: string, action: () => Promise<T>) {
   const state: Context = { root, node, next: 0, receipts: [] };
