@@ -35,8 +35,6 @@
       listen = "127.0.0.1:8092";
       domain = "mq.scientistexperience.net";
       gen = config.clan.core.vars.generators;
-      # G1 must supply the public App id before deployment (tasks 1.2 and 4.1).
-      pendingGithubAppId = 1;
     in
     {
       clan.core.vars.generators.gitea-mq-github-app-secret-key = {
@@ -61,7 +59,7 @@
         listenAddr = listen;
         hideRefFromClients = false;
         github = {
-          appId = pendingGithubAppId;
+          appId = 4875422;
           privateKeyFile = gen.gitea-mq-github-app-secret-key.files."key.pem".path;
           webhookSecretFile = gen.gitea-mq-github-webhook-secret.files."secret".path;
           repos = [ "cameronraysmith/vanixiets" ];

@@ -7,10 +7,11 @@ linear_story_state: Todo
 linear_team: CAM
 linear_project: nixbot-herculesci-cicd
 last_synced_state: In Progress
-last_synced_at: 2026-09-08T22:32:49.425Z
+last_synced_at: 2026-09-08T22:48:25.262Z
 review_round: 0
 max_review_rounds: 3
 attempt_log:
+  - {"at":"2026-09-08T22:48:25.262Z","transition":"In Progress","outcome":{"kind":"TransitionObserved","comment":"Posted"}}
   - {"at":"2026-09-08T22:32:49.425Z","transition":"In Progress","outcome":{"kind":"TransitionObserved","comment":"Posted"}}
   - {"at":"2026-09-08T22:23:05.657Z","transition":"In Progress","outcome":{"kind":"TransitionObserved","comment":"Posted"}}
   - {"at":"2026-09-08T21:58:27.181Z","transition":"In Progress","outcome":{"kind":"TransitionObserved","comment":"Posted"}}
