@@ -7,7 +7,7 @@ import { Blocked, within, unreachable } from "../bump/types.js";
 import { quote, requireSuccess } from "../bump/tools.js";
 import {
   save,
-  squashCommand, classifyScope, assertScopeInputs, type Tree,
+  squashCommand, classifyScope, type Tree,
 } from "../omnigent/tools.js";
 import { snapshot, assertHealthy, oneId, ids, pathsIn } from "./vcs.js";
 import {
@@ -36,8 +36,14 @@ import { taskLedger, humanBoxes, assertHumanBoxes } from "./proposal-edits.js";
 export { applyStageEdits, assertTaskScope, taskLedger, humanBoxes, assertHumanBoxes } from "./proposal-edits.js";
 export const resolveSource = (cwd: string, tip: string, name: string, signal: AbortSignal) => sharedResolveSource(cwd, tip, name, signal, capture);
 export const runStreaming = async (cwd: string, command: string, signal: AbortSignal) => requireSuccess(await captureStreaming(cwd, command, signal));
-export const assertSameInputs = (before: Tree, after: Tree): void =>
-  assertScopeInputs(before, after, [...new Set([...Object.keys(before), ...Object.keys(after)])]);
+/** Only inputs owned by this slice (plus shared change/vars inputs) invalidate a proposal. */
+export function assertScopedInputs(before: Tree, after: Tree, slice: Slice): { foreignDrift: string[] } {
+  const allowed = [...slice.allowedPaths, dir, ...varsAllowed];
+  const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])].filter((path) => before[path] !== after[path]).sort();
+  const scoped = changed.filter((path) => allowed.some((prefix) => within(path, prefix)));
+  if (scoped.length) throw new Blocked(`Scoped inputs changed: ${scoped.join(", ")}`);
+  return { foreignDrift: changed };
+}
 export const run = async (cwd: string, command: string, signal: AbortSignal) =>
   requireSuccess(await capture(cwd, command, signal));
 export const sha256 = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
@@ -110,7 +116,7 @@ export async function preflight(cwd: string, splice: string, signal: AbortSignal
     pre: Type.Union([Type.String(), Type.Array(Type.String()), Type.Null()]),
   });
   const baseline = parse(baselineSchema, await json(cwd,
-    `nix eval --no-write-lock-file --option allow-import-from-derivation false --json .#nixosConfigurations.magnetite.config --apply ${quote('c: { pre = c.systemd.services.gitea.serviceConfig.ExecStartPre or null; }')}`, signal));
+    `nix eval --no-write-lock-file --json .#nixosConfigurations.magnetite.config --apply ${quote('c: { pre = c.systemd.services.gitea.serviceConfig.ExecStartPre or null; }')}`, signal));
   const taskText = await readFile(join(cwd, tasks), "utf8");
   return { chain, lock, baseline, foreign, taskIds: [...taskLedger(taskText).keys()], humanBoxes: humanBoxes(taskText) };
 }
@@ -131,12 +137,13 @@ export async function lockInput(cwd: string, lockedDeclaration: string | null, h
   const declaration = sha256(await readFile(join(cwd, "flake.nix")));
   if (declaration === lockedDeclaration) return { declaration, relocked: false };
   const before = await snapshot(cwd, signal);
+  let scoped: Awaited<ReturnType<typeof scope>>;
   try {
     await run(cwd, "nix flake lock --update-input gitea-mq", signal);
   } finally {
-    await scope(cwd, before, ["flake.lock"], human, signal);
+    scoped = await scope(cwd, before, ["flake.lock"], human, signal);
   }
-  return { declaration, relocked: true };
+  return { declaration, relocked: true, foreignDrift: scoped.foreignDrift };
 }
 export async function ensureActivated(cwd: string, source: DeploymentSource, signal: AbortSignal) {
   const expected = await run(cwd, `nix eval --raw --no-write-lock-file ${quote(`${source.source}#nixosConfigurations.magnetite.config.system.build.toplevel.outPath`)}`, signal);
@@ -149,10 +156,11 @@ export async function ensureActivated(cwd: string, source: DeploymentSource, sig
 }
 export async function scope(cwd: string, before: Tree, allowed: readonly string[], humanBefore: string, signal: AbortSignal) {
   const after = await snapshot(cwd, signal);
-  const result = classifyScope(before, after, allowed, await pathsIn(cwd, "@", signal));
-  if (result.foreignDuringStage.length) throw new Blocked(`Foreign paths changed: ${result.foreignDuringStage.join(", ")}`);
+  // Relocking intentionally changes allowed outputs; all other S1 inputs stay pinned.
+  const inputs = (tree: Tree): Tree => Object.fromEntries(Object.entries(tree).filter(([path]) => !allowed.some((prefix) => within(path, prefix))));
+  const { foreignDrift } = assertScopedInputs(inputs(before), inputs(after), s1);
   assertHumanBoxes(humanBefore, await readFile(join(cwd, tasks), "utf8"));
-  return after;
+  return { tree: after, foreignDrift };
 }
 export async function snapshotWorkingCopy(cwd: string, signal: AbortSignal) {
   await run(cwd, "jj debug snapshot", signal);
@@ -175,9 +183,9 @@ export async function pendingPaths(cwd: string, slice: Slice, signal: AbortSigna
   return (await pathsIn(cwd, "@", signal))
     .filter((path) => slice.allowedPaths.some((prefix) => within(path, prefix)));
 }
-export async function route(cwd: string, chain: Chain, slice: Slice, reviewed: Tree, signal: AbortSignal, into: string | null = null): Promise<Chain> {
+export async function route(cwd: string, chain: Chain, slice: Slice, reviewed: Tree, signal: AbortSignal, into: string | null = null): Promise<Chain & { foreignDrift: string[] }> {
   await topology(cwd, chain, signal);
-  assertSameInputs(reviewed, await snapshot(cwd, signal));
+  const { foreignDrift } = assertScopedInputs(reviewed, await snapshot(cwd, signal), slice);
   await run(cwd, "jj debug snapshot", signal);
   const paths = await pendingPaths(cwd, slice, signal);
   if (!paths.length) throw new Blocked("Cannot route empty change");
@@ -189,7 +197,7 @@ export async function route(cwd: string, chain: Chain, slice: Slice, reviewed: T
   const next = { ...chain, tip: into === null ? id : chain.tip, changes: into === null ? [...chain.changes, { id, paths }] : chain.changes.map((change) => change.id === id ? { id, paths: [...new Set([...change.paths, ...paths])] } : change) };
   await topology(cwd, next, signal);
   if ((await pendingPaths(cwd, slice, signal)).length) throw new Blocked("Routed paths remain in @");
-  return next;
+  return { ...next, foreignDrift };
 }
 export async function diffArtifact(cwd: string, root: string, name: string, signal: AbortSignal) {
   await run(cwd, "jj debug snapshot", signal);
@@ -199,10 +207,10 @@ export async function diffArtifact(cwd: string, root: string, name: string, sign
 }
 export async function s1Gate(cwd: string, baselineLock: string, baseline: unknown, signal: AbortSignal, expectedAppId: number | null = null) {
   await run(cwd, "jj debug snapshot", signal);
-  const drv = await run(cwd, "nix eval --raw --no-write-lock-file --option allow-import-from-derivation false .#checks.x86_64-linux.nixos-magnetite.drvPath", signal);
+  const drv = await run(cwd, "nix eval --raw --no-write-lock-file .#checks.x86_64-linux.nixos-magnetite.drvPath", signal);
   if (!drv.startsWith("/nix/store/") || !drv.endsWith(".drv")) throw new Blocked("No host derivation path");
   for (const control of negativeControls) {
-    const result = await capture(cwd, `nix eval --impure --no-write-lock-file --option allow-import-from-derivation false --expr ${quote(control.expr)}`, signal);
+    const result = await capture(cwd, `nix eval --impure --no-write-lock-file --expr ${quote(control.expr)}`, signal);
     if (result.state !== "exited" || result.exitCode <= 0 || !`${result.stdout}\n${result.stderr}`.includes(control.message)) throw new Blocked(`Negative control did not fire: ${control.setting}`);
   }
   const locks = Type.Object({ nodes: Type.Record(Type.String(), Type.Unknown()) });
@@ -226,7 +234,7 @@ export async function s1Gate(cwd: string, baselineLock: string, baseline: unknow
     pre = c.systemd.services.gitea.serviceConfig.ExecStartPre or null;
   }`;
   const config = parse(S1Configuration, await json(cwd,
-    `nix eval --json --no-write-lock-file --option allow-import-from-derivation false .#nixosConfigurations.magnetite.config --apply ${quote(expression)}`, signal));
+    `nix eval --json --no-write-lock-file .#nixosConfigurations.magnetite.config --apply ${quote(expression)}`, signal));
   if (![config.values, config.service, config.resources, config.credentials, config.bindings, config.ownership, config.environment, config.vhost, config.nixbot].every(Boolean) || !isDeepStrictEqual({ pre: config.pre }, baseline)) throw new Blocked("S1 evaluated configuration differs from pinned contract");
   if (expectedAppId !== null && config.appId !== expectedAppId) throw new Blocked("App-id differs from tool observation");
   const observed: S1Arm[] = ["host-derivation", "four-negative-controls", "build-locks-unchanged", "build-metadata-unchanged", "build-aspects-unchanged", "landing-settings", "landing-environment", "service-settings", "database-declaration", "credential-root-restart", "credential-bindings", "ensure-users-ownership", "vhost", "nixbot-domain", "dynamic-user", "cache-directory", "no-static-user", "loopback-listener", "forge-pre-unchanged"];
@@ -444,15 +452,15 @@ nix run ${quote(`${source.source}#terraform.terraform`)} -- init -input=false
 nix run ${quote(`${source.source}#terraform.terraform`)} -- plan -input=false -out=${quote(plan)}
 nix run ${quote(`${source.source}#terraform.terraform`)} -- show -json ${quote(plan)} > ${quote(file)}
 chmod 600 ${quote(plan)} ${quote(file)}`, signal);
-  assertSameInputs(tree, await snapshot(cwd, signal));
+  const { foreignDrift } = assertScopedInputs(tree, await snapshot(cwd, signal), s2);
   return {
-    ...source, tree, plan,
+    ...source, tree, plan, foreignDrift,
     sha256: sha256(await readFile(plan)), decision: dnsDecision(JSON.parse(await readResponse(file)), reconciling),
     execution: "Saved OpenTofu plan from committed git+file source; external evidence, terraform.terraform wrapper, shared state and secrets environment",
   };
 }
 export async function applyDns(cwd: string, root: string, name: string, plan: Awaited<ReturnType<typeof planDns>>, signal: AbortSignal) {
-  assertSameInputs(plan.tree, await snapshot(cwd, signal));
+  const { foreignDrift } = assertScopedInputs(plan.tree, await snapshot(cwd, signal), s2);
   if (plan.decision.kind !== "NeedsApply") throw new Blocked("No resource creation approved");
   const intent = join(cwd, root, `${name}.apply-intent.json`);
   let interrupted = false;
@@ -466,12 +474,12 @@ export async function applyDns(cwd: string, root: string, name: string, plan: Aw
   if (interrupted) {
     const fresh = await planDns(cwd, root, `${name}-reconcile`, plan, signal, true);
     if (fresh.decision.kind !== "Reconciled") throw new Blocked("Interrupted apply still has changes: invalidate approval, repair and obtain a fresh saved-plan confirmation");
-    return { applied: true, reconciled: true, plan: fresh.plan, sha256: fresh.sha256 };
+    return { applied: true, reconciled: true, plan: fresh.plan, sha256: fresh.sha256, foreignDrift: [...new Set([...foreignDrift, ...fresh.foreignDrift])].sort() };
   }
   await writeFile(intent, JSON.stringify({ plan: plan.plan, sha256: plan.sha256 }), { flag: "wx", mode: 0o600 });
   if (sha256(await readFile(plan.plan)) !== plan.sha256) throw new Blocked("Saved Terraform plan changed after review");
   await runStreaming(cwd, `nix run ${quote(`${plan.source}#terraform.terraform`)} -- apply -input=false ${quote(plan.plan)}`, signal);
-  return { applied: true, reconciled: false, plan: plan.plan, sha256: plan.sha256 };
+  return { applied: true, reconciled: false, plan: plan.plan, sha256: plan.sha256, foreignDrift };
 }
 export async function dnsWitness(cwd: string, signal: AbortSignal) {
   const cname = await run(cwd, `dig +short CNAME ${domain}`, signal);
@@ -627,8 +635,8 @@ export async function candidate(cwd: string, signal: AbortSignal) {
   throw new Blocked("No unqueued up-to-date PR with both successful nixbot contexts in first 30 main-target PRs");
 }
 export async function rollback(cwd: string, signal: AbortSignal) {
-  const normal = await run(cwd, "nix eval --raw --no-write-lock-file --option allow-import-from-derivation false .#checks.x86_64-linux.nixos-magnetite.drvPath", signal);
-  const removed = await run(cwd, `nix eval --raw --impure --no-write-lock-file --option allow-import-from-derivation false --expr ${quote(rollbackExpr)}`, signal);
+  const normal = await run(cwd, "nix eval --raw --no-write-lock-file .#checks.x86_64-linux.nixos-magnetite.drvPath", signal);
+  const removed = await run(cwd, `nix eval --raw --impure --no-write-lock-file --expr ${quote(rollbackExpr)}`, signal);
   if (!removed.startsWith("/nix/store/") || !removed.endsWith(".drv") || normal === removed) throw new Blocked("Rollback did not produce a different valid derivation");
   return { normal, removed, trackedEdits: false };
 }

@@ -11,6 +11,13 @@ const observed = (stdout = "", exitCode = 0, stderr = "") => ({
 
 /** Keep real helper implementations; replace only filesystem/process/deployment ports. */
 export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, typeboxUrl }) {
+  const evaluations = source.split("\n").filter((line) => line.includes("nix eval "));
+  assert.equal(evaluations.length, 7, "Cover baseline, activation, three S1 sites and two rollback sites");
+  for (const command of evaluations) {
+    assert(!command.includes("allow-import-from-derivation"), "Flake evaluation must not override IFD");
+    assert(command.includes("--no-write-lock-file"), "Flake evaluation must retain lock-file protection");
+  }
+  console.log("PASS Nix evaluation commands retain lock-file protection without overriding IFD");
   const signal = new AbortController().signal;
   const files = new Map();
   const commands = [];
@@ -87,14 +94,16 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
     mock.snapshot = async () => ({ ...baseline, [slices.aspect]: "100644:owned" });
     await actual.scope(repo, baseline, slices.s1.allowedPaths, tools.humanBoxes(taskText), signal);
     mock.snapshot = async () => ({ ...baseline, [foreign[0]]: "100644:drift" });
-    await assert.rejects(() => actual.scope(repo, baseline, slices.s1.allowedPaths, tools.humanBoxes(taskText), signal), /Foreign paths changed: .atomic\/workflows\/deploy-omnigent.ts/);
+    assert.deepEqual((await actual.scope(repo, baseline, ["flake.lock"], tools.humanBoxes(taskText), signal)).foreignDrift, [foreign[0]]);
+    mock.snapshot = async () => ({ ...baseline, "flake.nix": "100644:drift" });
+    await assert.rejects(() => actual.scope(repo, baseline, ["flake.lock"], tools.humanBoxes(taskText), signal), /Scoped inputs changed: flake.nix/);
     const owned = [...new Set([slices.s1, slices.postG1, slices.s2, slices.s4, slices.docs, slices.report].flatMap((slice) => slice.allowedPaths))];
     for (const path of [...owned, `${slices.dir}/tasks.md`, ...slices.varsAllowed.map((path) => `${path}/secret`)]) {
       pending = [...foreign, path];
       await assert.rejects(() => actual.preflight(repo, "ssss", signal), (error) => error.message.includes(path));
     }
     Object.assign(mock, original);
-    console.log("PASS preflight shared @: foreign paths recorded and baseline-preserved; workflow scope (including change/vars directories) blocks with offending paths; later foreign drift blocks");
+    console.log("PASS preflight shared @: foreign paths recorded and baseline-preserved; preexisting workflow scope blocks; relock allows foreign drift as evidence but rejects other S1 input drift");
   }
   // Real physical paths, closed process port: even old code cannot execute POST.
   const physical = await mkdtemp(join(tmpdir(), "gitea-mq-confinement-"));
@@ -194,9 +203,17 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
     assert(!command.includes("path:/mock")); assert(command.includes(savedPlan.source));
     return observed();
   };
+  const dnsSnapshot = globalThis.__mqCommandMock.snapshot;
+  let dnsSnapshots = 0;
+  const foreignDns = ".atomic/workflows/deploy-omnigent.ts";
+  globalThis.__mqCommandMock.snapshot = async () => ({ [foreignDns]: `foreign-${dnsSnapshots++}` });
   const reconciled = await actual.applyDns(cwd, "../root", "saved", savedPlan, signal);
   assert.equal(reconciled.reconciled, true);
   assert.equal(applies, 0, "Interrupted successful apply must not repeat the mutation");
+  assert.deepEqual(reconciled.foreignDrift, [foreignDns]);
+  globalThis.__mqCommandMock.snapshot = async () => ({ "modules/terranix/cloudflare.nix": "changed" });
+  await assert.rejects(() => actual.applyDns(cwd, "../root", "saved", savedPlan, signal), /Scoped inputs changed/);
+  globalThis.__mqCommandMock.snapshot = dnsSnapshot;
   files.set("/root/saved.apply-intent.json", JSON.stringify({ plan: "/foreign", sha256: savedPlan.sha256 }));
   await assert.rejects(() => actual.applyDns(cwd, "../root", "saved", savedPlan, signal), /intent differs/);
   files.set("/root/saved.apply-intent.json", JSON.stringify({ plan: savedPlan.plan, sha256: savedPlan.sha256 }));
@@ -248,8 +265,14 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
     if (command.startsWith("jj squash")) { assert(command.includes("--into 'kkkk'")); pending = false; return observed(); }
     throw Error(`Unexpected candidate mutation: ${command}`);
   };
+  const routeSnapshot = globalThis.__mqCommandMock.snapshot;
+  globalThis.__mqCommandMock.snapshot = async () => ({ "modules/terranix/cloudflare.nix": "changed" });
+  await assert.rejects(() => actual.route(cwd, owned, slices.s2, {}, signal, "kkkk"), /Scoped inputs changed/);
+  globalThis.__mqCommandMock.snapshot = async () => ({ [foreignDns]: "changed" });
   const amended = await actual.route(cwd, owned, slices.s2, {}, signal, "kkkk");
   assert.equal(amended.changes.length, 1); assert.equal(amended.tip, "kkkk");
+  assert.deepEqual(amended.foreignDrift, [foreignDns]);
+  globalThis.__mqCommandMock.snapshot = routeSnapshot;
   assert(!commands.slice(amendmentStart).some((command) => command.startsWith("jj new") || command.includes("abandon")));
   globalThis.__mqCommandMock.pathsIn = oldPathsIn; globalThis.__mqCommandMock.oneId = oldOneId;
   console.log("PASS R4 commands: candidate repair squashes --into the same owned change without appending or abandoning");

@@ -11,7 +11,7 @@ const dataUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).toStr
 export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, slices, ledgerTools, assertCompactCheckpoint }) {
   const { s1Coverage } = await import(moduleUrl(".atomic/workflows/gitea-mq/s1-observations.ts"));
   const report = await import(moduleUrl(".atomic/workflows/gitea-mq/verify-report.ts"));
-  async function execute({ declineG2 = false, decline = "", rejectS1 = false, revisePlan = false, createFailure = false, cleanupFailure = false, exhaust = false, replay = false, probeFailure = false, repairNix = false, v3Failure = false, repairEvalFailure = false, dnsReject = false, dnsRejectOnce = false, rejectRoborev = false, throwExit = false, noHostnameEdit = false, proposalFailure = "", extraClaims = false, transientFailure = false, resumeFailure = false, unexpected = "", wrongRules = "", drift = "", structuralFailure = "", nativeFailure = "", nativeMessage = "", tokenDirectory = "", terminalRecordFailure = false, postMintFailure = false, catalog } = {}) {
+  async function execute({ declineG2 = false, decline = "", rejectS1 = false, revisePlan = false, createFailure = false, cleanupFailure = false, exhaust = false, replay = false, probeFailure = false, repairNix = false, v3Failure = false, repairEvalFailure = false, dnsReject = false, dnsRejectOnce = false, rejectRoborev = false, throwExit = false, noHostnameEdit = false, proposalFailure = "", extraClaims = false, transientFailure = false, resumeFailure = false, unexpected = "", wrongRules = "", drift = "", structuralFailure = "", nativeFailure = "", nativeMessage = "", tokenDirectory = "", terminalRecordFailure = false, postMintFailure = false, catalog, proposalDrift = "" } = {}) {
     const files = new Map();
     const events = [];
     const cache = new Map();
@@ -42,7 +42,8 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       return { completed: ids };
     };
     const snapshot = async () => {
-      if (failDrift && events.at(-1)?.startsWith("stable-")) { failDrift = drift === "always"; tree["flake.nix"] += " drift"; }
+      if (proposalDrift && events.at(-1) === "apply-implement-b1-a1") tree[proposalDrift] = "concurrent change";
+      if (failDrift && events.at(-1)?.startsWith("stable-")) { failDrift = drift === "always"; tree[drift === "foreign" ? ".atomic/workflows/stand-up-gitea-mq.ts" : "flake.nix"] += " drift"; }
       return { ...tree, [slices.tasks]: tools.sha256(get(join(cwd, slices.tasks))), ...(files.has(join(cwd, slices.verify)) ? { [slices.verify]: tools.sha256(get(join(cwd, slices.verify))) } : {}) };
     };
     const mocked = {
@@ -67,7 +68,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       humanBoxes: tools.humanBoxes,
       proposalBases: tools.proposalBases,
       assertTaskScope: tools.assertTaskScope,
-      assertSameInputs: tools.assertSameInputs,
+      assertScopedInputs: tools.assertScopedInputs,
       save: async (_cwd, file, value) => {
         if (terminalRecordFailure && file.endsWith("/terminal.json")) throw Error("terminal record failed");
         return files.set(join(cwd, file), JSON.stringify(value));
@@ -311,6 +312,27 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
     }
     return { result: first.outputs ?? first, exit: first, events, files, root, cwd, revisions, committedTasks, toolOptions, nativeError };
   }
+  for (const path of [".atomic/workflows/stand-up-gitea-mq.ts", "modules/terranix/cloudflare.nix", "flake.nix"]) {
+    const run = await execute({ proposalDrift: path });
+    const evidence = JSON.parse(run.files.get(join(run.cwd, run.root, "apply-implement-b1-a1.json")));
+    if (path === "flake.nix") {
+      assert.equal(evidence.ok, false);
+      assert(run.events.includes("implement-b1-a2"), "Scoped drift rejects the initial proposal");
+    } else {
+      assert.equal(evidence.ok, true);
+      assert.deepEqual(evidence.value.evidence.foreignDrift, [path]);
+      assert(!ledgerTools.repairPaths(evidence.value.evidence.effect).includes(path));
+      assert(!run.events.includes("implement-b1-a2"), "Foreign drift does not retry proposal application");
+    }
+  }
+  console.log("PASS apply graph: scoped drift rejects/retries; foreign and other-slice drift is recorded without blocking or contaminating repair effects");
+  const stableForeign = await execute({ drift: "foreign" });
+  const stableEvidence = JSON.parse(stableForeign.files.get(join(stableForeign.cwd, stableForeign.root, "stable-s1-b1-a1.json")));
+  assert.equal(stableEvidence.ok, true);
+  assert.deepEqual(stableEvidence.value.evidence.foreignDrift, [".atomic/workflows/stand-up-gitea-mq.ts"]);
+  assert(!stableForeign.events.includes("diagnose-s1-b1-a1"));
+  assert.equal(stableForeign.result.status, "completed-with-caveat");
+  console.log("PASS stability graph: foreign edit after review passes and is recorded; scoped drift remains covered by F3 repair/retry checks");
 
   async function findingChecks(finding) {
     if (finding === "F2") {

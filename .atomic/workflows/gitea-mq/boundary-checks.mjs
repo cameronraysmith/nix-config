@@ -1,10 +1,23 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
-import { resolve, join } from "node:path";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
-/** Exercise proposal rejection on the checkout's real filesystem, including APFS aliases. */
+/** Exercise proposal rejection in a temporary filesystem, including APFS aliases. */
 export async function runBoundaryChecks({ tools, slices }) {
-  const cwd = await fs.realpath(await fs.mkdtemp(resolve(".atomic/workflows/gitea-mq/.boundary-")));
+  const scoped = ["flake.nix", `${slices.dir}/new.md`, ...slices.varsAllowed.map((path) => `${path}/secret`)];
+  const foreign = [".atomic/workflows/stand-up-gitea-mq.ts", "logs/adr-verify/other.md", "modules/terranix/cloudflare.nix", `${slices.dir}-other/file`, `${slices.varsAllowed[0]}-other/secret`, "flake.nix.bak"];
+  for (const path of [...scoped, ...foreign]) {
+    for (const [before, after] of [[{}, { [path]: "100644:new" }], [{ [path]: "100644:old" }, {}], [{ [path]: "100644:old" }, { [path]: "100644:new" }], [{ [path]: "100644:old" }, { [path]: "100755:old" }]]) {
+      if (scoped.includes(path)) assert.throws(() => tools.assertScopedInputs(before, after, slices.s1), /Scoped inputs changed/);
+      else assert.deepEqual(tools.assertScopedInputs(before, after, slices.s1), { foreignDrift: [path] });
+    }
+  }
+  assert.deepEqual(tools.assertScopedInputs({ "flake.nix": "same" }, { "flake.nix": "same" }, slices.s1), { foreignDrift: [] });
+  assert.throws(() => tools.assertScopedInputs({}, { "flake.nix": "new", [foreign[0]]: "new" }, slices.s1), /Scoped inputs changed/);
+  assert.throws(() => tools.assertScopedInputs({}, { [slices.design]: "new" }, { ...slices.s1, allowedPaths: [] }), /Scoped inputs changed/);
+  console.log("PASS scoped apply guard: additions, deletions, content/mode drift block only current-slice/change/vars paths; foreign drift is evidence");
+  const cwd = await fs.realpath(await fs.mkdtemp(join(tmpdir(), "gitea-mq-boundary-")));
   const signal = new AbortController().signal;
   const tasks = "- [ ] 1.1 G1\n- [ ] 8.2 G2\n- [ ] 2.1 input\n- [ ] 9.1 deploy";
   const human = tools.humanBoxes(tasks);

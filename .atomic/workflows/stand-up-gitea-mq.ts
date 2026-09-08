@@ -70,12 +70,12 @@ export default workflow({
       const result = await stage(id, { ...(medium ? MEDIUM : HIGH), ...READ_ONLY, reads: [...reads, `${root}/contracts.json`, `${root}/ledger-index.json`, `${root}/bases-${id}.json`, ...artifacts, ...feedback], schema: StageOutput, prompt: replan ? p.replanPrompt(cwd, root, artifacts[0]!) : p.implementPrompt(cwd, root, slice, instructions) });
       const patch = proposalValue(StageOutput, result.structured);
       const scoped = await observe(`apply-${id}`, async (signal) => {
-        t.assertSameInputs(before.value, await t.snapshot(cwd, signal)); await t.topology(cwd, chain!, signal);
-        await t.applyStageEdits(cwd, patch.edits, slice, signal, humanBaseline, replan); return t.snapshot(cwd, signal);
+        const current = await t.snapshot(cwd, signal), { foreignDrift } = t.assertScopedInputs(before.value, current, slice); await t.topology(cwd, chain!, signal);
+        await t.applyStageEdits(cwd, patch.edits, slice, signal, humanBaseline, replan); const tree = await t.snapshot(cwd, signal); return { tree, foreignDrift, effect: repairEffect(current, tree) };
       });
       if (!scoped.ok) throw new ProposalRejected(`apply-${id}: ${JSON.stringify(scoped.error)}; ${root}/apply-${id}.json`);
       await tool(`snapshot-wc-after-${id}`, (signal) => t.snapshotWorkingCopy(cwd, signal));
-      return repairEffect(before.value, scoped.value.evidence);
+      return scoped.value.evidence.effect;
     });
     const land = async (name: string, slice: Slice, allowNoop = false, into: string | null = null): Promise<string | null> => {
       await tool(`snapshot-wc-${name}`, (signal) => t.snapshotWorkingCopy(cwd, signal));
@@ -159,7 +159,7 @@ export default workflow({
         const diff = await tool(`diff-${id}`, (signal) => t.diffArtifact(cwd, root, id, signal));
         const tree = await tool(`tree-${id}`, (signal) => t.snapshot(cwd, signal));
         const review = parse(Review, (await stage(`review-s1-${id}`, { ...MAX, ...READ_ONLY, reads: [...reads, diff.value, gate.evidence, `${root}/contracts.json`], schema: Review, prompt: p.reviewPrompt(cwd, root) })).structured);
-        await tool(`stable-${id}`, async (signal) => { t.assertSameInputs(tree.value, await t.snapshot(cwd, signal)); return { stable: true }; }, 120_000, true);
+        await tool(`stable-${id}`, async (signal) => ({ stable: true, ...t.assertScopedInputs(tree.value, await t.snapshot(cwd, signal), s1) }), 120_000, true);
         switch (review.verdict) { case "Approve": return gate; case "Reject": await persist(`rejection-${id}`, { findings: review.findings, reviewer: `${root}/review-s1-${id}.md`, diff: diff.value, gate: gate.evidence }); throw new GateFailure(id, `${root}/rejection-${id}.json`, review.findings.join("\n")); default: return unreachable(review); }
       });
       recordS1(s1Result.value, s1Result.evidence);
