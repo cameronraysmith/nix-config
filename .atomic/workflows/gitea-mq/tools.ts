@@ -101,7 +101,7 @@ export async function preflight(cwd: string, splice: string, signal: AbortSignal
   if ((await ids(cwd, `${joinId}-`, signal)).length < 2) throw new Blocked("@ parent is not a development join");
   const chain: Chain = { workingCopy, join: joinId, seed, tip: seed, changes: [] };
   await topology(cwd, chain, signal);
-  await run(cwd, "gh auth status\nclan --version", signal);
+  await run(cwd, "gh auth status\nclan vars --help", signal);
   await run(cwd, ssh("true"), signal);
   const nodes = parse(Type.Object({ nodes: Type.Record(Type.String(), Type.Unknown()) }),
     JSON.parse(await readFile(join(cwd, "flake.lock"), "utf8"))).nodes;

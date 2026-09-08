@@ -79,6 +79,8 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
     handler = (command) => command === "git symbolic-ref -q HEAD" ? observed("", 1)
       : command.startsWith("nix eval ") ? observed({ pre: null }) : observed();
     const result = await actual.preflight(repo, "ssss", signal);
+    assert(commands.includes("gh auth status\nclan vars --help"), "Preflight probes Clan with its supported vars help command");
+    assert(!commands.some((command) => command.includes("clan --version")), "Preflight must not use the unsupported Clan version flag");
     await actual.save(repo, "preflight.json", result);
     assert.deepEqual(JSON.parse(files.get(join(repo, "preflight.json"))).foreign, foreign);
     const baseline = Object.fromEntries(foreign.map((path) => [path, "100644:preexisting"]));
