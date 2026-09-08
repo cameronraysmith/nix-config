@@ -78,6 +78,15 @@ in
         proxied = false;
       };
 
+      resource.cloudflare_dns_record.mq = {
+        zone_id = config.data.cloudflare_zone.scientistexperience "id";
+        name = "mq";
+        type = "CNAME";
+        content = "magnetite.scientistexperience.net";
+        ttl = 1;
+        proxied = false;
+      };
+
       # DNS CNAME record for Gitea forge endpoint (resolves to magnetite)
       resource.cloudflare_dns_record.git = {
         zone_id = config.data.cloudflare_zone.scientistexperience "id";
