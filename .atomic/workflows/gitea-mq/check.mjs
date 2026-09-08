@@ -101,8 +101,20 @@ assert.throws(() => types.validateModelAttempts(`${types.MODEL}:high`, [{ model:
 assert.throws(() => types.validateModelAttempts(`${types.MODEL}:high`, [{ model: types.MODEL, reasoningLevel: "medium", success: true }]));
 assert.throws(() => types.validateModelAttempts(`${types.MODEL}:high`, [{ model: types.MODEL, reasoningLevel: "high", success: true }, { model: "other-provider/model", reasoningLevel: "high", success: true }]));
 assert.throws(() => types.validateModelAttempts(`${types.MODEL}:high`, undefined));
-assert.throws(() => types.assertCatalog([{ fullId: types.MODEL, availableThinkingLevels: ["high", "medium"] }]));
-types.assertCatalog([{ fullId: types.MODEL, availableThinkingLevels: ["high", "medium", "max"] }]);
+for (const models of [undefined, null, false, "catalog", {}, { listModels: [] }]) {
+  assert.equal(types.catalogPort({ models }), undefined);
+}
+assert.equal(types.catalogPort({}), undefined);
+const modelPort = { listModels() { assert.equal(this, modelPort); return []; } };
+assert.equal(types.catalogPort({ models: modelPort }), modelPort);
+assert.deepEqual(types.catalogPort({ models: modelPort }).listModels(), []);
+const astraCatalog = [{ provider: "openai-codex", id: "gpt-6-astra", fullId: types.MODEL }];
+assert.doesNotThrow(() => types.assertCatalog(astraCatalog));
+assert.doesNotThrow(() => types.assertCatalog([{ ...astraCatalog[0], model: { id: "gpt-6-astra" } }]));
+assert.throws(() => types.assertCatalog([{ provider: "openai-codex", id: "other", fullId: "openai-codex/other" }]), /absent from configured catalog/);
+assert.doesNotThrow(() => types.assertCatalog([{ ...astraCatalog[0], availableThinkingLevels: ["high", "medium", "max"] }]));
+assert.doesNotThrow(() => types.assertCatalog([{ ...astraCatalog[0], availableThinkingLevels: [] }]));
+console.log("PASS catalog: real WorkflowModelInfo shape, absent Astra blocks, extra thinking metadata is not enforced");
 assert.equal(slices.varsAllowed.length, 2);
 const plan = { resource_changes: [{ mode: "managed", type: "cloudflare_dns_record", address: "cloudflare_dns_record.mq", change: { actions: ["create"], after: { name: "mq.scientistexperience.net", type: "CNAME", content: "magnetite.scientistexperience.net", proxied: false } } }] };
 assert.equal(tools.dnsSummary(plan).name, "mq.scientistexperience.net");

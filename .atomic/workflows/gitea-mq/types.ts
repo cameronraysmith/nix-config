@@ -1,3 +1,4 @@
+import type { WorkflowModelCatalogPort, WorkflowModelInfo, WorkflowRunContext } from "@bastani/atomic/workflows";
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { Blocked, unreachable, type Witness } from "../bump/types.js";
@@ -200,14 +201,20 @@ export function parse<T extends TSchema>(schema: T, value: unknown): Static<T> {
   if (!Value.Check(schema, value)) throw new Blocked("Malformed structured value");
   return value;
 }
-export function assertCatalog(catalog: unknown): void {
+// Atomic 0.9.18 exposes this runtime port but omits it from WorkflowRunContext.
+export function catalogPort(ctx: WorkflowRunContext): WorkflowModelCatalogPort | undefined {
+  const models = (ctx as { models?: unknown }).models;
+  if (typeof models !== "object" || models === null || !("listModels" in models) || typeof models.listModels !== "function") return undefined;
+  return models as WorkflowModelCatalogPort;
+}
+export function assertCatalog(catalog: readonly WorkflowModelInfo[]): void {
   const schema = Type.Array(Type.Object({
+    provider: Type.String(),
+    id: Type.String(),
     fullId: Type.String(),
-    availableThinkingLevels: Type.Array(Type.String()),
-  }));
+  }, { additionalProperties: true }));
   const rows = parse(schema, catalog);
-  const model = rows.find((row) => row.fullId === MODEL);
-  if (!model || !["high", "medium", "max"].every((level) => model.availableThinkingLevels.includes(level))) {
-    throw new Blocked("Astra high/medium/max absent from configured catalog; no substitution permitted");
+  if (!rows.some((row) => row.fullId === MODEL)) {
+    throw new Blocked("Astra absent from configured catalog; no substitution permitted");
   }
 }

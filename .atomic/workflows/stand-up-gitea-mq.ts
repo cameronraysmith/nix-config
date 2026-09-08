@@ -3,7 +3,7 @@ import { join } from "node:path";
 import process from "node:process";
 import { workflow, type WorkflowSerializableValue, type WorkflowTaskOptions } from "@bastani/atomic/workflows";
 import { Blocked, witness, unreachable, type Witness } from "./bump/types.js";
-import { inputs, outputs, HIGH, MEDIUM, MAX, READ_ONLY, StageOutput, VerifyDraft, Diagnosis, Review, RulesetDraft, AppReply, parse, assertCatalog, validateModelPolicy, validateModelAttempts, nextBatch, completedRun, batches, attemptsFor, normalizeToolOutcome, type Validation } from "./gitea-mq/types.js";
+import { inputs, outputs, HIGH, MEDIUM, MAX, READ_ONLY, StageOutput, VerifyDraft, Diagnosis, Review, RulesetDraft, AppReply, parse, assertCatalog, catalogPort, validateModelPolicy, validateModelAttempts, nextBatch, completedRun, batches, attemptsFor, normalizeToolOutcome, type Validation } from "./gitea-mq/types.js";
 import { Validation as ValidationSchema } from "./gitea-mq/types.js";
 import { tasks, design, verify, reads, s1, postG1, s2, s4, docs, report, negativeControls, type Slice } from "./gitea-mq/slices.js";
 import * as t from "./gitea-mq/tools.js";
@@ -142,10 +142,10 @@ export default workflow({
     };
     try {
       const initial = await tool("preflight", async (signal) => {
-        const models = (ctx as typeof ctx & { models?: { listModels(): Promise<unknown> } }).models;
+        const models = catalogPort(ctx);
         const catalog = models ? await models.listModels() : null;
+        await t.save(cwd, `${root}/model-catalog.json`, catalog ?? { note: "Model catalog port unavailable; native resolution and post-call model/thinking rejection apply. Implicit host fallback risk accepted by operator." });
         if (catalog !== null) assertCatalog(catalog);
-        await t.save(cwd, `${root}/model-catalog.json`, catalog ?? { note: "WorkflowRunContext has no catalog port; native resolution and post-call model/thinking rejection apply. Implicit host fallback risk accepted by operator." });
         return t.preflight(cwd, input.splice_after, signal);
       }, timeout);
       chain = initial.value.chain;

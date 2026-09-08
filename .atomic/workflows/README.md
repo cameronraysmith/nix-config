@@ -135,7 +135,7 @@ The controlling session owns registry reload and launch; live replay, worktree e
 
 `stand-up-gitea-mq.ts` authors the CAM-56 graph: preflight → proposed Nix patches/controller validation/evaluation/fresh review/routing → G1 App and credential witnesses → dedicated App-id/vars route → quarantined DNS candidate/content-pin/saved plan/apply/dig/acceptance → G2 approved ruleset PUT/readback → optional pinned deployment → V2/V3/V6/V9 observations and scratch rollback evaluation → documentation → deterministic verify.md → terminal roborev.
 Linear T2/T3 tools are best-effort, retain separate command outcomes, post comments via `--body-file <artifact> --workspace cameronraysmith`, and route proposal frontmatter updates with the relevant changes.
-Atomic 0.9.18's public `WorkflowRunContext` has no model-catalog port, although `RunOpts` does; absent catalog metadata does not block preflight, by explicit operator decision.
+Atomic 0.9.18 supplies a model catalog at runtime, but the installed public `WorkflowRunContext` declaration omits `models` (`RunOpts` declares it as optional). A narrow `catalogPort` compatibility guard accepts an object with a `listModels` function without augmenting Atomic declarations. `listModels()` returns readonly entries with `provider`, `id`, `fullId`, and optional `model`, not thinking-level metadata. An unavailable catalog port does not block preflight, by explicit operator decision.
 The host can implicitly fall back to its controller model before the workflow can inspect the attempt; this risk is accepted, not prevented by an empty fallback list.
 After every stage and before using its output, the workflow records actual model/thinking metadata and rejects off-policy attempts or missing metadata with a blocked exit.
 The latest author report, `logs/adr-verify/workflow-author-report-6.md`, records closure evidence and remaining launch limitations; prior limitations remain unless explicitly superseded.
@@ -156,7 +156,7 @@ Run evidence lives outside the repository, under `$XDG_STATE_HOME/atomic/gitea-m
 Build, deployment and Terraform commands stream to disk with only an 8 KiB diagnostic tail in memory; parsed command responses fail beyond 1 MiB, and parsed artifact reads are bounded too.
 
 All model stages request only `openai-codex/gpt-6-astra`: high for implement/repair/replan/diagnose, medium for render/docs/verify-writer, and max for reviewers.
-When a catalog port is available, missing required levels blocks; otherwise native stage resolution is used, with the accepted implicit-fallback risk and mandatory post-call rejection above.
+Preflight saves the catalog to `model-catalog.json` before validation. When the port is available, absence of `openai-codex/gpt-6-astra` blocks; extra catalog properties are allowed and thinking levels are not validated there. Otherwise native stage resolution is used, with the accepted implicit-fallback risk and mandatory post-call model/thinking rejection above.
 Role constraints, paths, failed gate/receipt identifiers, review acceptance criteria and ruleset requirements are protected with `<keepContext>`; structured stage outputs use TypeBox schemas and exhaustive constructor switches.
 Diagnosis/replan artifacts travel through stage `reads`, not inline JSON; an S1 rejection receipt retains findings, reviewer artifact and diff path.
 Completion requires four branded tool witnesses for implemented changes, deployment, validation results, and report writing; blocked/declined exits expose no positive technical claims.

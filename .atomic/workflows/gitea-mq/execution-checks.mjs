@@ -11,7 +11,7 @@ const dataUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).toStr
 export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, slices, ledgerTools, assertCompactCheckpoint }) {
   const { s1Coverage } = await import(moduleUrl(".atomic/workflows/gitea-mq/s1-observations.ts"));
   const report = await import(moduleUrl(".atomic/workflows/gitea-mq/verify-report.ts"));
-  async function execute({ declineG2 = false, decline = "", rejectS1 = false, revisePlan = false, createFailure = false, cleanupFailure = false, exhaust = false, replay = false, probeFailure = false, repairNix = false, v3Failure = false, repairEvalFailure = false, dnsReject = false, dnsRejectOnce = false, rejectRoborev = false, throwExit = false, noHostnameEdit = false, proposalFailure = "", extraClaims = false, transientFailure = false, resumeFailure = false, unexpected = "", wrongRules = "", drift = "", structuralFailure = "", nativeFailure = "", nativeMessage = "", tokenDirectory = "", terminalRecordFailure = false, postMintFailure = false } = {}) {
+  async function execute({ declineG2 = false, decline = "", rejectS1 = false, revisePlan = false, createFailure = false, cleanupFailure = false, exhaust = false, replay = false, probeFailure = false, repairNix = false, v3Failure = false, repairEvalFailure = false, dnsReject = false, dnsRejectOnce = false, rejectRoborev = false, throwExit = false, noHostnameEdit = false, proposalFailure = "", extraClaims = false, transientFailure = false, resumeFailure = false, unexpected = "", wrongRules = "", drift = "", structuralFailure = "", nativeFailure = "", nativeMessage = "", tokenDirectory = "", terminalRecordFailure = false, postMintFailure = false, catalog } = {}) {
     const files = new Map();
     const events = [];
     const cache = new Map();
@@ -205,6 +205,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
     };
     const context = {
       cwd,
+      models: catalog === undefined ? undefined : { listModels() { return catalog; } },
       inputs: { change: types.change, splice_after: "ssss", deploy: true, max_repair_attempts: 2, build_timeout_minutes: 1 },
       tool: (name, args, action, options) => durable(`tool:${name}`, args, async () => {
         callbacks++; events.push(name);
@@ -433,6 +434,18 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
   await tokenLifecycleChecks();
   for (const finding of ["F2", "F3", "F4"]) await findingChecks(finding);
 
+  const astra = { provider: "openai-codex", id: "gpt-6-astra", fullId: types.MODEL };
+  for (const catalog of [[astra], [{ ...astra, availableThinkingLevels: [] }], [{ ...astra, fullId: "openai-codex/other" }]]) {
+    const run = await execute({ catalog });
+    assert.deepEqual(JSON.parse(run.files.get(join(run.cwd, run.root, "model-catalog.json"))), catalog);
+    if (catalog[0].fullId === types.MODEL) assert.equal(run.result.status, "completed-with-caveat", run.result.summary);
+    else {
+      assert.equal(run.result.status, "blocked");
+      assert.match(run.result.summary, /Astra absent from configured catalog/);
+      assert(!run.events.includes("route-s1"));
+    }
+  }
+  console.log("PASS preflight catalog evidence: real and legacy shapes pass; missing Astra records then blocks");
   const success = await execute();
   assert.equal(success.result.status, "completed-with-caveat", success.result.summary);
   assert.equal(success.result.deployed, true);
