@@ -1,0 +1,88 @@
+{ inputs, ... }:
+{
+  flake.modules.nixos.omnigent-host =
+    {
+      config,
+      lib,
+      pkgs,
+      ...
+    }:
+    let
+      cfg = config.services.omnigent-host;
+      userHome = config.users.users.${cfg.user}.home;
+      system = pkgs.stdenv.hostPlatform.system;
+      hostEnvironment = cfg.environment // {
+        HOME = userHome;
+      };
+    in
+    {
+      options.services.omnigent-host = {
+        enable = lib.mkEnableOption "the foreground Omnigent host";
+        package = lib.mkPackageOption pkgs "omnigent" { };
+        serverUrl = lib.mkOption {
+          type = lib.types.str;
+          description = "HTTPS URL of the Omnigent server.";
+        };
+        user = lib.mkOption {
+          type = lib.types.str;
+          default = "cameron";
+          description = "Existing Unix account holding runner and vendor credentials.";
+        };
+        hostName = lib.mkOption {
+          type = lib.types.str;
+          default = config.networking.hostName;
+          description = "Fleet name for the unit description and operator-seeded host.name in ~/.omnigent/config.yaml.";
+        };
+        extraPackages = lib.mkOption {
+          type = lib.types.listOf lib.types.package;
+          default = [ ];
+          description = "Additional packages on the host and runner PATH.";
+        };
+        environment = lib.mkOption {
+          type = lib.types.attrsOf lib.types.str;
+          default = { };
+          description = "Non-secret environment values forwarded to the foreground host.";
+        };
+      };
+
+      config = lib.mkIf cfg.enable {
+        systemd.services.omnigent-host = {
+          description = "Omnigent host ${cfg.hostName}";
+          wantedBy = [ "multi-user.target" ];
+          after = [ "network-online.target" ];
+          wants = [ "network-online.target" ];
+          path = [
+            inputs.self.packages.${system}.claude-code
+            inputs.self.packages.${system}.atomic
+            inputs.llm-agents.packages.${system}.codex
+            inputs.llm-agents.packages.${system}.pi
+            pkgs.bun
+            pkgs.nodejs_22
+            pkgs.tmux
+            pkgs.git
+            pkgs.uv
+            pkgs.bubblewrap
+          ]
+          ++ cfg.extraPackages;
+          environment = hostEnvironment;
+          serviceConfig = {
+            Type = "simple";
+            Environment = lib.mapAttrsToList (name: value: builtins.toJSON "${name}=${value}") hostEnvironment;
+            ExecStart = lib.escapeShellArgs [
+              (lib.getExe cfg.package)
+              "host"
+              "--server"
+              cfg.serverUrl
+            ];
+            User = cfg.user;
+            WorkingDirectory = userHome;
+            Restart = "on-failure";
+            RestartSec = 5;
+            MemoryHigh = "6G";
+            MemoryMax = "8G";
+            NoNewPrivileges = true;
+          };
+        };
+      };
+    };
+}
