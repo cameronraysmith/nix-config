@@ -36,8 +36,9 @@ import { taskLedger, humanBoxes, assertHumanBoxes } from "./proposal-edits.js";
 export { applyStageEdits, assertTaskScope, taskLedger, humanBoxes, assertHumanBoxes } from "./proposal-edits.js";
 /** Resolve protected identities locally; shared deployment code receives only a commit ID. */
 const changeSha = async (cwd: string, revision: string, signal: AbortSignal) => (await oneRevision(cwd, revision, signal)).commitId;
-const resolveRevisionSource = async (cwd: string, revision: string, name: string, signal: AbortSignal) => sharedRevisionSource(cwd, await changeSha(cwd, revision, signal), name, signal, capture);
-export const resolveSource = async (cwd: string, tip: string, name: string, signal: AbortSignal) => sharedResolveSource(cwd, await changeSha(cwd, tip, signal), name, signal, capture);
+const deploymentCapture = (cwd: string, command: string, signal: AbortSignal) => capture(cwd, command, signal);
+const resolveRevisionSource = async (cwd: string, revision: string, name: string, signal: AbortSignal) => sharedRevisionSource(cwd, await changeSha(cwd, revision, signal), name, signal, deploymentCapture);
+export const resolveSource = async (cwd: string, tip: string, name: string, signal: AbortSignal) => sharedResolveSource(cwd, await changeSha(cwd, tip, signal), name, signal, deploymentCapture);
 export const runStreaming = async (cwd: string, command: string, signal: AbortSignal) => requireSuccess(await captureStreaming(cwd, command, signal));
 /** Only inputs owned by this slice (plus shared change/vars inputs) invalidate a proposal. */
 export function assertScopedInputs(before: Tree, after: Tree, slice: Slice): { foreignDrift: string[] } {
@@ -469,13 +470,24 @@ export async function s1Gate(cwd: string, baselineLock: string, baseline: unknow
 }
 const appPemVar = "gitea-mq-github-app-secret-key/key.pem";
 const webhookVar = "gitea-mq-github-webhook-secret/secret";
-/** Installed Clan Var.__str__: `generator/file: ********` or `: <not set>`.
- * Help describes key/value rows but omits the literal colon. Unknown formats,
- * duplicate rows and omitted targets are not proof that a secret is missing. */
+/** Keep only target statuses, never values. Malformed target rows remain invalid
+ * and duplicates remain duplicated so redaction cannot turn ambiguity into proof. */
+export function redactCredentialListing(listing: string): string {
+  return listing.split(/\r?\n/).flatMap((line) => {
+    const name = [appPemVar, webhookVar].find((name) => line.startsWith(name)
+      && (line.length === name.length || /^[:\s]/.test(line.slice(name.length))));
+    if (!name) return [];
+    const field = line.slice(name.length);
+    const value = field.startsWith(": ") ? field.slice(2).trim() : "";
+    return [`${name}: ${value === "<not set>" ? value : value ? "********" : ""}`];
+  }).join("\n");
+}
+/** Only explicit unset target rows authorize generation; absence fails closed. */
 export function parseCredentialListing(listing: string) {
   const entries = new Map<string, string>();
-  for (const line of listing.trim().split("\n")) {
-    const row = /^([^\s/:]+\/[^\s:]+): (.*)$/.exec(line);
+  for (const line of redactCredentialListing(listing).split("\n")) {
+    if (!line) continue;
+    const row = /^([^:]+): (.*)$/.exec(line);
     if (!row || entries.has(row[1]!)) throw new Blocked("Unparseable vars list; generation is unsafe");
     entries.set(row[1]!, row[2]!);
   }
@@ -489,7 +501,8 @@ export function parseCredentialListing(listing: string) {
 }
 async function observeCredentialListing(cwd: string, signal: AbortSignal) {
   const command = "CLAN_NO_COMMIT=1 clan vars list magnetite";
-  const result = await capture(cwd, command, signal);
+  const result = await capture(cwd, command, signal, (stream, output) =>
+    stream === "stdout" ? redactCredentialListing(output) : "[vars list diagnostics withheld]");
   return { command, receipt: result.logPath.replace(/\.log$/, ".json"), value: parseCredentialListing(requireSuccess(result)) };
 }
 type ClanRevision = { changeId: string; commitId: string };
@@ -556,7 +569,7 @@ export async function generateVars(cwd: string, chain: Chain, signal: AbortSigna
   let verification: Awaited<ReturnType<typeof observeCredentialListing>>;
   try {
     observation = await observeCredentialListing(cwd, signal);
-    if (observation.value.appPem !== "already-present") throw new Blocked("App PEM must be supplied by the operator; workflow never generates or sets it");
+    if (observation.value.appPem !== "already-present") throw new Blocked("App PEM must be supplied by the operator; run CLAN_NO_COMMIT=1 clan vars set magnetite gitea-mq-github-app-secret-key/key.pem; workflow never generates or sets it");
     verification = observation;
     if (observation.value.webhookSecret === "missing") {
       // Also avoid regeneration if another operator populates it after our list.

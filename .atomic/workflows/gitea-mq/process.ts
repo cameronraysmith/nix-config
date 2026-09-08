@@ -54,7 +54,8 @@ export class OutputBuffer {
     this[stream] += data;
   }
 }
-async function execute(cwd: string, command: string, signal: AbortSignal, streaming: boolean): Promise<Observation> {
+type OutputRedactor = (stream: "stdout" | "stderr", output: string) => string;
+async function execute(cwd: string, command: string, signal: AbortSignal, streaming: boolean, redact?: OutputRedactor): Promise<Observation> {
   signal.throwIfAborted();
   const state = context.getStore();
   if (!state) throw new Blocked("Process capture requires a durable process checkpoint");
@@ -78,7 +79,9 @@ async function execute(cwd: string, command: string, signal: AbortSignal, stream
     if (signal.aborted) terminate();
     for (const stream of ["stdout", "stderr"] as const) child[stream].setEncoding("utf8").on("data", (data: string) => {
       try {
-        appendFileSync(resolve(cwd, logPath), data);
+        // Sensitive responses stay bounded in memory until projection. No raw
+        // chunk (including stderr or a split row) may reach any artifact.
+        if (!redact) appendFileSync(resolve(cwd, logPath), data);
         if (!failure) buffer.append(stream, data);
       } catch (error) { failure ??= error as Error; terminate(); }
     });
@@ -90,6 +93,15 @@ async function execute(cwd: string, command: string, signal: AbortSignal, stream
       done();
     });
   });
+  if (redact) {
+    // On interruption/overflow discard partial rows rather than minting a
+    // populated status from a truncated value. Also never retain a raw tail.
+    const stdout = failure || signal.aborted ? "" : redact("stdout", buffer.stdout);
+    const stderr = failure || signal.aborted ? "[vars list output withheld]" : redact("stderr", buffer.stderr);
+    buffer.stdout = stdout; buffer.stderr = stderr;
+    buffer.tail = Buffer.from(`${stdout}\n${stderr}`).subarray(-tailLimit).toString("utf8");
+    appendFileSync(resolve(cwd, logPath), `${stdout}\n${stderr}`);
+  }
   Object.assign(observation, { stdout: buffer.stdout, stderr: buffer.stderr, tail: buffer.tail });
   observation.state = signal.aborted ? "interrupted" : failure ? "failed" : "exited";
   const receipt = processReceipt(observation);
@@ -102,7 +114,7 @@ async function execute(cwd: string, command: string, signal: AbortSignal, stream
   }
   return observation;
 }
-export const capture = (cwd: string, command: string, signal: AbortSignal) => execute(cwd, command, signal, false);
+export const capture = (cwd: string, command: string, signal: AbortSignal, redact?: OutputRedactor) => execute(cwd, command, signal, false, redact);
 export const captureStreaming = (cwd: string, command: string, signal: AbortSignal) => execute(cwd, command, signal, true);
 export async function readResponse(path: string): Promise<string> {
   const file = await open(path, "r");

@@ -10,7 +10,7 @@ export async function runVarsChecks({ actual, mock, files, cwd, signal, setHandl
   for (const path of [join(cwd, varsAllowed[0], "key.pem/secret"), secretFile]) files.set(path, envelope);
   const sha = (digit) => digit.repeat(40);
   const chain = { workingCopy: "wwww", join: "rrrr", seed: "ssss", tip: "ssss", changes: [] };
-  async function fixture({ listing = `${app}: ********\n${webhook}: ********`, drift = "", fails = false } = {}) {
+  async function fixture({ listing = `${app}: ********\n${webhook}: ********`, drift = "", fails = false, listExit = 0 } = {}) {
     let after = false, lists = 0, generated = 0;
     const start = mock.commands.length;
     mock.oneId = async (_cwd, rev) => {
@@ -42,7 +42,7 @@ export async function runVarsChecks({ actual, mock, files, cwd, signal, setHandl
       if (command.startsWith("jj --ignore-working-copy log") && command.includes("parents.map")) return observation(after && drift === "parentage" ? `${sha("2")},${sha("1")}` : sha("2"));
       if (command === "CLAN_NO_COMMIT=1 clan vars list magnetite") {
         lists++; after = true;
-        return observation(generated ? `${app}: ********\n${webhook}: ********` : listing, "vars-list.log");
+        return { ...observation(generated ? `${app}: ********\n${webhook}: ********` : listing, "vars-list.log"), exitCode: listExit };
       }
       if (command.startsWith("CLAN_NO_COMMIT=1 clan vars generate magnetite --generator gitea-mq-github-webhook-secret")) {
         generated++; after = true;
@@ -92,7 +92,19 @@ export async function runVarsChecks({ actual, mock, files, cwd, signal, setHandl
     assert(!commands.some((command) => /vars (set|get)/.test(command) || command.includes("--generator gitea-mq-github-app-secret-key")));
     console.log("PASS vars missing: explicit <not set> generates webhook only with --no-regenerate, then verifies a fresh listing");
 
-    for (const listing of ["", "garbled output", `${app}: ********`, `${app}: ********\n${webhook} ********`, `${app}: ********\n${webhook}: false`, `${app}: ********\n${webhook}: ********\n${webhook}: <not set>`, `${app}: ********\n${webhook}: <not set>\nunknown`, `${app}: <not set>\n${webhook}: <not set>`]) {
+    for (const extra of ["emergency-access/password-hash: $6$XwaqNZ-public-value", "unrelated garbled text\nunknown: \nunknown: duplicate"]) {
+      run = await fixture({ listing: `${app}: real-app-value\n${webhook}: false\n${extra}` });
+      assert.equal((await run.result).webhookSecret.status, "already-present");
+      assert.equal(run.stats().generated, 0);
+    }
+    run = await fixture({ listExit: 1 });
+    await assert.rejects(() => run.result, /exit 1/);
+    assert.equal(run.stats().generated, 0);
+    run = await fixture({ listing: `${app}: <not set>\n${webhook}: <not set>` });
+    await assert.rejects(() => run.result, /CLAN_NO_COMMIT=1 clan vars set magnetite gitea-mq-github-app-secret-key\/key.pem/);
+    assert.equal(run.stats().generated, 0);
+    console.log("PASS vars target scope: unrelated real/garbled values ignored; non-empty targets skip generation; nonzero list and unset PEM block");
+    for (const listing of ["", "garbled output", `${app}: ********`, `${app}: ********\n${webhook} ********`, `${app}: ********\n${webhook}: `, `${app}: ********\n${webhook}:   `, `${app}: ********\n${webhook}:********`, `${app}: ********\n${webhook}: ********\n${webhook}: <not set>`, `${app}: ********\n${app}: ********\n${webhook}: ********`]) {
       run = await fixture({ listing });
       await assert.rejects(() => run.result, /[Vv]ars list|App PEM/);
       assert.equal(run.stats().generated, 0);

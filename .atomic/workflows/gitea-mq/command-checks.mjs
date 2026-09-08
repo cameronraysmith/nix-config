@@ -45,10 +45,15 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
     assertHealthy: async () => {},
     oneId: async (_cwd, revset) => revset === "@-" || revset.includes("+ & ") ? "rrrr" : "ssss",
     ids: async () => ["ssss"],
-    capture: async (_cwd, command, actualSignal) => {
+    capture: async (_cwd, command, actualSignal, redact) => {
       assert.equal(actualSignal, signal, "Every command forwards the cancellation signal");
       commands.push(command);
-      return handler(command);
+      const result = handler(command);
+      if (command === "CLAN_NO_COMMIT=1 clan vars list magnetite") {
+        assert.equal(typeof redact, "function", "Vars observations must redact before capture persists output");
+        return { ...result, stdout: redact("stdout", result.stdout), stderr: redact("stderr", result.stderr) };
+      }
+      return result;
     },
     snapshot: async () => ({}),
     save: async (_cwd, path, value) => files.set(join(_cwd, path), JSON.stringify(value)),

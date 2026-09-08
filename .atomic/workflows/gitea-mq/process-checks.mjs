@@ -74,5 +74,42 @@ export async function runProcessChecks({ ts, moduleUrl }) {
   response = "x".repeat(processTools.responseLimit + 1);
   await assert.rejects(() => actual.readResponse("/response"), /byte limit/);
   console.log("PASS F8/F3: disk-only streaming, bounded failing responses, finite tails and inherited Clan no-commit environment");
+  const { redactCredentialListing, parseCredentialListing } = await import(moduleUrl(".atomic/workflows/gitea-mq/tools.ts"));
+  const app = "gitea-mq-github-app-secret-key/key.pem", webhook = "gitea-mq-github-webhook-secret/secret";
+  const markers = ["$6$XwaqNZ-sensitive-public-hash", "raw-app-value", "raw-webhook-value", "raw-diagnostic-value"];
+  const artifacts = [];
+  globalThis.__mqProcessMock.appendFileSync = (path, data) => artifacts.push({ path, data });
+  globalThis.__mqProcessMock.writeFile = async (path, data) => artifacts.push({ path, data });
+  globalThis.__mqProcessMock.save = async (_cwd, path, data) => artifacts.push({ path, data });
+  let exitCode = 0, overflow = false;
+  globalThis.__mqProcessMock.spawn = () => {
+    const child = new EventEmitter();
+    for (const stream of ["stdout", "stderr"]) { child[stream] = new EventEmitter(); child[stream].setEncoding = () => child[stream]; }
+    queueMicrotask(() => {
+      const listing = `emergency-access/password-hash: ${markers[0]}\n${app}: ${markers[1]}\n${webhook}: ${markers[2]}`;
+      // Split every character, including target names and values.
+      for (const char of listing) child.stdout.emit("data", char);
+      child.stderr.emit("data", markers[3]);
+      if (overflow) child.stdout.emit("data", "x".repeat(processTools.responseLimit + 1));
+      child.emit("close", exitCode, null);
+    });
+    return child;
+  };
+  const observe = () => actual.processCheckpoint("../evidence", "generate-vars", () => actual.capture("/mock", "CLAN_NO_COMMIT=1 clan vars list magnetite", signal,
+    (stream, output) => stream === "stdout" ? redactCredentialListing(output) : "[vars list diagnostics withheld]")
+    .then((result) => ({ exitCode: result.exitCode, statuses: parseCredentialListing(result.stdout) })));
+  const projected = await observe();
+  assert.deepEqual(projected.evidence.statuses, { appPem: "already-present", webhookSecret: "already-present" });
+  exitCode = 1;
+  assert.equal((await observe()).evidence.exitCode, 1);
+  overflow = true;
+  await assert.rejects(observe, (error) => {
+    for (const marker of markers) assert(!String(error).includes(marker));
+    return /exceeded/.test(String(error));
+  });
+  assert(artifacts.some(({ path }) => path.endsWith(".log")));
+  assert(artifacts.some(({ path }) => path.endsWith(".json")));
+  for (const marker of markers) assert(!JSON.stringify(artifacts).includes(marker), `Raw value leaked to artifact: ${marker}`);
+  console.log("PASS vars artifacts: target statuses only; no raw values in any log/receipt write, including split chunks, nonzero exit and overflow");
   delete globalThis.__mqProcessMock;
 }
