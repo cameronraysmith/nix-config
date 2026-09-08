@@ -680,11 +680,16 @@ export async function observeApp(cwd: string, root: string, reply: AppReply, tok
   const app = parse(App, await json(cwd, `gh api ${quote(`/apps/${reply.slug}`)}`, signal));
   const nixbot = parse(App, await json(cwd, "gh api /apps/sciexp-nixbot", signal));
   const permissions = { administration: "write", checks: "write", contents: "write", metadata: "read", pull_requests: "write", statuses: "read" };
-  if (app.id !== reply.id || app.id === 4743700 || app.slug !== reply.slug || !isDeepStrictEqual(app.permissions, permissions) || !isDeepStrictEqual([...app.events].sort(), ["pull_request", "check_run", "status", "installation", "installation_repositories"].sort())) throw new Blocked("Queue App differs from G1 contract");
+  const requiredSubscribedEvents = ["check_run", "pull_request", "status"];
+  // GitHub delivers these to every App automatically; they cannot be subscribed to.
+  const automaticallyDeliveredEvents = ["installation", "installation_repositories"];
+  const eventContract = { requiredSubscribedEvents, automaticallyDeliveredEvents,
+    extraSubscribedEvents: app.events.filter((event) => !requiredSubscribedEvents.includes(event)) };
+  if (app.id !== reply.id || app.id === 4743700 || app.slug !== reply.slug || !isDeepStrictEqual(app.permissions, permissions) || !requiredSubscribedEvents.every((event) => app.events.includes(event))) throw new Blocked("Queue App differs from G1 contract");
   if (nixbot.id !== 4743700 || !isDeepStrictEqual(nixbot.permissions, { checks: "write", contents: "read", members: "read", metadata: "read", pull_requests: "read" }) || !isDeepStrictEqual([...nixbot.events].sort(), ["check_run", "check_suite", "pull_request", "push"].sort())) throw new Blocked("sciexp-nixbot registration changed");
   if (token !== null && token.appId !== reply.id) throw new Blocked("G1 token identity differs");
   const installation = token === null ? { kind: "NotRun" as const, reason: DEFERRED_INSTALLATION_REASON } : await readInstallation(cwd, token, signal);
-  await save(cwd, `${root}/app.json`, { app, nixbot, installation });
+  await save(cwd, `${root}/app.json`, { app, nixbot, installation, eventContract });
   return { id: app.id, slug: app.slug, owner: app.owner.login, installation, evidence: `${root}/app.json` };
 }
 export const leakScript = `import os,json,subprocess,sys

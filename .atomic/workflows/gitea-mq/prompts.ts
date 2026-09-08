@@ -37,7 +37,7 @@ Name: sciexp-gitea-mq. Owner: sciexp. Visibility: public (operator may choose ow
 Homepage: https://${domain}/
 Webhook URL: https://${domain}/webhook/github (leave secret blank; service sets both at startup).
 Repository permissions: Contents read & write, Administration read & write, Checks read & write, Pull requests read & write, Commit statuses read, Metadata read.
-Events: pull_request, check_run, status, installation, installation_repositories.
+Subscribed events: check_run, pull_request, status. GitHub automatically delivers installation and installation_repositories to every App; they cannot be subscribed to and must not be required in the API events array.
 Generate/download the App PEM and run interactively, outside workflow logs:
   CLAN_NO_COMMIT=1 clan vars set magnetite gitea-mq-github-app-secret-key/key.pem
 The workflow will run:

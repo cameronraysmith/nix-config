@@ -63,7 +63,7 @@ Each forge credential the merge queue uses SHALL reach it as a systemd credentia
 
 ### Requirement: The forge application holds exactly the queue's permission and event set
 
-The forge application the merge queue acts through SHALL hold repository permissions Contents read and write, Administration read and write, Checks read and write, Pull requests read and write, Commit statuses read, and Metadata read, SHALL subscribe to the events `pull_request`, `check_run`, `status`, `installation`, and `installation_repositories`, and SHALL be a registration distinct from the build service's.
+The forge application the merge queue acts through SHALL hold repository permissions Contents read and write, Administration read and write, Checks read and write, Pull requests read and write, Commit statuses read, and Metadata read, SHALL configure subscriptions to `check_run`, `pull_request`, and `status`, and SHALL be a registration distinct from the build service's. GitHub automatically delivers `installation` and `installation_repositories` to every App; these cannot be subscribed to and SHALL NOT be required in the API `events` array.
 The application SHALL be installed on `cameronraysmith/vanixiets` alone, and the machine SHALL retain `github.repos = [ "cameronraysmith/vanixiets" ]` as additive explicit registration, not an exclusion filter.
 Installation scope supplies confinement and is externally maintained forge state, not a restriction enforced by this NixOS configuration.
 Before deployment authorization, verification SHALL establish the one-repository installation scope through complete enumeration of all App installations and the repositories available to each, with pagination where applicable, or equivalent complete operator-page evidence.
@@ -72,7 +72,7 @@ The target-repository installation endpoint alone cannot establish exclusivity; 
 #### Scenario: The application is read on the forge
 
 - **WHEN** the forge application's registration is read through the forge's API
-- **THEN** its permissions and events are exactly the sets above, and its numeric id differs from the build service's application id
+- **THEN** its permissions are exactly the set above, its `events` array contains all three required subscribable events (extra reported entries SHALL be recorded without blocking; any missing required event SHALL block), automatic installation deliveries are recorded separately, and its numeric id differs from the build service's application id
 
 #### Scenario: The application is installed more broadly than intended
 

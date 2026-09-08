@@ -51,7 +51,8 @@ Homepage:     https://mq.scientistexperience.net/
 Webhook URL:  https://mq.scientistexperience.net/webhook/github  (secret: leave blank; the service sets both at startup)
 Repository permissions: Contents read & write, Administration read & write, Checks read & write,
                         Pull requests read & write, Commit statuses read, Metadata read
-Subscribed events:      pull_request, check_run, status, installation, installation_repositories
+Subscribed events:      check_run, pull_request, status
+Automatically delivered by GitHub to every App: installation, installation_repositories (cannot be subscribed to; never required in the API events array)
 After creating: generate a private key on the App's settings page and download the PEM, then
   clan vars set magnetite gitea-mq-github-app-secret-key/key.pem     # paste the PEM at the prompt
 Webhook secret: nothing to do; Task 3 generates it and the service pushes it to the App.
@@ -65,7 +66,7 @@ The `clan vars set` command only works once Task 4 has declared the generator an
 - [ ] **Step 2: Confirm the registration (tasks.md 1.2)**
 
 Run: `gh api /apps/<slug> --jq '{id,slug,owner:.owner.login,permissions,events}' 2>&1 | tee logs/gitea-mq-app-$(date +%Y%m%d-%H%M%S).log`
-Expected: `permissions` equal to `{administration: write, checks: write, contents: write, metadata: read, pull_requests: write, statuses: read}`, `events` equal to the five, `id` not `4743700`. Record in verify.md.
+Expected: `permissions` equal to `{administration: write, checks: write, contents: write, metadata: read, pull_requests: write, statuses: read}`, `events` contains the three configured subscribable events `check_run`, `pull_request`, `status`, `id` not `4743700`. Record extra reported events without blocking unless a required event is missing. Record `installation` and `installation_repositories` as automatically delivered by GitHub, not subscribable or required in `events`. Record in verify.md.
 
 - [ ] **Step 3: Record the installation selection (tasks.md 1.3)**
 

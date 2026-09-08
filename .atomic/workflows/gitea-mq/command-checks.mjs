@@ -89,7 +89,7 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
     return;
   }
   {
-    const queue = { id: 4875422, slug: "sciexp-gitea-mq", owner: { login: "sciexp" }, permissions: { administration: "write", checks: "write", contents: "write", metadata: "read", pull_requests: "write", statuses: "read" }, events: ["pull_request", "check_run", "status", "installation", "installation_repositories"] };
+    const queue = { id: 4875422, slug: "sciexp-gitea-mq", owner: { login: "sciexp" }, permissions: { administration: "write", checks: "write", contents: "write", metadata: "read", pull_requests: "write", statuses: "read" }, events: ["check_run", "pull_request", "status"] };
     const nixbot = { id: 4743700, slug: "sciexp-nixbot", owner: { login: "sciexp" }, permissions: { checks: "write", contents: "read", members: "read", metadata: "read", pull_requests: "read" }, events: ["check_run", "check_suite", "pull_request", "push"] };
     handler = (command) => {
       if (command === "gh api '/apps/sciexp-gitea-mq'") return observed(queue);
@@ -102,11 +102,25 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
     assert.deepEqual(registration.installation, { kind: "NotRun", reason: "installation deferred by operator until after deployment" });
     const artifact = JSON.parse(get("/root/app.json"));
     assert.deepEqual(artifact.app, queue); assert.deepEqual(artifact.nixbot, nixbot); assert.equal(registration.owner, "sciexp");
+    assert.deepEqual(artifact.eventContract.automaticallyDeliveredEvents, ["installation", "installation_repositories"]);
+    assert.deepEqual(artifact.eventContract.extraSubscribedEvents, []);
+    queue.events.push("push", "installation", "installation_repositories");
+    await actual.observeApp("/mock", "../root", { id: queue.id, slug: queue.slug }, null, signal);
+    const extraArtifact = JSON.parse(get("/root/app.json"));
+    assert.deepEqual(extraArtifact.app.events, queue.events);
+    assert.deepEqual(extraArtifact.eventContract.extraSubscribedEvents, ["push", "installation", "installation_repositories"]);
+    for (const required of ["check_run", "pull_request", "status"]) {
+      const events = queue.events;
+      queue.events = events.filter((event) => event !== required);
+      await assert.rejects(() => actual.observeApp("/mock", "../root", { id: queue.id, slug: queue.slug }, null, signal), /Queue App differs/);
+      queue.events = events;
+    }
     queue.permissions.contents = "read";
     await assert.rejects(() => actual.observeApp("/mock", "../root", { id: queue.id, slug: queue.slug }, null, signal), /Queue App differs/);
     queue.permissions.contents = "write"; nixbot.events.push("status");
     await assert.rejects(() => actual.observeApp("/mock", "../root", { id: queue.id, slug: queue.slug }, null, signal), /sciexp-nixbot registration changed/);
     console.log("PASS deferred App commands: exactly two JWT-free public App GETs; complete registration retained; installation NotRun; queue/nixbot contracts still enforced");
+    console.log("PASS App event contract: three subscriptions pass; each missing subscription blocks even with extras; extras recorded without blocking; permission mismatch blocks");
   }
   // Shared @ may contain unrelated edits; all commands below remain mocked.
   {
