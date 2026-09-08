@@ -120,6 +120,37 @@ in
         '';
       };
 
+      clan.core.vars.generators.kanidm-oauth2-omnigent = {
+        files = {
+          secret = {
+            secret = true;
+            owner = "kanidm";
+            group = "kanidm";
+            mode = "0400";
+            restartUnits = [
+              "kanidm.service"
+              "omnigent.service"
+            ];
+          };
+          env = {
+            secret = true;
+            owner = "omnigent";
+            group = "omnigent";
+            mode = "0400";
+            restartUnits = [
+              "kanidm.service"
+              "omnigent.service"
+            ];
+          };
+        };
+        runtimeInputs = [ pkgs.openssl ];
+        script = ''
+          secret="$(openssl rand -hex 32)"
+          printf '%s' "$secret" > "$out/secret"
+          printf 'OMNIGENT_OIDC_CLIENT_SECRET=%s\n' "$secret" > "$out/env"
+        '';
+      };
+
       services.kanidm = {
         package = pkgs.kanidmWithSecretProvisioning_1_11;
 
@@ -178,6 +209,10 @@ in
               members = [ ];
               overwriteMembers = false;
             };
+            omnigent_users = {
+              members = [ ];
+              overwriteMembers = false;
+            };
           };
 
           systems.oauth2.synapse = {
@@ -209,6 +244,19 @@ in
               "email"
             ];
             basicSecretFile = config.clan.core.vars.generators.kanidm-oauth2-synapse.files."secret".path;
+          };
+
+          systems.oauth2.omnigent = {
+            displayName = "Omnigent";
+            originUrl = "https://omni.scientistexperience.net/auth/callback";
+            originLanding = "https://omni.scientistexperience.net";
+            preferShortUsername = true;
+            scopeMaps.omnigent_users = [
+              "openid"
+              "profile"
+              "email"
+            ];
+            basicSecretFile = config.clan.core.vars.generators.kanidm-oauth2-omnigent.files.secret.path;
           };
         };
       };

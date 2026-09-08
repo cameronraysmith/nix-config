@@ -118,6 +118,15 @@ in
         proxied = false;
       };
 
+      resource.cloudflare_dns_record.omni = {
+        zone_id = config.data.cloudflare_zone.scientistexperience "id";
+        name = "omni.scientistexperience.net";
+        type = "CNAME";
+        content = "magnetite.scientistexperience.net";
+        ttl = 1;
+        proxied = false;
+      };
+
       # DNS CNAME record for the cognee public knowledge-base UI (resolves to
       # magnetite). Reads flake.lib.cognee.publicFqdn as the single source of
       # truth for the FQDN (D7). proxied = false so ACME issuance works.
