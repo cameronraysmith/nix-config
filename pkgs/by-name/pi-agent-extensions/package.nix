@@ -17,6 +17,11 @@ stdenvNoCC.mkDerivation {
     hash = "sha256-RLtDi9ahKONSJBuuYkYo/oIIxDX6PWiZ7rlevOStUUk=";
   };
 
+  # Prevent a stale direnv ctx in the debounce timer from crashing the agent.
+  # Upstream HEAD (1667a5c, 2026-08-25) still has the bug; drop this patch when
+  # upstream carries an equivalent fix.
+  patches = [ ./direnv-stale-context.patch ];
+
   dontConfigure = true;
   dontBuild = true;
   strictDeps = true;

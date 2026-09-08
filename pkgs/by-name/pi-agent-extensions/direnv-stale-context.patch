@@ -1,0 +1,24 @@
+--- a/direnv/index.ts
++++ b/direnv/index.ts
+@@ -105,8 +105,19 @@
+ 		reloadTimer = setTimeout(() => {
+ 			reloadTimer = null;
+ 			if (!latestCtx) return;
+-			// Watchers are re-armed when the export finishes.
+-			loadDirenv(latestCtx.cwd, latestCtx);
++			// The ctx may become stale after session replacement or reload.
++			// Without a guard that becomes an uncaughtException and takes
++			// down the whole agent. Ignore only the stale-ctx error.
++			try {
++				// Watchers are re-armed when the export finishes.
++				loadDirenv(latestCtx.cwd, latestCtx);
++			} catch (error) {
++				if (
++					error instanceof Error &&
++					error.message.startsWith("This extension ctx is stale after session replacement or reload.")
++				) return;
++				throw error;
++			}
+ 		}, RELOAD_DEBOUNCE_MS);
+ 	}
+ 
