@@ -182,12 +182,17 @@ export async function validateChange(cwd: string, proposals: string[], signal: A
   return { valid: true, proposals, command, receipt: result.logPath.replace(/\.log$/, ".json") };
 }
 export type AdoptionMode = "working-copy" | "routed";
-/** Exactly one adoption story may be told about a given S1 implementation. */
-export function adoptionMode(input: { adopt_working_copy: boolean; adopt_routed_s1: boolean }): AdoptionMode | null {
-  if (input.adopt_working_copy && input.adopt_routed_s1) {
-    throw new Blocked("adopt_working_copy and adopt_routed_s1 are mutually exclusive: adopt_working_copy adopts pending S1 edits in the working copy, adopt_routed_s1 adopts an S1 already routed onto the chain; pass at most one");
-  }
-  if (input.adopt_routed_s1) return "routed";
+export type RoutedSlice = "s1" | "post-g1" | "s2";
+export function routedSlices(input: { adopt_routed_s1?: boolean; adopt_routed?: readonly string[] }): RoutedSlice[] {
+  const requested = [...new Set([...(input.adopt_routed_s1 ? ["s1"] : []), ...(input.adopt_routed ?? [])])];
+  if (requested.some((id) => !["s1", "post-g1", "s2"].includes(id))) throw new Blocked(`Unknown adopted slice; expected s1, post-g1 or s2; found ${requested.join(", ")}`);
+  return requested as RoutedSlice[];
+}
+/** Working-copy S1 and routed S1 are mutually exclusive; unrelated slices may be combined. */
+export function adoptionMode(input: { adopt_working_copy: boolean; adopt_routed_s1: boolean; adopt_routed?: readonly string[] }): AdoptionMode | null {
+  const routed = routedSlices(input);
+  if (input.adopt_working_copy && routed.includes("s1")) throw new Blocked("adopt_working_copy and routed S1 adoption are mutually exclusive");
+  if (routed.includes("s1")) return "routed";
   return input.adopt_working_copy ? "working-copy" : null;
 }
 export const routedDescription = "feat(gitea-mq): s1";
@@ -202,9 +207,9 @@ async function describedIds(cwd: string, revset: string, signal: AbortSignal): P
   });
 }
 /** The aspect on disk is only acceptable when the chain itself, not this run, produced it. */
-async function routedS1Evidence(cwd: string, pending: readonly string[], signal: AbortSignal): Promise<RoutedS1> {
+async function routedS1Evidence(cwd: string, pending: readonly string[], signal: AbortSignal, successors: readonly RoutedSlice[] = []): Promise<RoutedS1> {
   const described = await describedIds(cwd, "::rollup-landing & mutable()", signal);
-  const matches = [...new Map(described.filter((row) => row.description.startsWith(routedDescription)).map((row) => [row.id, row])).values()];
+  const matches = [...new Map(described.filter((row) => row.description === routedDescription || row.description.startsWith(`${routedDescription} `)).map((row) => [row.id, row])).values()];
   if (matches.length !== 1) throw new Blocked(`adopt_routed_s1 requires exactly one chain change described '${routedDescription}...'; found ${matches.length}`);
   const change = matches[0]!;
   const { source, sha } = await resolveRevisionSource(cwd, change.id, "rollup-landing", signal);
@@ -223,9 +228,12 @@ async function routedS1Evidence(cwd: string, pending: readonly string[], signal:
   if (lines(await run(cwd, `git ls-tree ${quote(parent)} -- ${quote(aspect)}`, signal)).length) throw new Blocked(`Routed S1 parent ${parent} already contains ${aspect}; the aspect does not come from ${change.id}`);
   const disk = lines(await run(cwd, `git hash-object -- ${routedPaths.map(quote).join(" ")}`, signal));
   if (disk.length !== routedPaths.length) throw new Blocked("Could not hash every adopted path in the working copy");
-  routedPaths.forEach((path, index) => {
-    if (disk[index] !== blobs[path]) throw new Blocked(`Working copy ${path} differs from routed S1 revision ${sha}; adoption requires the routed content`);
-  });
+  for (const [index, path] of routedPaths.entries()) {
+    if (disk[index] !== blobs[path]) {
+      if (path === aspect && successors.includes("post-g1")) assertAppIdOnlyPatch(await run(cwd, `git show ${quote(`${sha}:${aspect}`)}`, signal), await readFile(join(cwd, aspect), "utf8"));
+      else throw new Blocked(`Working copy ${path} differs from routed S1 revision ${sha}; expected blob=${blobs[path]}, found=${disk[index]}; adoption requires the routed content`);
+    }
+  }
   const sha256Map: Record<string, string> = {};
   for (const path of [aspect, "flake.nix"]) {
     signal.throwIfAborted();
@@ -235,7 +243,7 @@ async function routedS1Evidence(cwd: string, pending: readonly string[], signal:
   if (!/^\s*gitea-mq\.url\s*=/m.test(flake)) throw new Blocked(`Routed S1 revision ${sha} does not declare the gitea-mq flake input`);
   return { adopted: true, mode: "routed", changeId: change.id, description: change.description, commit: sha, parent, source, paths: [...routedPaths], blobs, sha256: sha256Map, pending: [...pending] };
 }
-export async function preflight(cwd: string, splice: string, signal: AbortSignal, adoption: { root: string; mode?: AdoptionMode } | null = null) {
+export async function preflight(cwd: string, splice: string, signal: AbortSignal, adoption: { root: string; mode?: AdoptionMode; slices?: readonly RoutedSlice[] } | null = null) {
   const mode: AdoptionMode | null = adoption ? adoption.mode ?? "working-copy" : null;
   if (resolve(cwd) !== "/Users/crs58/projects/vanixiets") throw new Blocked("Wrong repository cwd");
   await run(cwd, `openspec validate ${quote(dir.split("/").at(-1)!)} --strict`, signal);
@@ -277,7 +285,7 @@ export async function preflight(cwd: string, splice: string, signal: AbortSignal
   await topology(cwd, chain, signal);
   await run(cwd, "gh auth status\nclan vars --help", signal);
   await run(cwd, ssh("true"), signal);
-  const routed = mode === "routed" ? await routedS1Evidence(cwd, owned, signal) : null;
+  const routed = mode === "routed" ? await routedS1Evidence(cwd, owned, signal, adoption?.slices) : null;
   const nodes = parse(Type.Object({ nodes: Type.Record(Type.String(), Type.Unknown()) }),
     JSON.parse(mode === "working-copy" ? await run(cwd, "jj --ignore-working-copy file show -r @- flake.lock", signal) : await readFile(join(cwd, "flake.lock"), "utf8"))).nodes;
   const lock = JSON.stringify({ nodes: { nixbot: nodes.nixbot, "buildbot-nix": nodes["buildbot-nix"] } });
@@ -333,17 +341,63 @@ async function routedResources(cwd: string, source: string, signal: AbortSignal)
   }
 }
 /** Re-verify the routed identity and content immediately before the run depends on it. */
-export async function adoptRoutedS1(cwd: string, file: string, humanBaseline: string, signal: AbortSignal) {
+export async function adoptRoutedS1(cwd: string, file: string, humanBaseline: string, signal: AbortSignal, successors: readonly RoutedSlice[] = []) {
   const evidence = parse(RoutedS1, JSON.parse(await readFile(join(cwd, file), "utf8")));
   if (await changeSha(cwd, evidence.changeId, signal) !== evidence.commit) throw new Blocked(`Routed S1 change ${evidence.changeId} no longer resolves to ${evidence.commit}`);
   if ((await ids(cwd, `${changeRef(evidence.changeId)} & ::rollup-landing`, signal)).length !== 1) throw new Blocked(`Routed S1 change ${evidence.changeId} left the rollup-landing ancestry`);
   const disk = lines(await run(cwd, `git hash-object -- ${evidence.paths.map(quote).join(" ")}`, signal));
-  evidence.paths.forEach((path, index) => {
-    if (disk[index] !== evidence.blobs[path]) throw new Blocked(`Working copy ${path} drifted from routed S1 revision ${evidence.commit} after preflight`);
-  });
+  for (const [index, path] of evidence.paths.entries()) {
+    if (disk[index] !== evidence.blobs[path]) {
+      if (path === aspect && successors.includes("post-g1")) assertAppIdOnlyPatch(await run(cwd, `git show ${quote(`${evidence.commit}:${aspect}`)}`, signal), await readFile(join(cwd, aspect), "utf8"));
+      else throw new Blocked(`Working copy ${path} drifted from routed S1 revision ${evidence.commit} after preflight; expected blob=${evidence.blobs[path]}, found=${disk[index]}`);
+    }
+  }
   assertHumanBoxes(humanBaseline, await readFile(join(cwd, tasks), "utf8"));
   const resources = await routedResources(cwd, evidence.source, signal);
   return { adopted: true as const, file, changeId: evidence.changeId, commit: evidence.commit, parent: evidence.parent, source: evidence.source, paths: evidence.paths, blobs: evidence.blobs, sha256: evidence.sha256, resources, ...s1Coverage(resources.arms) };
+}
+/** Remove only the named S1 placeholder and its assignment when comparing post-G1. */
+export function appIdNeutral(content: string): string {
+  return content.replace(/^[ \t]*#[^\n]*\n/gm, "").replace(/^[ \t]*pendingGithubAppId\s*=\s*1\s*;[^\n]*\n/gm, "").replace(/\bappId\s*=\s*(?:pendingGithubAppId|[0-9]+)\s*;/g, "appId = APP_ID;").trim();
+}
+export function routedAppId(content: string): number {
+  const matches = [...content.matchAll(/\bappId\s*=\s*([0-9]+)\s*;/g)];
+  const id = Number(matches[0]?.[1]);
+  if (matches.length !== 1 || !Number.isSafeInteger(id) || id <= 1 || /\bpendingGithubAppId\b/.test(content)) throw new Blocked(`Expected one public numeric appId > 1 and no placeholder; found ${matches.map((match) => match[0]).join(", ") || "none"}`);
+  return id;
+}
+export function assertAppIdOnlyPatch(before: string, after: string): number {
+  const id = routedAppId(after);
+  if (appIdNeutral(before) !== appIdNeutral(after)) throw new Blocked(`Expected only the post-g1 App-id patch; found other aspect changes (expected normalized sha256=${sha256(appIdNeutral(before))}, found=${sha256(appIdNeutral(after))})`);
+  return id;
+}
+/** Rebuild adoption evidence from repository content, never from an old run's ledger. */
+export async function adoptRoutedSlice(cwd: string, slice: Exclude<RoutedSlice, "s1">, humanBaseline: string, signal: AbortSignal) {
+  const expectedDescription = `feat(gitea-mq): ${slice}`;
+  const matches = (await describedIds(cwd, "::rollup-landing & mutable()", signal)).filter((row) => row.description === expectedDescription || row.description.startsWith(`${expectedDescription} `));
+  if (matches.length !== 1) throw new Blocked(`Expected one routed ${expectedDescription} change; found ${JSON.stringify(matches)}`);
+  const change = matches[0]!, sha = await changeSha(cwd, change.id, signal);
+  const path = slice === "post-g1" ? aspect : dnsPath;
+  const parents = (await run(cwd, `git rev-list --parents -n 1 ${quote(sha)}`, signal)).split(/\s+/);
+  if (parents.length !== 2 || parents[0] !== sha) throw new Blocked(`Expected single-parent routed ${slice} ${sha}; found ${parents.join(" ")}`);
+  const expectedContent = async (rev: string) => {
+    try { return await run(cwd, `git show ${quote(`${rev}:${path}`)}`, signal); }
+    catch (error) { signal.throwIfAborted(); throw new Blocked(`Expected routed ${slice} path ${rev}:${path}; found unavailable content: ${String(error)}`); }
+  };
+  const content = await expectedContent(sha), before = await expectedContent(parents[1]!);
+  const disk = await readFile(join(cwd, path), "utf8");
+  let appId: number | null = null, record: string | null = null;
+  if (slice === "post-g1") {
+    appId = assertAppIdOnlyPatch(before, content);
+    if (content !== disk.trimEnd()) throw new Blocked(`Expected routed post-g1 ${path} sha256=${sha256(content)}; found working-copy sha256=${sha256(disk.trimEnd())}`);
+    if (before === content) throw new Blocked("Expected post-g1 app-id change; found unchanged aspect");
+  } else {
+    record = mqRecord(content);
+    if (record !== mqRecord(disk)) throw new Blocked(`Expected routed mq content ${record}; found ${mqRecord(disk)}`);
+    if (/resource\.cloudflare_dns_record\.(?:mq|"mq")\s*=/.test(before)) throw new Blocked("Expected S2 to introduce cloudflare_dns_record.mq; found mq already in its parent");
+  }
+  assertHumanBoxes(humanBaseline, await readFile(join(cwd, tasks), "utf8"));
+  return { adopted: true as const, slice, changeId: change.id, commit: sha, parent: parents[1]!, paths: [path], sha256: sha256(content), appId, record };
 }
 export function resetTaskText(text: string, ids: readonly string[]): string {
   return text.split("\n").map((line) =>
@@ -392,6 +446,33 @@ export async function snapshotWorkingCopy(cwd: string, signal: AbortSignal) {
   return { snapshotted: true };
 }
 const dnsPath = "modules/terranix/cloudflare.nix";
+export type TerraformSelection = { ref: string; rev: string } | null;
+export function terraformSourceInputs(input: { terraform_source_ref?: string; terraform_source_rev?: string }): TerraformSelection {
+  const ref = input.terraform_source_ref, rev = input.terraform_source_rev;
+  if (ref === undefined && rev === undefined) return null;
+  if (!ref?.trim() || !rev?.trim()) throw new Blocked("terraform_source_ref and terraform_source_rev must be supplied together");
+  if (!/^[a-f0-9]{40}$/.test(rev)) throw new Blocked("terraform_source_rev must be a full immutable Git commit id");
+  return { ref, rev };
+}
+/** The integrated source need not be the routed chain tip. Never move/export its ref. */
+export async function resolveTerraformSource(cwd: string, tip: string, selection: TerraformSelection, signal: AbortSignal): Promise<DeploymentSource> {
+  if (selection === null) return resolveSource(cwd, tip, "rollup-landing", signal);
+  await run(cwd, `git cat-file -e ${quote(`${selection.rev}^{commit}`)}`, signal);
+  const refCommit = await run(cwd, `git rev-parse --verify --end-of-options ${quote(`${selection.ref}^{commit}`)}`, signal);
+  if (!/^[a-f0-9]{40}$/.test(refCommit)) throw new Blocked("Terraform source ref did not resolve to one commit");
+  await run(cwd, `git merge-base --is-ancestor ${quote(selection.rev)} ${quote(refCommit)}`, signal);
+  return committedSource(cwd, selection.rev, encodeURIComponent(selection.ref));
+}
+/** Conservative literal declaration inventory; unsupported/dynamic declarations fail closed. */
+export function dnsRecords(content: string): string[] {
+  const clean = content.replace(/\/\*[\s\S]*?\*\//g, "").replace(/#[^\n]*/g, "");
+  const declarations = [...clean.matchAll(/\bresource\.cloudflare_dns_record\.([\w-]+|"[\w-]+")\s*=\s*\{/g)];
+  const mentions = [...clean.matchAll(/\bcloudflare_dns_record\b/g)];
+  if (declarations.length !== mentions.length || !declarations.length) throw new Blocked("Expected literal resource.cloudflare_dns_record.<id> declarations; found unsupported or absent DNS declarations");
+  const records = declarations.map((match) => `cloudflare_dns_record.${match[1]!.replaceAll('"', "")}`).sort();
+  if (new Set(records).size !== records.length) throw new Blocked("Duplicate cloudflare DNS record declarations");
+  return records;
+}
 export async function reviewDnsContent(cwd: string, signal: AbortSignal) {
   signal.throwIfAborted();
   return { sha256: sha256(await readFile(join(cwd, dnsPath))) };
@@ -400,9 +481,20 @@ export async function verifyDnsSource(cwd: string, source: DeploymentSource, rev
   if (!source.source.startsWith("git+file://") || new URL(source.source).searchParams.get("rev") !== source.sha || !/^[0-9a-f]{40}$/.test(source.sha)) throw new Blocked("DNS source must be revision-pinned git+file");
   const content = await capture(cwd, `git show ${quote(`${source.sha}:${dnsPath}`)}`, signal);
   requireSuccess(content);
-  if (sha256(content.stdout) !== reviewed.sha256) throw new Blocked("Routed DNS source differs from reviewed hostname content");
-  const record = await run(cwd, `git grep -n -E ${quote('name[[:space:]]*=[[:space:]]*"(mq|mq\\.scientistexperience\\.net)"')} ${quote(source.sha)} -- ${quote(dnsPath)}`, signal);
-  return { sha: source.sha, sha256: reviewed.sha256, record };
+  const sourceRecords = dnsRecords(content.stdout), workingCopyRecords = dnsRecords(await readFile(join(cwd, dnsPath), "utf8"));
+  const expected = [...new Set(["cloudflare_dns_record.mq", ...workingCopyRecords])].sort();
+  const missing = expected.filter((record) => !sourceRecords.includes(record));
+  if (missing.length) throw new Blocked(`DNS source ${source.sha} missing ${missing.join(", ")}; expected ${JSON.stringify(expected)}; found ${JSON.stringify(sourceRecords)}`);
+  if (sha256(content.stdout) !== reviewed.sha256) throw new Blocked(`Routed DNS source differs from reviewed hostname content; expected sha256=${reviewed.sha256}; found sha256=${sha256(content.stdout)}`);
+  const record = mqRecord(content.stdout);
+  return { sha: source.sha, source: source.source, sha256: reviewed.sha256, record, workingCopyRecords, sourceRecords, missing };
+}
+export function mqRecord(content: string): string {
+  const clean = content.replace(/\/\*[\s\S]*?\*\//g, "").replace(/#[^\n]*/g, "");
+  const matches = [...clean.matchAll(/resource\.cloudflare_dns_record\.(?:mq|"mq")\s*=\s*\{([^{}]*)\}\s*;/g)];
+  const record = matches[0]?.[1] ?? "";
+  if (matches.length !== 1 || !/\bname\s*=\s*"(?:mq|mq\.scientistexperience\.net)"\s*;/.test(record) || !/\btype\s*=\s*"CNAME"\s*;/.test(record) || !/\bcontent\s*=\s*"magnetite\.scientistexperience\.net"\s*;/.test(record) || !/\bproxied\s*=\s*false\s*;/.test(record)) throw new Blocked(`Expected cloudflare_dns_record.mq unproxied mq CNAME to magnetite.scientistexperience.net; found ${record || "no literal mq record"}`);
+  return record.replace(/\s+/g, " ").trim();
 }
 export async function pendingPaths(cwd: string, slice: Slice, signal: AbortSignal): Promise<string[]> {
   return (await pathsIn(cwd, "@", signal))

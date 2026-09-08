@@ -11,7 +11,9 @@ const dataUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).toStr
 export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, slices, ledgerTools, assertCompactCheckpoint }) {
   const { s1Coverage } = await import(moduleUrl(".atomic/workflows/gitea-mq/s1-observations.ts"));
   const report = await import(moduleUrl(".atomic/workflows/gitea-mq/verify-report.ts"));
-  async function execute({ deferInstallation, deploy = true, pauseG6 = false, installationMissing = false, staleDeferred = false, changeProposal = false, proposalValidateFailure = false, adoptWorkingCopy = false, adoptRoutedS1 = false, forgeFailure = false, g3Recovery = "", blockedDiagnosis = false, declineG2 = false, decline = "", rejectS1 = false, revisePlan = false, createFailure = false, cleanupFailure = false, exhaust = false, replay = false, probeFailure = false, repairNix = false, v3Failure = false, repairEvalFailure = false, dnsReject = false, dnsRejectOnce = false, rejectRoborev = false, throwExit = false, noHostnameEdit = false, proposalFailure = "", extraClaims = false, transientFailure = false, resumeFailure = false, unexpected = "", wrongRules = "", drift = "", structuralFailure = "", nativeFailure = "", nativeMessage = "", tokenDirectory = "", terminalRecordFailure = false, postMintFailure = false, catalog, proposalDrift = "" } = {}) {
+  async function execute({ adoptRouted = [], adoptionMissing = "", terraformInputs = {}, deferInstallation, deploy = true, pauseG6 = false, installationMissing = false, staleDeferred = false, changeProposal = false, proposalValidateFailure = false, adoptWorkingCopy = false, adoptRoutedS1 = false, forgeFailure = false, g3Recovery = "", blockedDiagnosis = false, declineG2 = false, decline = "", rejectS1 = false, revisePlan = false, createFailure = false, cleanupFailure = false, exhaust = false, replay = false, probeFailure = false, repairNix = false, v3Failure = false, repairEvalFailure = false, dnsReject = false, dnsRejectOnce = false, rejectRoborev = false, throwExit = false, noHostnameEdit = false, proposalFailure = "", extraClaims = false, transientFailure = false, resumeFailure = false, unexpected = "", wrongRules = "", drift = "", structuralFailure = "", nativeFailure = "", nativeMessage = "", tokenDirectory = "", terminalRecordFailure = false, postMintFailure = false, catalog, proposalDrift = "" } = {}) {
+    const legacyAlias = adoptRoutedS1;
+    adoptRoutedS1 ||= adoptRouted.includes("s1");
     const files = new Map();
     const events = [];
     const cache = new Map();
@@ -39,12 +41,16 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       tree["flake.nix"] = "routed input"; tree[slices.aspect] = "routed aspect"; tree[slices.machine] = "routed host";
       files.set(join(cwd, slices.tasks), initialTasks.replace("[ ] 2.1", "[x] 2.1"));
     }
+    if (adoptRouted.includes("post-g1")) tree[slices.aspect] = "routed aspect app-id=1234";
+    if (adoptRouted.includes("s2")) tree[dnsPath] = dnsContent;
     if (staleDeferred) files.set(join(cwd, slices.tasks), files.get(join(cwd, slices.tasks)).replace(/\[ \] (1\.3|11\.2|8\.4) /g, "[x] $1 "));
     const get = (path) => {
       if (!files.has(path)) throw Object.assign(new Error(`Missing mock file: ${path}`), { code: "ENOENT" });
       return files.get(path);
     };
+    const protectedTasks = [...(adoptRoutedS1 ? slices.s1.taskIds : []), ...(adoptRouted.includes("post-g1") ? ["4.1"] : []), ...(adoptRouted.includes("s2") ? ["6.1", "6.2"] : [])];
     const tick = async (_cwd, ids, _signal, baseline) => {
+      assert(!ids.some((id) => protectedTasks.includes(id)), `Adoption must not re-tick ${ids}`);
       if (baseline !== undefined) tools.assertHumanBoxes(baseline, get(join(cwd, slices.tasks)));
       const path = join(cwd, slices.tasks);
       files.set(path, get(path).split("\n").map((line) => ids.some((id) => line.startsWith(`- [ ] ${id} `)) ? line.replace("[ ]", "[x]") : line).join("\n"));
@@ -76,6 +82,8 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       },
       sha256: tools.sha256,
       adoptionMode: tools.adoptionMode,
+      routedSlices: tools.routedSlices,
+      terraformSourceInputs: tools.terraformSourceInputs,
       humanBoxes: tools.humanBoxes,
       proposalBases: tools.proposalBases,
       assertTaskScope: tools.assertTaskScope,
@@ -98,6 +106,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
           routed = { ...tree };
           revisions.set(routedChangeId, { sha: routedCommit, tree: { ...routed } });
           committedTasks.set(routedChangeId, get(join(cwd, slices.tasks)));
+          if (adoptRouted.includes("s2")) revisions.set("ssss", { sha: "c3".repeat(20), tree: { ...tree } });
           files.set(join(cwd, file), JSON.stringify({ adopted: true, mode: "routed", changeId: routedChangeId, commit: routedCommit, parent: "b2".repeat(20), paths: ["flake.nix", "flake.lock", slices.aspect, slices.machine] }));
           return { ...baseline, routedAdoption: { adopted: true, file } };
         }
@@ -110,6 +119,10 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
         assert.equal(actualSignal, signal);
         tools.assertHumanBoxes(baseline, get(join(cwd, slices.tasks)));
         return { ...JSON.parse(get(join(cwd, file))), file, observations: s1Coverage(["dynamic-user", "cache-directory", "no-static-user", "loopback-listener"]).observations };
+      },
+      adoptRoutedSlice: async (_cwd, slice) => {
+        if (adoptionMissing === slice) throw Error(`Expected routed ${slice} content; found missing`);
+        return { adopted: true, slice, changeId: slice === "s2" ? "ssss" : "kkkk", commit: "c3".repeat(20), paths: [slice === "s2" ? dnsPath : slices.aspect], appId: slice === "post-g1" ? 1234 : null };
       },
       adoptS1: async (_cwd, file) => { assert.equal(tools.sha256(get(join(cwd, slices.tasks))), adoptedTaskHash, "Adoption hashes must be rechecked before any deferred tick reset"); return { ...JSON.parse(get(join(cwd, file))), file }; },
       lockInput: async () => ({ declaration: tree["flake.nix"] ?? "declaration", relocked: true }),
@@ -196,6 +209,10 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
         return { file: `${evidence}/ruleset-diff.json`, withUser: `${evidence}/with-user.json`, adminOnly: `${evidence}/admin-only.json` };
       },
       applyRules: async () => ({ applied: true }),
+      resolveTerraformSource: async (_cwd, _tip, selection) => {
+        revisions.set("integrated", { sha: selection.rev, tree: { ...tree } });
+        return { source: `git+file:///mock?ref=${selection.ref}&rev=${selection.rev}`, sha: selection.rev };
+      },
       identityWitness: async (_cwd, appId, _slug, tokens) => { assert.deepEqual(tokens.map((token) => token.appId), [4743700, appId]); return { identities: ["nixbot", "queue"] }; },
       resolveSource: async (_cwd, tip) => ({ source: `git+file:///mock?ref=rollup-landing&rev=${revisions.get(tip)?.sha}`, sha: revisions.get(tip)?.sha }),
       ensureActivated: async () => { live = true; return { reconciled: true }; },
@@ -223,6 +240,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
         return { taskId, receipt, humanBaseline: tools.humanBoxes(get(join(cwd, slices.tasks))) };
       },
       resetTasks: async (_cwd, ids) => {
+        assert(!ids.some((id) => protectedTasks.includes(id)), `Adoption must not reset ${ids}`);
         const path = join(cwd, slices.tasks);
         files.set(path, tools.resetTaskText(get(path), ids));
         return { invalidated: ids };
@@ -263,7 +281,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
     const context = {
       cwd,
       models: catalog === undefined ? undefined : { listModels() { return catalog; } },
-      inputs: { change: types.change, splice_after: "ssss", deploy, ...(deferInstallation === undefined ? {} : { defer_installation: deferInstallation }), max_repair_attempts: 2, build_timeout_minutes: 1, ...(adoptWorkingCopy ? { adopt_working_copy: true } : {}), ...(adoptRoutedS1 ? { adopt_routed_s1: true } : {}) },
+      inputs: { change: types.change, splice_after: "ssss", deploy, adopt_routed: adoptRouted, ...terraformInputs, ...(deferInstallation === undefined ? {} : { defer_installation: deferInstallation }), max_repair_attempts: 2, build_timeout_minutes: 1, ...(adoptWorkingCopy ? { adopt_working_copy: true } : {}), ...(legacyAlias ? { adopt_routed_s1: true } : {}) },
       tool: (name, args, action, options) => durable(`tool:${name}`, args, async () => {
         callbacks++; events.push(name);
         assert(options.timeoutMs > 0 && ["return", "throw"].includes(options.failureMode));
@@ -501,13 +519,10 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
   assert.match(routedAdoption.commit, /^[0-9a-f]{40}$/);
   const routedTasks = routedRun.files.get(join(routedRun.cwd, slices.tasks));
   assert(routedTasks.includes("[x] 2.1"), "Committed S1 ticks must survive routed adoption unchanged");
-  assert(routedRun.events.indexOf("adopt-routed-s1") < routedRun.events.indexOf("s1-committed-forge-pre"));
-  assert(routedRun.events.indexOf("s1-committed-forge-pre") < routedRun.events.indexOf("G1-material"));
-  assert.match(routedTasks, /- \[x\] 5\.3 /, "The post-route committed comparison still owns task 5.3");
+  assert(!routedRun.events.includes("s1-committed-forge-pre"), "Adoption must not re-tick task 5.3");
+  assert.match(routedTasks, /- \[ \] 5\.3 /, "Adopted S1 task state stays as found");
   const routedGates = JSON.parse(routedRun.files.get(join(routedRun.cwd, routedRun.root, "gate-ledger.json")));
-  const routedForge = routedGates.filter((entry) => entry.taskIds.includes("5.3")).at(-1);
-  assert.equal(routedForge.gate, "s1-committed-forge-pre");
-  assert.equal(routedForge.status.kind, "Passed");
+  assert(!routedGates.some((entry) => entry.gate === "s1-committed-forge-pre"));
   assert(!ledgerTools.passedClaims(routedGates).some((claim) => ["2.1", "4.1", "5.1"].includes(claim.taskId)), "Adopted S1 tasks are not re-verified by this run");
   const routedFirstChange = routedRun.revisions.get("change-0");
   assert(routedFirstChange, "The app-id patch must land as its own change after splice_after");
@@ -516,7 +531,28 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
   assert.equal(bothAdoptions.result.status, "blocked");
   assert.match(bothAdoptions.result.summary, /mutually exclusive/);
   assert(!bothAdoptions.events.includes("preflight"), "Contradictory adoption inputs block before preflight observations");
-  console.log("PASS routed adoption graph: verified routed S1 replaces implement/gate/review/route, committed ticks persist, post-route forge comparison still ticks 5.3, contradictory adoption inputs block");
+  console.log("PASS routed adoption graph: verified routed S1 replaces implement/gate/review/route, task states persist without re-ticking 5.3, contradictory adoption inputs block");
+  const integratedInputs = { terraform_source_ref: "HEAD", terraform_source_rev: "d4".repeat(20) };
+  const allAdopted = await execute({ adoptRouted: ["s1", "post-g1", "s2"], terraformInputs: integratedInputs, replay: true });
+  assert.equal(allAdopted.result.status, "completed-with-caveat", allAdopted.result.summary);
+  for (const skipped of [/^implement-b/, /^gate-s1-/, /^review-s1-/, /^route-s1$/, /^patch-app-id-/, /^post-g1-s1-/, /^route-post-g1$/, /^hostname-/, /^route-dns-source-/, /^route-s2$/, /^dns-unverified-/, /^dns-ledger$/, /^invalidate-tasks-(?:s1|dns)-/]) assert(!allAdopted.events.some((event) => skipped.test(event)), `Adopted slices must skip ${skipped}`);
+  const adoptedLedger = JSON.parse(allAdopted.files.get(join(allAdopted.cwd, allAdopted.root, "ledger.json")));
+  for (const slice of ["s1", "post-g1", "s2"]) {
+    const observation = adoptedLedger.find((row) => row.node === `adopt-routed-${slice}`).result.value.evidence;
+    assert.equal(observation.adopted, true); assert(observation.changeId); assert.match(observation.commit, /^[0-9a-f]{40}$/);
+  }
+  assert.equal(adoptedLedger.find((row) => row.node === "dns-source-adopted-s2").result.value.evidence.sha, integratedInputs.terraform_source_rev);
+  assert(allAdopted.events.includes("terraform-plan-adopted-s2"), "Adoption cannot claim a prior blocked plan as applied");
+  for (const slice of ["post-g1", "s2"]) {
+    const missing = await execute({ adoptRouted: ["s1", "post-g1", "s2"], adoptionMissing: slice });
+    assert.equal(missing.result.status, "blocked"); assert.match(missing.result.summary, /Expected routed.*found missing/);
+    assert(!missing.events.includes("G1-material"));
+  }
+  for (const terraformInputs of [{ terraform_source_ref: "HEAD" }, { terraform_source_rev: integratedInputs.terraform_source_rev }]) {
+    const missing = await execute({ terraformInputs });
+    assert.equal(missing.result.status, "blocked"); assert.match(missing.result.summary, /together/); assert(!missing.events.includes("preflight"));
+  }
+  console.log("PASS generalized adoption graph: s1/post-g1/s2 skip slice stages and task writes, record fresh identities, reject missing content; integrated source is supplied rev; half-pairs block before preflight");
   for (const [g3Recovery, blockedDiagnosis] of [["proposal", false], ["gate", false], ["gate", true]]) {
     const recovered = await execute({ g3Recovery, blockedDiagnosis, replay: true });
     const nextStage = g3Recovery === "proposal" ? "implement-b2-a1" : "repair-s1-b2-a1-b1-a1";

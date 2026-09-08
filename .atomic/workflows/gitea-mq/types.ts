@@ -19,7 +19,10 @@ export const inputs = {
   deploy: Type.Boolean({ default: true }),
   defer_installation: Type.Boolean({ default: false, description: "Observe public App registration only until deployment probes pass and the operator confirms manual installation at G6." }),
   adopt_working_copy: Type.Boolean({ default: false, description: "Adopt pending S1 implementation instead of requesting an initial proposal; all gates still run." }),
-  adopt_routed_s1: Type.Boolean({ default: false, description: "Adopt an S1 implementation already routed onto the chain: preflight verifies the routed change by content instead of requiring an absent aspect, and no S1 implementation, gate, review or route runs. Mutually exclusive with adopt_working_copy." }),
+  adopt_routed_s1: Type.Boolean({ default: false, description: "Deprecated alias for adopt_routed: [s1]." }),
+  adopt_routed: Type.Array(Type.Union([Type.Literal("s1"), Type.Literal("post-g1"), Type.Literal("s2")]), { default: [], uniqueItems: true, description: "Content-verify already-routed slices and skip their implementation/gate/review/route and task writes. Fresh external DNS plan/apply observations still run." }),
+  terraform_source_ref: Type.Optional(Type.String({ minLength: 1, description: "Git ref containing the integrated Terraform source; must be paired with terraform_source_rev." })),
+  terraform_source_rev: Type.Optional(Type.String({ minLength: 1, description: "Immutable full Git commit for the integrated Terraform source; must be paired with terraform_source_ref." })),
   max_repair_attempts: Type.Union([Type.Literal(1), Type.Literal(2), Type.Literal(3)], {
     default: 3, description: "Attempts per bounded batch, including the first gate execution.",
   }),

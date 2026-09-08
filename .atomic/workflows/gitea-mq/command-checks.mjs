@@ -89,6 +89,71 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
     return;
   }
   {
+    const sha = "ab".repeat(20), dnsPath = "/mock/modules/terranix/cloudflare.nix";
+    const mq = 'resource.cloudflare_dns_record.mq = { name = "mq"; type = "CNAME"; content = "magnetite.scientistexperience.net"; proxied = false; };';
+    const omni = 'resource.cloudflare_dns_record.omni = { name = "omni"; };';
+    files.set(dnsPath, `${mq}\n${omni}\n`);
+    assert.throws(() => actual.terraformSourceInputs({ terraform_source_ref: "HEAD" }), /together/);
+    assert.throws(() => actual.terraformSourceInputs({ terraform_source_rev: sha }), /together/);
+    assert.equal(actual.terraformSourceInputs({}), null);
+    const selection = actual.terraformSourceInputs({ terraform_source_ref: "HEAD", terraform_source_rev: sha });
+    handler = (command) => {
+      if (command.startsWith("git cat-file") || command.startsWith("git merge-base")) return observed();
+      if (command.startsWith("git rev-parse")) return observed(sha);
+      if (command.startsWith("git show")) return observed(get(dnsPath));
+      throw Error(`Unexpected Terraform source command: ${command}`);
+    };
+    const selected = await actual.resolveTerraformSource("/mock", "ssss", selection, signal);
+    assert.equal(selected.sha, sha);
+    assert.equal(selected.source, `git+file:///mock?ref=HEAD&rev=${sha}`);
+    const reviewed = await actual.reviewDnsContent("/mock", signal);
+    const verified = await actual.verifyDnsSource("/mock", selected, reviewed, signal);
+    assert.deepEqual(verified.workingCopyRecords, ["cloudflare_dns_record.mq", "cloudflare_dns_record.omni"]);
+    assert.deepEqual(verified.sourceRecords, verified.workingCopyRecords);
+    handler = (command) => command.startsWith("git show") ? observed(`${mq}\n`) : observed();
+    await assert.rejects(actual.verifyDnsSource("/mock", selected, reviewed, signal), /missing.*cloudflare_dns_record.omni/i);
+    console.log("PASS integrated Terraform source: paired inputs, supplied immutable rev, exact content and working-copy record coverage");
+  }
+  {
+    const sha = "ab".repeat(20), parent = "cd".repeat(20);
+    const before = '{\n  # G1 placeholder\n  pendingGithubAppId = 1;\n  appId = pendingGithubAppId;\n  enable = true;\n}';
+    const after = '{\n  appId = 4875422;\n  enable = true;\n}';
+    const mq = 'resource.cloudflare_dns_record.mq = { name = "mq"; type = "CNAME"; content = "magnetite.scientistexperience.net"; proxied = false; };';
+    const omni = 'resource.cloudflare_dns_record.omni = { name = "omni"; };';
+    const tasks = '- [ ] 1.1 G1\n- [ ] 8.2 G2\n- [x] 4.1 App\n- [ ] 6.1 DNS\n';
+    files.set(join("/mock", slices.tasks), tasks);
+    files.set(join("/mock", slices.aspect), `${after}\n`);
+    files.set("/mock/modules/terranix/cloudflare.nix", `${mq}\n${omni}\n`);
+    let missing = false, wrongDescription = false;
+    handler = (command) => {
+      if (command.includes('description.first_line()')) return observed(wrongDescription ? "kkkk unrelated" : "kkkk feat(gitea-mq): post-g1\nssss feat(gitea-mq): s2");
+      if (command.includes('change_id ++ " " ++ commit_id')) return observed(`${command.includes("kkkk") ? "kkkk" : "ssss"} ${sha}`);
+      if (command.startsWith("git rev-list")) return observed(`${sha} ${parent}`);
+      if (command.startsWith("git show")) {
+        const old = command.includes(parent);
+        if (command.includes(slices.aspect)) return observed(old || missing ? before : after);
+        return observed(old || missing ? omni : mq);
+      }
+      throw Error(`Unexpected adoption command: ${command}`);
+    };
+    const baseline = tools.humanBoxes(tasks);
+    for (const slice of ["post-g1", "s2"]) {
+      const adopted = await actual.adoptRoutedSlice("/mock", slice, baseline, signal);
+      assert.equal(adopted.commit, sha); assert.equal(adopted.slice, slice);
+      assert.deepEqual(adopted.paths, [slice === "post-g1" ? slices.aspect : "modules/terranix/cloudflare.nix"]);
+      missing = true;
+      await assert.rejects(actual.adoptRoutedSlice("/mock", slice, baseline, signal), /Expected.*found/);
+      missing = false;
+    }
+    wrongDescription = true;
+    await assert.rejects(actual.adoptRoutedSlice("/mock", "s2", baseline, signal), /Expected one routed.*found/);
+    assert.equal(get(join("/mock", slices.tasks)), tasks, "Adoption does not change task bytes");
+    assert.equal(actual.assertAppIdOnlyPatch(before, after), 4875422);
+    assert.throws(() => actual.assertAppIdOnlyPatch(before, after.replace("enable = true", "enable = false")), /other aspect changes/);
+    assert.deepEqual(actual.routedSlices({ adopt_routed: ["s1", "post-g1", "s2"], adopt_routed_s1: true }), ["s1", "post-g1", "s2"]);
+    console.log("PASS routed slice content: numeric App-id-only patch, mq record despite foreign omni, expected paths/identities, missing content/description block, task bytes unchanged and S1 alias deduplicated");
+  }
+  {
     const queue = { id: 4875422, slug: "sciexp-gitea-mq", owner: { login: "sciexp" }, permissions: { administration: "write", checks: "write", contents: "write", metadata: "read", pull_requests: "write", statuses: "read" }, events: ["check_run", "pull_request", "status"] };
     const nixbot = { id: 4743700, slug: "sciexp-nixbot", owner: { login: "sciexp" }, permissions: { checks: "write", contents: "read", members: "read", metadata: "read", pull_requests: "read" }, events: ["check_run", "check_suite", "pull_request", "push"] };
     handler = (command) => {
@@ -247,6 +312,14 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
     diskDrift = slices.aspect;
     await assert.rejects(() => actual.adoptRoutedS1(repo, `${evidenceRoot}/routed-s1.json`, tools.humanBoxes(files.get(join(repo, slices.tasks))), signal), /drifted from routed S1 revision/);
     await assert.rejects(() => actual.preflight(repo, "ssss", signal, { root: evidenceRoot, mode: "routed" }), /differs from routed S1 revision/);
+    const originalAspect = routedFiles[slices.aspect];
+    routedFiles[slices.aspect] = '{\n  # G1 supplies this id\n  pendingGithubAppId = 1;\n  appId = pendingGithubAppId;\n  enable = true;\n}';
+    files.set(join(repo, slices.aspect), '{\n  appId = 4875422;\n  enable = true;\n}');
+    await actual.preflight(repo, "ssss", signal, { root: evidenceRoot, mode: "routed", slices: ["s1", "post-g1", "s2"] });
+    await actual.adoptRoutedS1(repo, `${evidenceRoot}/routed-s1.json`, tools.humanBoxes(files.get(join(repo, slices.tasks))), signal, ["post-g1"]);
+    files.set(join(repo, slices.aspect), files.get(join(repo, slices.aspect)).replace("enable = true", "enable = false"));
+    await assert.rejects(actual.preflight(repo, "ssss", signal, { root: evidenceRoot, mode: "routed", slices: ["post-g1"] }), /other aspect changes/);
+    routedFiles[slices.aspect] = originalAspect; files.set(join(repo, slices.aspect), originalAspect);
     diskDrift = "";
     description = "feat(gitea-mq): hostname";
     await assert.rejects(() => actual.preflight(repo, "ssss", signal, { root: evidenceRoot, mode: "routed" }), /exactly one chain change described/);
@@ -406,13 +479,13 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   };
   assert.equal((await actual.resolveSource(cwd, "tip", "rollup-landing", signal)).source, savedPlan.source);
   console.log("PASS F2: DNS reuses omnigent git+file resolution and rejects in-tree evidence/path sources");
-  const dnsPath = "modules/terranix/cloudflare.nix", dnsContent = 'name = "mq";\n';
+  const dnsPath = "modules/terranix/cloudflare.nix", dnsContent = 'resource.cloudflare_dns_record.mq = { name = "mq"; type = "CNAME"; content = "magnetite.scientistexperience.net"; proxied = false; };\n';
+  files.set(join(cwd, dnsPath), dnsContent);
   const reviewedDns = { sha256: tools.sha256(dnsContent) };
   let staleDns = false, missingRecord = false;
   handler = (command) => {
     if (command === "jj debug snapshot") return observed();
-    if (command.startsWith("git show")) { assert(command.includes(`${savedPlan.sha}:${dnsPath}`)); return observed(staleDns ? "old" : dnsContent); }
-    if (command.startsWith("git grep")) { assert(command.includes(savedPlan.sha) && command.includes(dnsPath)); return observed("record", missingRecord ? 1 : 0); }
+    if (command.startsWith("git show")) { assert(command.includes(`${savedPlan.sha}:${dnsPath}`)); return observed(missingRecord ? dnsContent.replaceAll(".mq", ".other") : staleDns ? `${dnsContent}\n# drift` : dnsContent); }
     throw Error(`Unexpected DNS content command: ${command}`);
   };
   await actual.snapshotWorkingCopy(cwd, signal);
@@ -422,7 +495,7 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   staleDns = false; missingRecord = true;
   await assert.rejects(() => actual.verifyDnsSource(cwd, savedPlan, reviewedDns, signal));
   await assert.rejects(() => actual.verifyDnsSource(cwd, { ...savedPlan, source: "path:/mock" }, reviewedDns, signal), /revision-pinned/);
-  console.log("PASS R2 commands: snapshot forwards signal; git show hash and record grep bind the resolved DNS rev before planning");
+  console.log("PASS R2 commands: snapshot forwards signal; source hash, mq identity and working-copy record inventory bind the resolved DNS rev before planning");
   const oldPathsIn = globalThis.__mqCommandMock.pathsIn, oldOneId = globalThis.__mqCommandMock.oneId;
   let pending = true;
   const owned = { workingCopy: "wwww", join: "rrrr", seed: "ssss", tip: "kkkk", changes: [{ id: "kkkk", paths: [dnsPath, slices.tasks] }] };

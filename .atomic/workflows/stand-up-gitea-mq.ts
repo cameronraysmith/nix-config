@@ -21,7 +21,7 @@ export default workflow({
       return t.allocateEvidence(cwd);
     }, { failureMode: "throw", timeoutMs: 120_000 }).catch((error: unknown) => ctx.exit({ status: "failed", resumable: true, reason: `Evidence allocation failed: ${String(error)}` }));
     const ledger: unknown[] = [], linearTransitions: LinearState[] = [], cleanupTokens = t.appTokenCleanup(cwd, root);
-    let retainTokens = false, installationDeferred = input.defer_installation;
+    let retainTokens = false, installationDeferred = input.defer_installation, adoptedTaskIds: string[] = [];
     const index: { node: string; ok: boolean; evidence: string }[] = [];
     let lockedDeclaration: string | null = null, humanBaseline = "";
     let dnsState: DnsChainState = { kind: "Absent" };
@@ -62,7 +62,7 @@ export default workflow({
     };
     const propose = <T>(name: string, execute: (id: string, feedback: string[]) => Promise<T>) => proposalLoop(name, input.max_repair_attempts, root, execute, persist, (question) => ctx.ui.input(question));
     const implement = (name: string, slice: Slice, instructions = "", replan = false, medium = false, artifacts: string[] = []) => propose(name, async (id, feedback) => {
-      const before = await tool(`snapshot-${id}`, (signal) => t.snapshot(cwd, signal));
+      slice = { ...slice, taskIds: slice.taskIds.filter((task) => !adoptedTaskIds.includes(task)) }; const before = await tool(`snapshot-${id}`, (signal) => t.snapshot(cwd, signal));
       await persist(`bases-${id}`, t.proposalBases(before.value, slice));
       const result = await stage(id, { ...(medium ? MEDIUM : HIGH), ...READ_ONLY, reads: [...reads, `${root}/contracts.json`, `${root}/ledger-index.json`, `${root}/bases-${id}.json`, ...artifacts, ...feedback], schema: StageOutput, prompt: replan ? p.replanPrompt(cwd, root, artifacts[0]!) : p.implementPrompt(cwd, root, slice, instructions) });
       const patch = proposalValue(StageOutput, result.structured);
@@ -119,7 +119,7 @@ export default workflow({
             if (!(error instanceof GateFailure)) throw error;
             failure = error;
           }
-          const invalidTasks = slice.name === "s4" ? [] : slice.taskIds;
+          const invalidTasks = slice.name === "s4" ? [] : slice.taskIds.filter((task) => !adoptedTaskIds.includes(task));
           await tool(`invalidate-tasks-${id}`, (signal) => t.resetTasks(cwd, invalidTasks, signal, humanBaseline));
           for (const entry of gateLedger) if (entry.gate === name || entry.taskIds.some((task) => invalidTasks.includes(task))) entry.status = { kind: "Invalidated", reason: failure.receipt };
           passed(failure.gate, invalidTasks, failure.receipt, { kind: "Invalidated", reason: "Gate failed" });
@@ -144,20 +144,20 @@ export default workflow({
       return runBatch(1);
     };
     try {
-      const adoptionMode = t.adoptionMode(input);
+      const adoptionMode = t.adoptionMode(input), adoptedSlices = t.routedSlices(input), terraformSelection = t.terraformSourceInputs(input); adoptedTaskIds = [s1, postG1, { ...s2, taskIds: ["6.1", "6.2"] }].filter((slice) => adoptedSlices.includes(slice.name as t.RoutedSlice)).flatMap((slice) => slice.taskIds);
       const initial = await tool("preflight", async (signal) => {
         const models = catalogPort(ctx);
         const catalog = models ? await models.listModels() : null;
         await t.save(cwd, `${root}/model-catalog.json`, catalog ?? { note: "Model catalog port unavailable; native resolution and post-call model/thinking rejection apply. Implicit host fallback risk accepted by operator." });
-        if (catalog !== null) assertCatalog(catalog); return t.preflight(cwd, input.splice_after, signal, adoptionMode ? { root, mode: adoptionMode } : null);
+        if (catalog !== null) assertCatalog(catalog); return t.preflight(cwd, input.splice_after, signal, adoptionMode ? { root, mode: adoptionMode, slices: adoptedSlices } : null);
       }, timeout);
       chain = initial.value.chain; humanBaseline = initial.value.humanBoxes;
       passed("preflight-task-baseline", initial.value.taskIds, initial.evidence, { kind: "Unverified", reason: "No tool observation yet" });
       const installationPorts = { tool, persist, passed, confirm: (question: string) => ctx.ui.confirm(question), writeFile, effects: t };
       await persist("contracts", { s1, postG1, s2, s4, docs, report, negativeControls });
       const adoption = "adoption" in initial.value ? initial.value.adoption : null, routedAdoption = "routedAdoption" in initial.value ? initial.value.routedAdoption : null;
-      let s1Partial: a.S1Partial | null = null;
-      if (routedAdoption) s1Partial = await a.adoptRouted(cwd, routedAdoption.file, humanBaseline, installationPorts); else if (adoption) await a.adoptWorkingCopy(cwd, adoption.file, humanBaseline, s1.taskIds, installationPorts); else await implement("implement", s1);
+      let s1Partial: a.S1Partial | null = null; const adopted = await a.adoptSuccessors(cwd, adoptedSlices, humanBaseline, installationPorts);
+      if (routedAdoption) s1Partial = await a.adoptRouted(cwd, routedAdoption.file, humanBaseline, installationPorts, adoptedSlices); else if (adoption) await a.adoptWorkingCopy(cwd, adoption.file, humanBaseline, s1.taskIds.filter((task) => !adoptedTaskIds.includes(task)), installationPorts); else await implement("implement", s1);
       if (installationDeferred) validation = { ...validation, ...await recordDeferredInstallation(cwd, root, humanBaseline, installationPorts) };
       const started = async () => { await tool("first-task-witness", async (signal) => { signal.throwIfAborted(); if (!/^- \[x\] /m.test(await readFile(join(cwd, tasks), "utf8"))) throw new Blocked("No first completed task"); return { started: true }; }); await transition("T2", "In Progress", `Implementation has started for CAM-56. Evidence is recorded in ${root}.`); };
       // Locking and relocking are distinct controller nodes inside the bounded gate.
@@ -170,11 +170,12 @@ export default workflow({
           await tool(`stable-${id}`, async (signal) => ({ stable: true, ...t.assertScopedInputs(tree.value, await t.snapshot(cwd, signal), s1) }), 120_000, true);
           switch (review.verdict) { case "Approve": return gate; case "Reject": await persist(`rejection-${id}`, { findings: review.findings, reviewer: `${root}/review-s1-${id}.md`, diff: diff.value, gate: gate.evidence }); throw new GateFailure(id, `${root}/rejection-${id}.json`, review.findings.join("\n")); default: return unreachable(review); }
         });
-        recordS1(gateLedger, s1Result.value, s1Result.evidence); await tool("s1-ledger", (signal) => t.tick(cwd, s1Result.value.verifiedTasks, signal, humanBaseline)); validation.v9 = { kind: "Pass", evidence: s1Result.evidence };
+        recordS1(gateLedger, s1Result.value, s1Result.evidence); await tool("s1-ledger", (signal) => t.tick(cwd, s1Result.value.verifiedTasks.filter((task) => !adoptedTaskIds.includes(task)), signal, humanBaseline)); validation.v9 = { kind: "Pass", evidence: s1Result.evidence };
         await started(); await land("route-s1", s1); s1Partial = { revision: chain.tip, observations: s1Result.value.observations, evidence: s1Result.evidence };
       } else await started();
-      const committedForge = await observe("s1-committed-forge-pre", (signal) => t.recordCommittedForgePre(cwd, s1Partial!.revision, { observations: s1Partial!.observations, evidence: s1Partial!.evidence }, signal, humanBaseline), timeout);
-      passed("s1-committed-forge-pre", ["5.3"], `${root}/s1-committed-forge-pre.json`, committedForgeStatus(committedForge)); await persist("gate-ledger-committed-forge-pre", gateLedger);
+      if (!adoptedSlices.includes("s1")) {
+        const committedForge = await observe("s1-committed-forge-pre", (signal) => t.recordCommittedForgePre(cwd, s1Partial!.revision, { observations: s1Partial!.observations, evidence: s1Partial!.evidence }, signal, humanBaseline), timeout);
+        passed("s1-committed-forge-pre", ["5.3"], `${root}/s1-committed-forge-pre.json`, committedForgeStatus(committedForge)); await persist("gate-ledger-committed-forge-pre", gateLedger); }
       const registration = input.defer_installation ? p.deferredRegistration : p.registration;
       await tool("G1-material", async (signal) => { signal.throwIfAborted(); await writeFile(join(cwd, `${root}/G1.md`), registration); return { file: `${root}/G1.md` }; });
       const reply = await ctx.ui.input(`${registration}\nMaterial: ${root}/G1.md\nSuggested slug: ${input.app_slug_hint ?? "sciexp-gitea-mq"}`);
@@ -186,27 +187,28 @@ export default workflow({
       const g1Token = installationDeferred ? null : await tool("G1-mint-token", (signal) => t.mintAppToken(cwd, root, "G1", appReply.id, signal));
       const app = await tool("G1-witnesses", (signal) => t.observeApp(cwd, root, appReply, g1Token?.value ?? null, signal));
       const leaks = await tool("positive-controlled-leak-scan", (signal) => t.leakScan(cwd, signal), timeout);
-      await implement("patch-app-id", postG1, `Set services.gitea-mq.github.appId to tool-observed ${app.value.id}; remove the placeholder, change no other settings.`);
-      const patched = await bounded("post-g1-s1-gate", postG1, (id) => tool(id, async (signal) => {
-        const gate = await t.s1Gate(cwd, initial.value.lock, initial.value.baseline, signal, app.value.id);
-        if (await t.run(cwd, "nix eval --raw --apply toString .#nixosConfigurations.magnetite.config.services.gitea-mq.github.appId", signal) !== String(app.value.id)) throw new Blocked("App-id patch mismatch"); return gate;
-      }, timeout, true));
       await recordRegistration(cwd, app.evidence, humanBaseline, installationDeferred, installationPorts);
       passed("G1-credentials", ["3.2"], credentials.evidence); passed("G1-leaks", ["3.3"], leaks.evidence);
-      recordS1(gateLedger, patched.value, patched.evidence);
-      await tool("post-g1-s1-ledger", (signal) => t.tick(cwd, patched.value.verifiedTasks, signal, humanBaseline));
-      validation.v9 = { kind: "Pass", evidence: patched.evidence };
-      await land("route-post-g1", postG1);
-      await implement("hostname", s2);
-      let dnsApplyAttempted = false;
-      const dnsGate = (name: string) => bounded(name, s2, async (id) => {
-        await tool(`dns-unverified-${id}`, (signal) => t.resetTasks(cwd, ["6.1", "6.2"], signal, humanBaseline));
+      if (adopted.has("post-g1")) await a.appIdWitness(app.value.id, adopted.get("post-g1")!.appId, installationPorts); else {
+        await implement("patch-app-id", postG1, `Set services.gitea-mq.github.appId to tool-observed ${app.value.id}; remove the placeholder, change no other settings.`);
+        const patched = await bounded("post-g1-s1-gate", postG1, (id) => tool(id, async (signal) => {
+          const gate = await t.s1Gate(cwd, initial.value.lock, initial.value.baseline, signal, app.value.id);
+          if (await t.run(cwd, "nix eval --raw --apply toString .#nixosConfigurations.magnetite.config.services.gitea-mq.github.appId", signal) !== String(app.value.id)) throw new Blocked("App-id patch mismatch"); return gate;
+        }, timeout, true));
+        recordS1(gateLedger, patched.value, patched.evidence);
+        await tool("post-g1-s1-ledger", (signal) => t.tick(cwd, patched.value.verifiedTasks.filter((task) => !adoptedTaskIds.includes(task)), signal, humanBaseline));
+        validation.v9 = { kind: "Pass", evidence: patched.evidence };
+        await land("route-post-g1", postG1);
+      }
+      if (!adopted.has("s2")) await implement("hostname", s2); let dnsApplyAttempted = false;
+      const dnsAttempt = async (id: string) => {
+        if (!adopted.has("s2")) await tool(`dns-unverified-${id}`, (signal) => t.resetTasks(cwd, ["6.1", "6.2"], signal, humanBaseline));
         const reviewed = await tool(`dns-reviewed-${id}`, (signal) => t.reviewDnsContent(cwd, signal));
-        const routed = await land(`route-dns-source-${id}`, s2, true, dnsCandidateId(dnsState));
+        const routed = adopted.get("s2")?.changeId ?? await land(`route-dns-source-${id}`, s2, true, dnsCandidateId(dnsState));
         const candidate = dnsCandidateId(dnsState) ?? routed;
         if (candidate === null) throw new GateFailure(`route-dns-source-${id}`, `${root}/pending-route-dns-source-${id}.json`, "No DNS source edit is pending for the candidate");
         await recordDns(`dns-quarantine-${id}`, { kind: "Quarantined", id: candidate });
-        const source = await tool(`dns-source-${id}`, (signal) => t.resolveSource(cwd, chain!.tip, "rollup-landing", signal));
+        const source = await tool(`dns-source-${id}`, (signal) => terraformSelection === null ? t.resolveSource(cwd, chain!.tip, "rollup-landing", signal) : t.resolveTerraformSource(cwd, chain!.tip, terraformSelection, signal));
         await tool(`dns-content-${id}`, (signal) => t.verifyDnsSource(cwd, source.value, reviewed.value, signal), 120_000, true);
         const planned = await tool(`terraform-plan-${id}`, (signal) => t.planDns(cwd, root, id, source.value, signal, dnsApplyAttempted), timeout, true);
         switch (planned.value.decision.kind) {
@@ -220,11 +222,10 @@ export default workflow({
         }
         const resolved = await tool(`dig-${id}`, async (signal) => ({ dns: await t.dnsWitness(cwd, signal), planReceipt: planned.evidence, planHash: planned.value.sha256 }), 120_000, true);
         await recordDns(`dns-accepted-${id}`, { kind: "Accepted", id: dnsCandidateId(dnsState)! }); return resolved;
-      });
-      const dns = await dnsGate("dns");
-      await tool("dns-ledger", (signal) => t.tick(cwd, ["6.1", "6.2"], signal, humanBaseline));
-      passed("dns", ["6.1", "6.2"], dns.evidence);
-      await land("route-s2", s2, true, dnsCandidateId(dnsState));
+      };
+      const dns = adopted.has("s2") ? await dnsAttempt("adopted-s2") : await bounded("dns", s2, dnsAttempt); // Fresh external effects, never inherited ledger claims.
+      if (!adopted.has("s2")) await tool("dns-ledger", (signal) => t.tick(cwd, ["6.1", "6.2"], signal, humanBaseline)); passed("dns", ["6.1", "6.2"], dns.evidence);
+      if (!adopted.has("s2")) await land("route-s2", s2, true, dnsCandidateId(dnsState));
       const beforeRules = await tool("read-rulesets", (signal) => t.readRules(cwd, root, signal), 120_000, false, true);
       const { draft, rendered } = await propose("render-ruleset-diff", async (id, feedback) => {
         const draft = proposalValue(RulesetDraft, (await stage(id, { ...MEDIUM, ...READ_ONLY, reads: [...reads, beforeRules.value.file, `${root}/app.json`, ...feedback], schema: RulesetDraft, prompt: p.rulesetPrompt(cwd, root) })).structured);
@@ -251,13 +252,13 @@ export default workflow({
         if (nixChanged) {
           const dependent = gateLedger.filter((entry) => ["s1", "s1-committed-forge-pre", "deployment", "rollback", "V2", "V3", "V6"].includes(entry.gate));
           for (const entry of dependent) entry.status = { kind: "Invalidated", reason: `Nix repair ${id}` };
-          await tool(`dependent-tasks-${id}`, (signal) => t.resetTasks(cwd, [...new Set(dependent.flatMap((entry) => entry.taskIds))], signal, humanBaseline));
+          await tool(`dependent-tasks-${id}`, (signal) => t.resetTasks(cwd, [...new Set(dependent.flatMap((entry) => entry.taskIds))].filter((task) => !adoptedTaskIds.includes(task)), signal, humanBaseline));
           validation = { v2: { kind: "NotRun", reason: `Invalidated by ${id}` }, v3: { kind: "NotRun", reason: `Invalidated by ${id}` }, v6: { kind: "NotRun", reason: `Invalidated by ${id}` }, v9: { kind: "NotRun", reason: `Invalidated by ${id}` } };
           deployed = null; await persist(`dependent-invalidation-${id}`, gateLedger);
         }
         const gate = await tool(`eval-repair-${id}`, (signal) => t.s1Gate(cwd, initial.value.lock, initial.value.baseline, signal, app.value.id), timeout, true);
         recordS1(gateLedger, gate.value, gate.evidence); validation.v9 = { kind: "Pass", evidence: gate.evidence };
-        await tool(`s1-ledger-${id}`, (signal) => t.tick(cwd, gate.value.verifiedTasks, signal, humanBaseline));
+        await tool(`s1-ledger-${id}`, (signal) => t.tick(cwd, gate.value.verifiedTasks.filter((task) => !adoptedTaskIds.includes(task)), signal, humanBaseline));
         await land(`route-repair-${id}`, s4, true);
         if (input.deploy && nixChanged) {
           const source = await tool(`repair-source-${id}`, (signal) => t.resolveSource(cwd, chain!.tip, "rollup-landing", signal));
