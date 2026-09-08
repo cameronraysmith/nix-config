@@ -8,7 +8,7 @@ import { Validation as ValidationSchema } from "./gitea-mq/types.js";
 import { dir, tasks, design, verify, reads, s1, postG1, s2, s4, docs, report, negativeControls, type Slice } from "./gitea-mq/slices.js";
 import * as t from "./gitea-mq/tools.js";
 import * as p from "./gitea-mq/prompts.js";
-import { repairEffect, repairPaths, dnsChainLabel, dnsCandidateId, dnsRecovery, type DnsChainState, type RepairEffect, type GateEntry, type GateStatus } from "./gitea-mq/ledger.js";
+import { recordS1, committedForgeStatus, repairEffect, repairPaths, dnsChainLabel, dnsCandidateId, dnsRecovery, type DnsChainState, type RepairEffect, type GateEntry, type GateStatus } from "./gitea-mq/ledger.js";
 import type { LinearState } from "./gitea-mq/types.js";
 import { GateFailure, Stop, ProposalRejected, proposalValue, proposalLoop, rejectStructuredContract } from "./gitea-mq/control.js";
 export default workflow({
@@ -27,7 +27,6 @@ export default workflow({
     let dnsState: DnsChainState = { kind: "Absent" };
     const gateLedger: GateEntry[] = []; let pendingChangeProposals: string[] = [];
     const passed = (gate: string, taskIds: string[], evidence: string, status: GateStatus = { kind: "Passed" }) => gateLedger.push({ gate, taskIds, evidence, status });
-    const recordS1 = (gate: Awaited<ReturnType<typeof t.s1Gate>>, evidence: string) => { for (const row of gate.observations) passed("s1", [row.taskId], evidence, row.missing.length ? { kind: "Unverified", reason: row.missing.join(", ") } : { kind: "Passed" }); };
     let chain: t.Chain | null = null, tracked: Witness<string[]> | null = null, deployed: Witness<boolean> | null = null, written: Witness<boolean> | null = null;
     let validation: Validation = { v2: { kind: "NotRun", reason: "Not reached" }, v3: { kind: "NotRun", reason: "Not reached" }, v6: { kind: "NotRun", reason: "Not reached" }, v9: { kind: "NotRun", reason: "Not reached" } };
     const persist = async (name: string, data: unknown) => {
@@ -158,19 +157,20 @@ export default workflow({
       if (adoption) { await tool("adopt-s1", (signal) => t.adoptS1(cwd, adoption.file, humanBaseline, signal)); await tool("adopt-s1-reset-tasks", (signal) => t.resetTasks(cwd, s1.taskIds, signal, humanBaseline)); } else await implement("implement", s1);
       // Locking and relocking are distinct controller nodes inside the bounded gate.
       const s1Result = await bounded("s1", s1, async (id) => {
-        const gate = await tool(`gate-${id}`, (signal) => t.s1Gate(cwd, initial.value.lock, initial.value.baseline, signal), timeout, true);
+        const gate = await tool(`gate-${id}`, async (signal) => { await t.resetTasks(cwd, ["5.3"], signal, humanBaseline); return t.s1Gate(cwd, initial.value.lock, initial.value.baseline, signal); }, timeout, true);
         const diff = await tool(`diff-${id}`, (signal) => t.diffArtifact(cwd, root, id, signal, input.adopt_working_copy ? s1.allowedPaths : undefined));
         const tree = await tool(`tree-${id}`, (signal) => t.snapshot(cwd, signal));
         const review = parse(Review, (await stage(`review-s1-${id}`, { ...MAX, ...READ_ONLY, reads: [...reads, diff.value, gate.evidence, `${root}/contracts.json`], schema: Review, prompt: p.reviewPrompt(cwd, root) })).structured);
         await tool(`stable-${id}`, async (signal) => ({ stable: true, ...t.assertScopedInputs(tree.value, await t.snapshot(cwd, signal), s1) }), 120_000, true);
         switch (review.verdict) { case "Approve": return gate; case "Reject": await persist(`rejection-${id}`, { findings: review.findings, reviewer: `${root}/review-s1-${id}.md`, diff: diff.value, gate: gate.evidence }); throw new GateFailure(id, `${root}/rejection-${id}.json`, review.findings.join("\n")); default: return unreachable(review); }
       });
-      recordS1(s1Result.value, s1Result.evidence);
-      await tool("s1-ledger", (signal) => t.tick(cwd, s1Result.value.verifiedTasks, signal, humanBaseline));
+      recordS1(gateLedger, s1Result.value, s1Result.evidence); await tool("s1-ledger", (signal) => t.tick(cwd, s1Result.value.verifiedTasks, signal, humanBaseline));
       validation.v9 = { kind: "Pass", evidence: s1Result.evidence };
       await tool("first-task-witness", async (signal) => { signal.throwIfAborted(); if (!/^- \[x\] /m.test(await readFile(join(cwd, tasks), "utf8"))) throw new Blocked("No first completed task"); return { started: true }; });
       await transition("T2", "In Progress", `Implementation has started for CAM-56. Evidence is recorded in ${root}.`);
       await land("route-s1", s1);
+      const committedForge = await observe("s1-committed-forge-pre", (signal) => t.recordCommittedForgePre(cwd, chain!.tip, { observations: s1Result.value.observations, evidence: s1Result.evidence }, signal, humanBaseline), timeout);
+      passed("s1-committed-forge-pre", ["5.3"], `${root}/s1-committed-forge-pre.json`, committedForgeStatus(committedForge)); await persist("gate-ledger-committed-forge-pre", gateLedger);
       await tool("G1-material", async (signal) => { signal.throwIfAborted(); await writeFile(join(cwd, `${root}/G1.md`), p.registration); return { file: `${root}/G1.md` }; });
       const reply = await ctx.ui.input(`${p.registration}\nMaterial: ${root}/G1.md\nSuggested slug: ${input.app_slug_hint ?? "sciexp-gitea-mq"}`);
       if (!reply?.trim()) throw new Stop("declined", "G1 declined");
@@ -189,7 +189,7 @@ export default workflow({
       await tool("G1-ledger", (signal) => t.tick(cwd, ["1.2", "1.3", "1.4", "3.2", "3.3"], signal, humanBaseline));
       passed("G1-registration", ["1.2", "1.3", "1.4"], app.evidence);
       passed("G1-credentials", ["3.2"], credentials.evidence); passed("G1-leaks", ["3.3"], leaks.evidence);
-      recordS1(patched.value, patched.evidence);
+      recordS1(gateLedger, patched.value, patched.evidence);
       await tool("post-g1-s1-ledger", (signal) => t.tick(cwd, patched.value.verifiedTasks, signal, humanBaseline));
       validation.v9 = { kind: "Pass", evidence: patched.evidence };
       await land("route-post-g1", postG1);
@@ -251,14 +251,14 @@ export default workflow({
         }
         const nixChanged = effect.paths.some((path) => path.endsWith(".nix") || path === "flake.lock");
         if (nixChanged) {
-          const dependent = gateLedger.filter((entry) => ["s1", "deployment", "rollback", "V2", "V3", "V6"].includes(entry.gate));
+          const dependent = gateLedger.filter((entry) => ["s1", "s1-committed-forge-pre", "deployment", "rollback", "V2", "V3", "V6"].includes(entry.gate));
           for (const entry of dependent) entry.status = { kind: "Invalidated", reason: `Nix repair ${id}` };
           await tool(`dependent-tasks-${id}`, (signal) => t.resetTasks(cwd, [...new Set(dependent.flatMap((entry) => entry.taskIds))], signal, humanBaseline));
           validation = { v2: { kind: "NotRun", reason: `Invalidated by ${id}` }, v3: { kind: "NotRun", reason: `Invalidated by ${id}` }, v6: { kind: "NotRun", reason: `Invalidated by ${id}` }, v9: { kind: "NotRun", reason: `Invalidated by ${id}` } };
           deployed = null; await persist(`dependent-invalidation-${id}`, gateLedger);
         }
         const gate = await tool(`eval-repair-${id}`, (signal) => t.s1Gate(cwd, initial.value.lock, initial.value.baseline, signal, app.value.id), timeout, true);
-        recordS1(gate.value, gate.evidence); validation.v9 = { kind: "Pass", evidence: gate.evidence };
+        recordS1(gateLedger, gate.value, gate.evidence); validation.v9 = { kind: "Pass", evidence: gate.evidence };
         await tool(`s1-ledger-${id}`, (signal) => t.tick(cwd, gate.value.verifiedTasks, signal, humanBaseline));
         await land(`route-repair-${id}`, s4, true);
         if (input.deploy && nixChanged) {

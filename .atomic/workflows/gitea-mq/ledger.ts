@@ -57,6 +57,21 @@ export type GateEntry = {
   evidence: string;
   status: GateStatus;
 };
+/** Deferred working-copy gates cannot supersede committed evidence, including invalidation. */
+export function recordS1(ledger: GateEntry[], gate: { observations: { taskId: string; missing: readonly string[] }[]; forgePre: { reason: string } }, evidence: string) {
+  for (const row of gate.observations) {
+    if (row.taskId === "5.3" && ledger.some((entry) => entry.gate === "s1-committed-forge-pre")) continue;
+    const status: GateStatus = row.taskId === "5.3" ? { kind: "Unverified", reason: `Deferred: ${gate.forgePre.reason}` } : row.missing.length ? { kind: "Unverified", reason: row.missing.join(", ") } : { kind: "Passed" };
+    ledger.push({ gate: "s1", taskIds: [row.taskId], evidence, status });
+  }
+}
+
+export function committedForgeStatus(result: { ok: true; value: { evidence: { kind: string; verifiedTasks: string[]; reason?: string } } } | { ok: false; error: unknown }): GateStatus {
+  if (!result.ok) return { kind: "Unverified", reason: `NotRun: ${JSON.stringify(result.error)}` };
+  const value = result.value.evidence;
+  if (value.kind === "Passed" && value.verifiedTasks.includes("5.3")) return { kind: "Passed" };
+  return { kind: "Unverified", reason: value.kind === "NotRun" ? `NotRun: ${value.reason}` : `${value.kind}: immutable comparison or remaining task 5.3 arms not passed` };
+}
 
 
 /** Only current controller receipts authorize a report's task verification claims. */

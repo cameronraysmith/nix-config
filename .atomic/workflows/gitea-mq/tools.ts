@@ -2,7 +2,7 @@ import { readFile, writeFile, lstat, mkdir } from "node:fs/promises";
 import { resolve, join, dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
 import { Blocked, within, unreachable } from "../bump/types.js";
 import { quote, requireSuccess } from "../bump/tools.js";
 import {
@@ -11,7 +11,7 @@ import {
 } from "../omnigent/tools.js";
 import { snapshot, assertHealthy, oneId, ids, pathsIn } from "./vcs.js";
 import {
-  resolveSource as sharedResolveSource, committedSource, type DeploymentSource,
+  resolveSource as sharedResolveSource, resolveRevisionSource, committedSource, type DeploymentSource,
 } from "../omnigent/deployment.js";
 import { capture, captureStreaming, readResponse, assertExternalEvidence, canonicalExternalEvidence } from "./process.js";
 export { processCheckpoint, allocateEvidence } from "./process.js";
@@ -114,23 +114,58 @@ export async function forgeBaseline(cwd: string, adopted: boolean, signal: Abort
     return { kind: "Evaluated" as const, adopted, provenance, evaluation: await evaluateForgePre(cwd, provenance.source, signal) };
   } catch (error) {
     signal.throwIfAborted();
-    if (!adopted) throw error;
-    return { kind: "NotRun" as const, adopted, provenance, reason: `Immutable pre-S1 evaluation unavailable: ${String(error)}` };
+    return { kind: "NotRun" as const, adopted, provenance, reason: `Pre-S1 evaluation unavailable: ${String(error)}` };
   }
 }
-export async function compareForgePre(cwd: string, baseline: unknown, signal: AbortSignal) {
-  let checked;
-  try { checked = parse(ForgeBaseline, baseline); }
-  catch { return { kind: "NotRun" as const, reason: "No evaluated pre-S1 baseline with provenance" }; }
-  if (checked.kind === "NotRun") return { kind: "NotRun" as const, reason: checked.reason, baseline: checked };
-  if (checked.adopted && checked.provenance.kind !== "CommittedPreS1" ||
-      checked.provenance.kind === "CommittedPreS1" && checked.provenance.source !== committedSource(cwd, checked.provenance.sha, "rollup-landing").source ||
-      checked.evaluation.command !== forgeCommand(checked.provenance.source)) {
-    return { kind: "NotRun" as const, reason: "Baseline provenance does not establish pre-S1 source", baseline: checked };
+/** Working-copy evidence is partial, regardless of how the baseline was obtained. */
+export async function deferredForgePre(cwd: string, baseline: unknown, signal: AbortSignal) {
+  let checked: Static<typeof ForgeBaseline> | null = null;
+  try { checked = parse(ForgeBaseline, baseline); } catch { /* Legacy baseline is not evidence. */ }
+  const candidate = await observeForgePre(cwd, { source: ".", sha: null }, signal);
+  return { kind: "Deferred" as const, reason: "forge-pre-unchanged / task 5.3 awaits immutable parent/candidate evaluation after route-s1; the S1 candidate is the mutable working copy", baseline: checked, candidate };
+}
+/** Retain failed evaluation receipts too; neither side may prevent observing the other. */
+async function observeForgePre(cwd: string, source: { source: string; sha: string | null }, signal: AbortSignal) {
+  const command = forgeCommand(source.source);
+  let receipt: string | null = null;
+  try {
+    const result = await capture(cwd, command, signal);
+    receipt = result.logPath.replace(/\.log$/, ".json");
+    return { ...source, evaluation: { kind: "Evaluated" as const, command, receipt, value: parse(ForgePre, JSON.parse(requireSuccess(result))) } };
+  } catch (error) {
+    signal.throwIfAborted();
+    return { ...source, evaluation: { kind: "NotRun" as const, command, receipt, reason: String(error) } };
   }
-  const candidate = await evaluateForgePre(cwd, ".", signal);
-  const equal = isDeepStrictEqual(checked.evaluation.value, candidate.value);
-  return { kind: equal ? "Passed" as const : "Failed" as const, baseline: checked, candidate, comparison: { equal, projection: forgeProjection } };
+}
+/** Distinct post-route evidence: pin the routed commit first, then read its actual parent. */
+export async function committedForgePre(cwd: string, tip: string, observations: ReturnType<typeof s1Coverage>["observations"], signal: AbortSignal) {
+  let sources: { baseline: DeploymentSource; candidate: DeploymentSource };
+  try {
+    const candidate = await resolveRevisionSource(cwd, tip, "rollup-landing", signal, capture);
+    const parents = (await run(cwd, `git rev-list --parents -n 1 ${quote(candidate.sha)}`, signal)).split(/\s+/);
+    if (parents.length !== 2 || parents[0] !== candidate.sha || !/^[a-f0-9]{40}$/.test(parents[1]!)) throw new Blocked("Routed S1 revision must have exactly one committed parent");
+    sources = { baseline: committedSource(cwd, parents[1]!, "rollup-landing"), candidate };
+  } catch (error) {
+    signal.throwIfAborted();
+    return { kind: "NotRun" as const, reason: `Immutable S1 source resolution unavailable: ${String(error)}`, baseline: null, candidate: null, comparison: { equal: null, projection: forgeProjection }, verifiedTasks: [] as string[] };
+  }
+  const baseline = await observeForgePre(cwd, sources.baseline, signal);
+  const candidate = await observeForgePre(cwd, sources.candidate, signal);
+  if (baseline.evaluation.kind === "NotRun" || candidate.evaluation.kind === "NotRun") {
+    const reason = [baseline, candidate].flatMap((side) => side.evaluation.kind === "NotRun" ? [side.evaluation.reason] : []).join("; ");
+    return { kind: "NotRun" as const, reason, baseline, candidate, comparison: { equal: null, projection: forgeProjection }, verifiedTasks: [] as string[] };
+  }
+  const equal = isDeepStrictEqual(baseline.evaluation.value, candidate.evaluation.value);
+  const observed = observations.find((row) => row.taskId === "5.3")?.observed ?? [];
+  const verifiedTasks = equal ? s1Coverage([...observed, "forge-pre-unchanged"]).verifiedTasks.filter((task) => task === "5.3") : [];
+  return { kind: equal ? "Passed" as const : "Failed" as const, baseline, candidate, comparison: { equal, projection: forgeProjection }, verifiedTasks };
+}
+/** Called only by the post-route controller node; bind the partial S1 receipt to the tick. */
+export async function recordCommittedForgePre(cwd: string, tip: string, partial: { observations: ReturnType<typeof s1Coverage>["observations"]; evidence: string }, signal: AbortSignal, humanBaseline: string) {
+  await resetTasks(cwd, ["5.3"], signal, humanBaseline);
+  const result = await committedForgePre(cwd, tip, partial.observations, signal);
+  await tick(cwd, result.verifiedTasks, signal, humanBaseline);
+  return { ...result, partialEvidence: partial.evidence };
 }
 export async function validateChange(cwd: string, proposals: string[], signal: AbortSignal) {
   const command = `openspec validate ${quote(dir.split("/").at(-1)!)} --strict`;
@@ -298,16 +333,13 @@ export async function s1Gate(cwd: string, baselineLock: string, baseline: unknow
     environment = e.GITEA_MQ_BATCH_MAX == "0" && e.GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE == "true" && e.GITEA_MQ_REQUIRED_CHECKS == "nixbot/nix-eval,nixbot/nix-build" && !(e ? GITEA_MQ_MERGE_LABEL);
     vhost = c.services.nginx.virtualHosts."${domain}".forceSSL && c.services.nginx.virtualHosts."${domain}".enableACME && c.services.nginx.virtualHosts."${domain}".locations."/".proxyPass == "http://127.0.0.1:8092";
     nixbot = c.services.nixbot.domain == "nixbot.scientistexperience.net";
-    pre = c.systemd.services.gitea.serviceConfig.ExecStartPre or null;
   }`;
   const config = parse(S1Configuration, await json(cwd,
     `nix eval --json --no-write-lock-file .#nixosConfigurations.magnetite.config --apply ${quote(expression)}`, signal));
   if (![config.values, config.service, config.resources, config.credentials, config.bindings, config.ownership, config.environment, config.vhost, config.nixbot].every(Boolean)) throw new Blocked("S1 evaluated configuration differs from pinned contract");
   if (expectedAppId !== null && config.appId !== expectedAppId) throw new Blocked("App-id differs from tool observation");
-  const forgePre = await compareForgePre(cwd, baseline, signal);
-  if (forgePre.kind === "Failed") throw new Blocked(`Forge ExecStartPre changed: ${JSON.stringify(forgePre)}`);
+  const forgePre = await deferredForgePre(cwd, baseline, signal);
   const observed: S1Arm[] = ["host-derivation", "four-negative-controls", "build-locks-unchanged", "build-metadata-unchanged", "build-aspects-unchanged", "landing-settings", "landing-environment", "service-settings", "database-declaration", "credential-root-restart", "credential-bindings", "ensure-users-ownership", "vhost", "nixbot-domain", "dynamic-user", "cache-directory", "no-static-user", "loopback-listener"];
-  if (forgePre.kind === "Passed") observed.push("forge-pre-unchanged");
   if (expectedAppId !== null) observed.push("observed-app-id");
   return { drv, forgePre, negativeControls: negativeControls.map((c) => c.setting), ...s1Coverage(observed) };
 }

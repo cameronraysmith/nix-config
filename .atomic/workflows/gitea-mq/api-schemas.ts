@@ -85,5 +85,4 @@ export const S1Configuration = Type.Object({
   appId: Type.Integer(),
   vhost: Type.Boolean(),
   nixbot: Type.Boolean(),
-  pre: Type.Unknown(),
 });

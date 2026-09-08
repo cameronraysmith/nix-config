@@ -11,7 +11,7 @@ const dataUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).toStr
 export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, slices, ledgerTools, assertCompactCheckpoint }) {
   const { s1Coverage } = await import(moduleUrl(".atomic/workflows/gitea-mq/s1-observations.ts"));
   const report = await import(moduleUrl(".atomic/workflows/gitea-mq/verify-report.ts"));
-  async function execute({ changeProposal = false, proposalValidateFailure = false, adoptWorkingCopy = false, g3Recovery = "", blockedDiagnosis = false, declineG2 = false, decline = "", rejectS1 = false, revisePlan = false, createFailure = false, cleanupFailure = false, exhaust = false, replay = false, probeFailure = false, repairNix = false, v3Failure = false, repairEvalFailure = false, dnsReject = false, dnsRejectOnce = false, rejectRoborev = false, throwExit = false, noHostnameEdit = false, proposalFailure = "", extraClaims = false, transientFailure = false, resumeFailure = false, unexpected = "", wrongRules = "", drift = "", structuralFailure = "", nativeFailure = "", nativeMessage = "", tokenDirectory = "", terminalRecordFailure = false, postMintFailure = false, catalog, proposalDrift = "" } = {}) {
+  async function execute({ changeProposal = false, proposalValidateFailure = false, adoptWorkingCopy = false, forgeFailure = false, g3Recovery = "", blockedDiagnosis = false, declineG2 = false, decline = "", rejectS1 = false, revisePlan = false, createFailure = false, cleanupFailure = false, exhaust = false, replay = false, probeFailure = false, repairNix = false, v3Failure = false, repairEvalFailure = false, dnsReject = false, dnsRejectOnce = false, rejectRoborev = false, throwExit = false, noHostnameEdit = false, proposalFailure = "", extraClaims = false, transientFailure = false, resumeFailure = false, unexpected = "", wrongRules = "", drift = "", structuralFailure = "", nativeFailure = "", nativeMessage = "", tokenDirectory = "", terminalRecordFailure = false, postMintFailure = false, catalog, proposalDrift = "" } = {}) {
     const files = new Map();
     const events = [];
     const cache = new Map();
@@ -101,7 +101,16 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
           failRepairEval = false;
           throw Error("mock assertion/eval failed");
         }
-        return { drv: "/nix/store/mock.drv", ...s1Coverage(["host-derivation", "four-negative-controls", "build-locks-unchanged", "build-metadata-unchanged", "build-aspects-unchanged", "nixbot-domain"]) };
+        return { drv: "/nix/store/mock.drv", forgePre: { kind: "Deferred", reason: "Mutable candidate; await route-s1" }, ...s1Coverage(["host-derivation", "four-negative-controls", "build-locks-unchanged", "build-metadata-unchanged", "build-aspects-unchanged", "nixbot-domain", "dynamic-user", "cache-directory", "no-static-user", "loopback-listener"]) };
+      },
+      recordCommittedForgePre: async (_cwd, tip, partial, actualSignal, baseline) => {
+        assert.equal(actualSignal, signal); assert(revisions.has(tip), "Forge comparison must follow successful routing");
+        assert.match(committedTasks.get(tip), /- \[ \] 5\.3 /, "S1 must route with 5.3 unticked, including stale model ticks");
+        assert.deepEqual(partial.observations.find((row) => row.taskId === "5.3").missing, ["forge-pre-unchanged"]);
+        if (forgeFailure === "throw") throw Error("immutable eval transport failure");
+        const result = forgeFailure && forgeFailure !== "stale-tick" ? { kind: "NotRun", reason: "immutable eval unavailable", verifiedTasks: [] } : { kind: "Passed", verifiedTasks: ["5.3"] };
+        await tick(_cwd, result.verifiedTasks, actualSignal, baseline);
+        return { ...result, partialEvidence: partial.evidence };
       },
       diffArtifact: async (_cwd, evidence, name, _signal, paths) => {
         assert.deepEqual(paths, adoptWorkingCopy ? slices.s1.allowedPaths : undefined);
@@ -247,6 +256,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
         const edits = [];
         const propose = (path, after) => edits.push({ path, baseSha256: files.has(join(cwd, path)) ? tools.sha256(get(join(cwd, path))) : null, after });
         if (name.startsWith("implement")) propose("flake.nix", "input");
+        if (forgeFailure === "stale-tick" && name.startsWith("implement")) propose(slices.tasks, get(join(cwd, slices.tasks)).replace("[ ] 5.3", "[x] 5.3"));
         if (changeProposal && name.startsWith("implement")) propose(slices.design, "edited acceptance design");
         if (changeProposal && (name.startsWith("repair-") || name.startsWith("replan-"))) propose(slices.design, `change repair ${name}`);
         if (name.startsWith("patch-app-id")) propose(slices.aspect, "app 1234");
@@ -258,6 +268,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
         let structured = { summary: "mock implementation", edits };
         if (name.startsWith("review-") || name === "roborev") {
           if (adoptWorkingCopy && name.startsWith("review-s1")) assert(options.reads.some((path) => files.get(join(cwd, path)) === "adopted input diff"));
+          if (name.startsWith("review-s1")) assert.match(options.prompt, /5\.3.*deferred by design/i);
           structured = rejectReview || name === "roborev" && rejectRoborev ? { verdict: "Reject", findings: ["unique reviewer defect"] } : { verdict: "Approve" };
           rejectReview = false;
         }
@@ -337,6 +348,27 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
     }
     return { result: first.outputs ?? first, exit: first, events, files, root, cwd, revisions, committedTasks, toolOptions, nativeError };
   }
+  for (const adoptWorkingCopy of [false, true]) for (const forgeFailure of [false, true, "throw"]) {
+    const run = await execute({ adoptWorkingCopy, forgeFailure, replay: true });
+    assert.equal(run.result.status, "completed-with-caveat", "Post-route evidence failure must not block the run");
+    assert(run.events.indexOf("route-s1") < run.events.indexOf("s1-committed-forge-pre"));
+    assert(run.events.indexOf("s1-committed-forge-pre") < run.events.indexOf("G1-material"));
+    assert.equal(run.events.filter((event) => event === "s1-committed-forge-pre").length, 1);
+    const taskText = run.files.get(join(run.cwd, slices.tasks));
+    assert.match(taskText, forgeFailure ? /- \[ \] 5\.3 / : /- \[x\] 5\.3 /);
+    const ledger = JSON.parse(run.files.get(join(run.cwd, run.root, "gate-ledger.json")));
+    const forge = ledger.filter((entry) => entry.taskIds.includes("5.3")).at(-1);
+    assert.equal(forge.gate, "s1-committed-forge-pre", "Later working-copy gates cannot overwrite committed evidence");
+    assert.equal(forge.status.kind, forgeFailure ? "Unverified" : "Passed");
+    if (forgeFailure) assert.match(forge.status.reason, /NotRun.*immutable eval/);
+    const rendered = run.files.get(join(run.cwd, slices.verify));
+    assert.match(rendered, forgeFailure ? /task 5\.3; unverified;[^\n]*NotRun/ : /\[verified here\] task 5\.3; passed;/);
+  }
+  console.log("PASS committed forge graph: normal/adopted S1 route unticked; post-route node alone ticks 5.3; NotRun/transport failure continue honestly through verify and replay");
+  const staleForgeTick = await execute({ forgeFailure: "stale-tick" });
+  assert.equal(staleForgeTick.result.status, "completed-with-caveat");
+  assert.match(staleForgeTick.committedTasks.get("change-0"), /- \[ \] 5\.3 /);
+
   const missingValidation = await execute({ changeProposal: true, proposalValidateFailure: true });
   assert.equal(missingValidation.result.status, "blocked", "A change-directory proposal without successful fresh validation must fail its gate");
   assert(!missingValidation.events.includes("gate-s1-b1-a1"));
@@ -641,6 +673,8 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
   assert.equal(changed.result.status, "completed-with-caveat", changed.result.summary);
   const order = ["dependent-tasks-V3-b1-a2", "eval-repair-V3-b1-a2", "route-repair-V3-b1-a2", "reactivate-V3-b1-a2", "reprobe-V3-b1-a2", "V3-b1-a2"];
   for (let i = 1; i < order.length; i++) assert(changed.events.indexOf(order[i - 1]) < changed.events.indexOf(order[i]), order.join(" -> "));
+  assert.match(changed.files.get(join(changed.cwd, slices.tasks)), /- \[ \] 5\.3 /);
+  assert.match(changed.files.get(join(changed.cwd, slices.verify)), /task 5\.3; invalidated;/);
   const failedEval = await execute({ v3Failure: true, repairNix: true, repairEvalFailure: true });
   assert.equal(failedEval.result.status, "completed-with-caveat", failedEval.result.summary);
   assert(failedEval.events.includes("diagnose-V3-b1-a2"));

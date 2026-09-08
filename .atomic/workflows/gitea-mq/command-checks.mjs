@@ -332,6 +332,7 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
     if (command.includes("#checks.")) return observed("/nix/store/mock.drv");
     if (command.startsWith("nix flake metadata")) return observed({ locks: lock });
     if (command.includes("--apply")) {
+      if (command.includes("--apply 'c: { pre =")) return observed({ pre: null });
       for (const required of ["privateKeyFile ==", "webhookSecretFile ==", "ensureDBOwnership", "GITEA_MQ_BATCH_MAX"]) assert(command.includes(required));
       return observed({ values: true, service: true, resources: true, credentials: true, bindings: true, ownership: true, environment: true, appId: 1234, vhost: true, nixbot: true, pre: null, ...(badArm ? { [badArm]: false } : {}) });
     }
@@ -341,7 +342,7 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   const firstGate = await actual.s1Gate(cwd, JSON.stringify(lock), { pre: null }, signal);
   assert(!firstGate.verifiedTasks.includes("4.1"));
   assert(!firstGate.verifiedTasks.includes("5.3"), "A legacy dirty baseline without provenance must not verify task 5.3");
-  assert.equal(firstGate.forgePre.kind, "NotRun");
+  assert.equal(firstGate.forgePre.kind, "Deferred");
   assert(!firstGate.observations.find((row) => row.taskId === "5.3").observed.includes("forge-pre-unchanged"));
   const completeApp = await actual.s1Gate(cwd, JSON.stringify(lock), { pre: null }, signal, 1234);
   assert(completeApp.verifiedTasks.includes("4.1"));
@@ -353,47 +354,78 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   badArm = "";
   await assert.rejects(() => actual.s1Gate(cwd, JSON.stringify(lock), { pre: null }, signal, 999), /App-id/);
   {
-    const s1Handler = handler, sha = "e".repeat(40), pinned = `git+file:///mock?ref=rollup-landing&rev=${sha}`;
-    let failBaseline = false, baselineContainsS1 = false, candidatePre = ["original forge pre-start"];
+    const s1Handler = handler, sha = "e".repeat(40), candidateSha = "f".repeat(40), pinned = `git+file:///mock?ref=rollup-landing&rev=${sha}`;
+    let failedSide = "", baselineContainsS1 = false, candidatePre = ["original forge pre-start"];
     handler = (command) => {
-      if (command.endsWith("-T commit_id")) { assert(command.includes("'rollup-landing'")); return observed(sha); }
+      if (command.endsWith("-T commit_id")) return observed(command.includes("'routed-s1'") ? candidateSha : sha);
       if (command.startsWith("git cat-file")) return observed();
-      if (command.startsWith("git --no-pager show-ref")) return observed(`${sha} refs/heads/rollup-landing`);
+      if (command.startsWith("git --no-pager show-ref")) return observed(`${command.includes("rollup-landing") ? sha : candidateSha} refs/heads/rollup-landing`);
+      if (command.startsWith("git rev-list")) { assert(command.includes(candidateSha)); return observed(`${candidateSha} ${sha}`); }
       if (command.startsWith("git ls-tree")) return observed(baselineContainsS1 ? "100644 blob S1" : "");
       if (command.includes("--apply 'c: { pre =")) {
-        const committed = command.includes(pinned);
-        if (committed && failBaseline) return observed("", 1, "immutable eval unavailable");
-        return { ...observed({ pre: committed ? ["original forge pre-start"] : candidatePre }), logPath: committed ? "baseline-eval.log" : "candidate-eval.log" };
+        const side = command.includes(pinned) ? "baseline" : "candidate";
+        return { ...observed({ pre: side === "baseline" ? ["original forge pre-start"] : candidatePre }, failedSide === side ? 1 : 0, failedSide === side ? "immutable eval unavailable" : ""), logPath: `${side}-eval.log`, tail: failedSide === side ? "immutable eval unavailable" : "" };
       }
       return s1Handler(command);
     };
     const start = commands.length, adopted = await actual.forgeBaseline(cwd, true, signal);
     assert.equal(adopted.kind, "Evaluated");
     assert.deepEqual(adopted.provenance, { kind: "CommittedPreS1", source: pinned, sha });
-    assert(commands.slice(start).filter((command) => command.startsWith("nix eval")).every((command) => command.includes(pinned)), "Adoption baseline must never evaluate dirty candidate");
-    const gate = await actual.s1Gate(cwd, JSON.stringify(lock), adopted, signal);
-    assert.equal(gate.forgePre.kind, "Passed"); assert(gate.verifiedTasks.includes("5.3"));
-    assert.equal(gate.forgePre.baseline.evaluation.receipt, "baseline-eval.json");
-    assert.equal(gate.forgePre.candidate.receipt, "candidate-eval.json");
-    assert.equal(gate.forgePre.baseline.evaluation.command.split(" --apply ")[1], gate.forgePre.candidate.command.split(" --apply ")[1]);
-    assert.equal(gate.forgePre.comparison.equal, true);
+    assert(commands.slice(start).filter((command) => command.startsWith("nix eval")).every((command) => command.includes(pinned)));
     const ordinary = await actual.forgeBaseline(cwd, false, signal);
-    assert.deepEqual(ordinary.provenance, { kind: "PreflightWorkingCopy", source: ".", sha: null });
-    assert((await actual.s1Gate(cwd, JSON.stringify(lock), ordinary, signal)).verifiedTasks.includes("5.3"));
-    const dirty = await actual.s1Gate(cwd, JSON.stringify(lock), { ...ordinary, adopted: true }, signal);
-    assert.equal(dirty.forgePre.kind, "NotRun"); assert(!dirty.verifiedTasks.includes("5.3"));
+    for (const baseline of [adopted, ordinary, { ...ordinary, adopted: true }, { pre: null }]) {
+      const gate = await actual.s1Gate(cwd, JSON.stringify(lock), baseline, signal);
+      assert.equal(gate.forgePre.kind, "Deferred"); assert(!gate.verifiedTasks.includes("5.3"));
+      assert(!gate.observations.find((row) => row.taskId === "5.3").observed.includes("forge-pre-unchanged"));
+    }
     candidatePre = ["changed by S1"];
-    await assert.rejects(() => actual.s1Gate(cwd, JSON.stringify(lock), adopted, signal), /Forge ExecStartPre changed.*"equal":false/);
-    failBaseline = true;
-    const failStart = commands.length, unavailable = await actual.forgeBaseline(cwd, true, signal);
-    assert.equal(unavailable.kind, "NotRun"); assert.equal(unavailable.provenance.sha, sha);
-    assert(commands.slice(failStart).filter((command) => command.startsWith("nix eval")).every((command) => command.includes(pinned)));
-    const skipped = await actual.s1Gate(cwd, JSON.stringify(lock), unavailable, signal);
-    assert.equal(skipped.forgePre.kind, "NotRun"); assert(!skipped.verifiedTasks.includes("5.3"));
+    assert.equal((await actual.s1Gate(cwd, JSON.stringify(lock), adopted, signal)).forgePre.kind, "Deferred", "Mutable mismatch must not fail the gate");
+    candidatePre = ["original forge pre-start"];
+    const coverage = (await actual.s1Gate(cwd, JSON.stringify(lock), adopted, signal)).observations;
+    // Only process/filesystem ports are fake: source resolution and both eval helpers are real.
+    const committedStart = commands.length;
+    const committed = await actual.committedForgePre(cwd, "routed-s1", coverage, signal);
+    assert.equal(committed.kind, "Passed"); assert.deepEqual(committed.verifiedTasks, ["5.3"]);
+    assert.equal(committed.baseline.sha, sha); assert.equal(committed.candidate.sha, candidateSha);
+    assert.equal(committed.baseline.evaluation.receipt, "baseline-eval.json");
+    assert.equal(committed.candidate.evaluation.receipt, "candidate-eval.json");
+    assert.equal(committed.baseline.evaluation.command.split(" --apply ")[1], committed.candidate.evaluation.command.split(" --apply ")[1]);
+    assert.equal(committed.comparison.equal, true);
+    const evals = commands.slice(committedStart).filter((command) => command.startsWith("nix eval"));
+    assert.equal(evals.length, 2);
+    for (const [i, revision] of [sha, candidateSha].entries()) assert(evals[i].includes(`git+file:///mock?ref=rollup-landing&rev=${revision}#`));
+    const forgeTasks = `${operatorTasks}\n- [ ] 5.3 forge service`, humanBaseline = tools.humanBoxes(forgeTasks);
+    files.set(taskPath, forgeTasks);
+    const recorded = await actual.recordCommittedForgePre(cwd, "routed-s1", { observations: coverage, evidence: "partial-s1.json" }, signal, humanBaseline);
+    assert.equal(recorded.kind, "Passed"); assert.equal(recorded.partialEvidence, "partial-s1.json");
+    assert.match(files.get(taskPath), /- \[x\] 5\.3 /);
+    for (const side of ["baseline", "candidate"]) {
+      failedSide = side;
+      const unavailable = await actual.committedForgePre(cwd, "routed-s1", coverage, signal);
+      assert.equal(unavailable.kind, "NotRun"); assert.match(unavailable.reason, /immutable eval unavailable/);
+      assert.deepEqual(unavailable.verifiedTasks, []); assert.equal(unavailable.comparison.equal, null);
+      assert.equal(unavailable.baseline.evaluation.receipt, "baseline-eval.json");
+      assert.equal(unavailable.candidate.evaluation.receipt, "candidate-eval.json");
+      files.set(taskPath, forgeTasks.replace("[ ] 5.3", "[x] 5.3"));
+      assert.equal((await actual.recordCommittedForgePre(cwd, "routed-s1", { observations: coverage, evidence: "partial-s1.json" }, signal, humanBaseline)).kind, "NotRun");
+      assert.match(files.get(taskPath), /- \[ \] 5\.3 /);
+      assert.equal((await actual.s1Gate(cwd, JSON.stringify(lock), adopted, signal)).forgePre.kind, "Deferred", "Even failed optional mutable evaluation must not fail S1");
+    }
+    failedSide = ""; candidatePre = ["changed by S1"];
+    const changed = await actual.committedForgePre(cwd, "routed-s1", coverage, signal);
+    assert.equal(changed.kind, "Failed"); assert.equal(changed.comparison.equal, false); assert.deepEqual(changed.verifiedTasks, []);
+    candidatePre = ["original forge pre-start"];
+    const partial = coverage.map((row) => row.taskId === "5.3" ? { ...row, observed: [] } : row);
+    assert.deepEqual((await actual.committedForgePre(cwd, "routed-s1", partial, signal)).verifiedTasks, [], "Forge equality alone cannot prove the other 5.3 arms");
+    failedSide = "baseline";
+    const unavailable = await actual.forgeBaseline(cwd, true, signal);
+    assert.equal(unavailable.kind, "NotRun");
+    assert.equal((await actual.s1Gate(cwd, JSON.stringify(lock), unavailable, signal)).forgePre.kind, "Deferred");
     baselineContainsS1 = true;
     assert.match((await actual.forgeBaseline(cwd, true, signal)).reason, /already contains S1/);
+    files.set(taskPath, operatorTasks);
     handler = s1Handler;
-    console.log("PASS forge pre-S1 provenance: adoption pins rollup rev, identical projections and both receipts; dirty/legacy/unavailable baselines cannot pass 5.3; changed projection fails");
+    console.log("PASS forge deferral: all pre-route baselines remain Deferred; immutable parent/candidate receipts alone pass 5.3; failed evaluations retain both receipts as non-gating NotRun");
   }
   {
     const previous = handler, proposals = ["apply-replan.json", "apply-repair.json"];
