@@ -26,6 +26,7 @@ export type GateStatus =
   | { kind: "Passed" }
   | { kind: "Observed"; result: VResult }
   | { kind: "Invalidated"; reason: string }
+  | { kind: "Unverified"; reason: string }
   | { kind: "Operator"; decision: "approved" | "declined" };
 
 export type GateEntry = {
@@ -46,6 +47,7 @@ export function passedClaims(ledger: readonly GateEntry[]): VerifyClaim[] {
           latest.set(taskId, { taskId, evidence: entry.evidence });
         }
         break;
+      case "Unverified":
       case "Invalidated":
         for (const taskId of entry.taskIds) latest.delete(taskId);
         break;
@@ -69,6 +71,7 @@ export function renderGateLedger(ledger: readonly GateEntry[]): string {
     const identity = `${entry.gate}; tasks ${entry.taskIds.join(", ") || "none"}; ${entry.evidence}`;
     switch (entry.status.kind) {
       case "Passed": return `- [verified here] ${identity}; passed`;
+      case "Unverified": return `- ${identity}; unverified: ${entry.status.reason}`;
       case "Invalidated": return `- ${identity}; invalidated: ${entry.status.reason}`;
       case "Observed": return `- ${identity}; ${JSON.stringify(entry.status.result)}`;
       case "Operator": return `- [operator] ${identity}; ${entry.status.decision}`;

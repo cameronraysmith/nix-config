@@ -1,20 +1,24 @@
-import { readFile, writeFile, lstat } from "node:fs/promises";
-import { resolve, join } from "node:path";
+import { readFile, writeFile, lstat, mkdir, unlink } from "node:fs/promises";
+import { resolve, join, dirname, posix } from "node:path";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { Type } from "typebox";
 import { Blocked, within, unreachable } from "../bump/types.js";
 import { quote, requireSuccess } from "../bump/tools.js";
 import {
-  capture, save, snapshot, assertHealthy, oneId, ids, pathsIn,
+  save,
   squashCommand, classifyScope, assertScopeInputs, type Tree,
 } from "../omnigent/tools.js";
+import { snapshot, assertHealthy, oneId, ids, pathsIn } from "./vcs.js";
 import {
-  applyDns as applySavedDns, resolveSource, updateMachine, type DeploymentSource,
+  resolveSource as sharedResolveSource, type DeploymentSource,
 } from "../omnigent/deployment.js";
+import { capture, captureStreaming, readResponse, assertExternalEvidence } from "./process.js";
+export { processCheckpoint, allocateEvidence } from "./process.js";
+import { s1Coverage, type S1Arm } from "./s1-observations.js";
 import {
   parse, Ruleset, type AppReply, type RulesetDraft, type VResult,
-  type LinearState, type LinearOutcome,
+  type LinearState, type LinearOutcome, type ProposedEdit,
 } from "./types.js";
 import {
   api, rulesetApi, aspect, dir, tasks, proposal, verify, domain, repository,
@@ -25,7 +29,9 @@ import {
   App, AppInstallation, InstallationPages, RepositoryPages, CollaboratorPages,
   CheckPages, Pull, EventPages, StatusPages, DnsPlan, DnsRecord, S1Configuration,
 } from "./api-schemas.js";
-export { capture, save, snapshot, resolveSource };
+export { capture, save, snapshot };
+export const resolveSource = (cwd: string, tip: string, name: string, signal: AbortSignal) => sharedResolveSource(cwd, tip, name, signal, capture);
+export const runStreaming = async (cwd: string, command: string, signal: AbortSignal) => requireSuccess(await captureStreaming(cwd, command, signal));
 export const assertSameInputs = (before: Tree, after: Tree): void =>
   assertScopeInputs(before, after, [...new Set([...Object.keys(before), ...Object.keys(after)])]);
 export const run = async (cwd: string, command: string, signal: AbortSignal) =>
@@ -119,6 +125,39 @@ export function assertTaskScope(before: string, after: string, allowed: readonly
     if (!allowed.includes(id) && current.get(id) !== state) throw new Blocked(`Stage changed foreign task: ${id}`);
   }
 }
+export async function applyStageEdits(cwd: string, edits: readonly ProposedEdit[], slice: Slice, signal: AbortSignal) {
+  const seen = new Set<string>();
+  for (const edit of edits) {
+    signal.throwIfAborted();
+    if (posix.normalize(edit.path) !== edit.path || edit.path.startsWith("/") || edit.path.split("/").some((part) => ["", ".", "..", ".git", ".jj"].includes(part)) || edit.path.includes("\\") || seen.has(edit.path) || !slice.allowedPaths.some((prefix) => within(edit.path, prefix))) throw new Blocked(`Proposed path outside allowlist: ${edit.path}`);
+    seen.add(edit.path);
+    let part = cwd;
+    for (const segment of edit.path.split("/")) {
+      part = join(part, segment);
+      try { if ((await lstat(part)).isSymbolicLink()) throw new Blocked(`Symlink in proposed path: ${edit.path}`); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    }
+    let current: string | null = null;
+    try { current = await readFile(join(cwd, edit.path), "utf8"); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    if (current !== edit.before) throw new Blocked(`Proposed edit baseline changed: ${edit.path}`);
+    if (edit.path === tasks) {
+      assertHumanBoxes(current ?? "", edit.after ?? "");
+      assertTaskScope(current ?? "", edit.after ?? "", slice.taskIds);
+    }
+  }
+  // Validation of the entire proposal precedes the first write, including task-box checks.
+  signal.throwIfAborted();
+  for (const edit of edits) {
+    if (edit.before === edit.after) continue;
+    if (edit.after === null) await unlink(join(cwd, edit.path));
+    else {
+      await mkdir(dirname(join(cwd, edit.path)), { recursive: true });
+      await writeFile(join(cwd, edit.path), edit.after);
+    }
+  }
+  return { applied: edits.filter((edit) => edit.before !== edit.after).map((edit) => edit.path) };
+}
 export function resetTaskText(text: string, ids: readonly string[]): string {
   return text.split("\n").map((line) =>
     ids.some((id) => line.startsWith(`- [x] ${id} `))
@@ -147,7 +186,7 @@ export async function ensureActivated(cwd: string, source: DeploymentSource, sig
   const expected = await run(cwd, `nix eval --raw --no-write-lock-file ${quote(`${source.source}#nixosConfigurations.magnetite.config.system.build.toplevel.outPath`)}`, signal);
   if (!/^\/nix\/store\/[^/\s]+$/.test(expected)) throw new Blocked("Invalid expected system path");
   const before = await run(cwd, ssh("readlink /run/current-system"), signal);
-  const activation = before === expected ? null : await updateMachine(cwd, source, signal);
+  const activation = before === expected ? null : await runStreaming(cwd, `CLAN_NO_COMMIT=1 clan machines update magnetite --flake ${quote(source.source)}`, signal);
   const after = await run(cwd, ssh("readlink /run/current-system"), signal);
   if (after !== expected) throw new Blocked("Activated system does not match routed source");
   return { source, expected, before, after, activation, reconciled: activation === null };
@@ -184,7 +223,7 @@ export async function diffArtifact(cwd: string, root: string, name: string, sign
   await writeFile(join(cwd, file), await run(cwd, "jj --ignore-working-copy diff -r @", signal));
   return file;
 }
-export async function s1Gate(cwd: string, baselineLock: string, baseline: unknown, signal: AbortSignal) {
+export async function s1Gate(cwd: string, baselineLock: string, baseline: unknown, signal: AbortSignal, expectedAppId: number | null = null) {
   await run(cwd, "jj debug snapshot", signal);
   const drv = await run(cwd, "nix eval --raw --no-write-lock-file --option allow-import-from-derivation false .#checks.x86_64-linux.nixos-magnetite.drvPath", signal);
   if (!drv.startsWith("/nix/store/") || !drv.endsWith(".drv")) throw new Blocked("No host derivation path");
@@ -204,14 +243,21 @@ export async function s1Gate(cwd: string, baselineLock: string, baseline: unknow
     service = s.enable && s.externalUrl == "https://${domain}" && s.listenAddr == "127.0.0.1:8092" && !s.hideRefFromClients && s.databaseUrl == "postgres:///gitea-mq?host=/run/postgresql" && s.github.repos == [ "${repository}" ];
     resources = c.systemd.services.gitea-mq.serviceConfig.DynamicUser && c.systemd.services.gitea-mq.serviceConfig.CacheDirectory == "gitea-mq" && !(c.users.users ? gitea-mq) && builtins.elem "gitea-mq" c.services.postgresql.ensureDatabases;
     credentials = builtins.all (f: f.owner == "root" && f.restartUnits == [ "gitea-mq.service" ]) [ g.gitea-mq-github-app-secret-key.files."key.pem" g.gitea-mq-github-webhook-secret.files.secret ];
+    bindings = s.github.privateKeyFile == g.gitea-mq-github-app-secret-key.files."key.pem".path && s.github.webhookSecretFile == g.gitea-mq-github-webhook-secret.files.secret.path;
+    ownership = builtins.any (u: u.name == "gitea-mq" && u.ensureDBOwnership) c.services.postgresql.ensureUsers;
+    appId = s.github.appId;
+    environment = e.GITEA_MQ_BATCH_MAX == "0" && e.GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE == "true" && e.GITEA_MQ_REQUIRED_CHECKS == "nixbot/nix-eval,nixbot/nix-build" && !(e ? GITEA_MQ_MERGE_LABEL);
     vhost = c.services.nginx.virtualHosts."${domain}".forceSSL && c.services.nginx.virtualHosts."${domain}".enableACME && c.services.nginx.virtualHosts."${domain}".locations."/".proxyPass == "http://127.0.0.1:8092";
     nixbot = c.services.nixbot.domain == "nixbot.scientistexperience.net";
     pre = c.systemd.services.gitea.serviceConfig.ExecStartPre or null;
   }`;
   const config = parse(S1Configuration, await json(cwd,
     `nix eval --json --no-write-lock-file --option allow-import-from-derivation false .#nixosConfigurations.magnetite.config --apply ${quote(expression)}`, signal));
-  if (![config.values, config.service, config.resources, config.credentials, config.vhost, config.nixbot].every(Boolean) || !isDeepStrictEqual({ pre: config.pre }, baseline)) throw new Blocked("S1 evaluated configuration differs from pinned contract");
-  return { drv, negativeControls: negativeControls.map((c) => c.setting), configuration: "pinned values observed" };
+  if (![config.values, config.service, config.resources, config.credentials, config.bindings, config.ownership, config.environment, config.vhost, config.nixbot].every(Boolean) || !isDeepStrictEqual({ pre: config.pre }, baseline)) throw new Blocked("S1 evaluated configuration differs from pinned contract");
+  if (expectedAppId !== null && config.appId !== expectedAppId) throw new Blocked("App-id differs from tool observation");
+  const observed: S1Arm[] = ["host-derivation", "four-negative-controls", "build-locks-unchanged", "build-metadata-unchanged", "build-aspects-unchanged", "landing-settings", "landing-environment", "service-settings", "database-declaration", "credential-root-restart", "credential-bindings", "ensure-users-ownership", "vhost", "nixbot-domain", "dynamic-user", "cache-directory", "no-static-user", "loopback-listener", "forge-pre-unchanged"];
+  if (expectedAppId !== null) observed.push("observed-app-id");
+  return { drv, negativeControls: negativeControls.map((c) => c.setting), ...s1Coverage(observed) };
 }
 export async function generateVars(cwd: string, chain: Chain, signal: AbortSignal) {
   await topology(cwd, chain, signal);
@@ -219,16 +265,13 @@ export async function generateVars(cwd: string, chain: Chain, signal: AbortSigna
   const head = await run(cwd, "git rev-parse HEAD", signal);
   const gitCommits = await run(cwd, "git rev-list --all | sort", signal);
   const changes = await ids(cwd, "all()", signal);
-  const help = await run(cwd, "clan vars generate --help", signal);
-  await run(cwd, "clan vars set --help", signal);
-  const flag = /(?:^|\s)--no-commit(?:\s|,|$)/m.test(help) ? " --no-commit" : "";
-  try { await run(cwd, `clan vars generate magnetite --generator gitea-mq-github-webhook-secret${flag}`, signal); }
+  try { await runStreaming(cwd, "CLAN_NO_COMMIT=1 clan vars generate magnetite --generator gitea-mq-github-webhook-secret", signal); }
   finally {
     await topology(cwd, chain, signal);
     if (head !== await run(cwd, "git rev-parse HEAD", signal) || gitCommits !== await run(cwd, "git rev-list --all | sort", signal) || !isDeepStrictEqual(changes, await ids(cwd, "all()", signal))) throw new Blocked("Clan created a commit or jj change; stop for topology reconciliation");
     if (classifyScope(before, await snapshot(cwd, signal), varsAllowed, []).foreignDuringStage.length) throw new Blocked("Clan changed paths outside the two generator directories");
   }
-  const listing = await run(cwd, "clan vars list magnetite", signal);
+  const listing = await run(cwd, "CLAN_NO_COMMIT=1 clan vars list magnetite", signal);
   for (const name of ["gitea-mq-github-app-secret-key", "gitea-mq-github-webhook-secret"]) {
     if (!listing.split("\n").some((line) => line.includes(name) && !/not.set|missing|false|unset/i.test(line))) throw new Blocked(`Vars list missing populated ${name}`);
   }
@@ -236,7 +279,7 @@ export async function generateVars(cwd: string, chain: Chain, signal: AbortSigna
     const envelope = await readFile(join(cwd, file), "utf8");
     if (!envelope.includes('"sops"') || !envelope.includes("ENC[") || envelope.includes("PRIVATE KEY")) throw new Blocked("Expected sops envelope, not plaintext");
   }
-  return { generated: true, noCommitOption: Boolean(flag), generators: varsAllowed };
+  return { generated: true, noCommitEnvironment: "CLAN_NO_COMMIT=1", generators: varsAllowed };
 }
 
 export const appScript = `import base64,json,os,subprocess,sys,time,tempfile
@@ -372,23 +415,24 @@ export function assertDnsIntent(value: unknown, plan: { plan: string; sha256: st
     throw new Blocked("DNS apply intent differs from the approved saved-plan identity");
   }
 }
-export async function planDns(cwd: string, root: string, name: string, signal: AbortSignal, reconciling = false) {
+export async function planDns(cwd: string, root: string, name: string, source: DeploymentSource, signal: AbortSignal, reconciling = false) {
+  assertExternalEvidence(cwd, root);
+  if (!source.source.startsWith("git+file:") || !/^[a-f0-9]{40}$/.test(source.sha) || !source.source.endsWith(`&rev=${source.sha}`)) throw new Blocked("DNS requires the committed git+file source from resolveSource");
   const plan = resolve(cwd, root, `${name}.tfplan`), file = `${plan}.json`;
   const tree = await snapshot(cwd, signal);
-  const source = `path:${resolve(cwd)}`;
-  await run(cwd, `umask 077
-config=$(nix build --no-link --print-out-paths ${quote(`${source}#terraform.config`)})
+  await runStreaming(cwd, `umask 077
+config=$(nix build --no-link --print-out-paths ${quote(`${source.source}#terraform.config`)})
 mkdir -p terraform
 ln -sf "$config" terraform/config.tf.json
-nix run ${quote(`${source}#terraform.terraform`)} -- init -input=false
-nix run ${quote(`${source}#terraform.terraform`)} -- plan -input=false -out=${quote(plan)}
-nix run ${quote(`${source}#terraform.terraform`)} -- show -json ${quote(plan)} > ${quote(file)}
+nix run ${quote(`${source.source}#terraform.terraform`)} -- init -input=false
+nix run ${quote(`${source.source}#terraform.terraform`)} -- plan -input=false -out=${quote(plan)}
+nix run ${quote(`${source.source}#terraform.terraform`)} -- show -json ${quote(plan)} > ${quote(file)}
 chmod 600 ${quote(plan)} ${quote(file)}`, signal);
   assertSameInputs(tree, await snapshot(cwd, signal));
   return {
-    source, sha: sha256(await readFile(join(cwd, "modules/terranix/cloudflare.nix"))), tree, plan,
-    sha256: sha256(await readFile(plan)), decision: dnsDecision(JSON.parse(await readFile(file, "utf8")), reconciling),
-    execution: "Saved OpenTofu plan from reviewed working tree; terraform.terraform argument-forwarding wrapper, shared state and secrets environment, not default app",
+    ...source, tree, plan,
+    sha256: sha256(await readFile(plan)), decision: dnsDecision(JSON.parse(await readResponse(file)), reconciling),
+    execution: "Saved OpenTofu plan from committed git+file source; external evidence, terraform.terraform wrapper, shared state and secrets environment",
   };
 }
 export async function applyDns(cwd: string, root: string, name: string, plan: Awaited<ReturnType<typeof planDns>>, signal: AbortSignal) {
@@ -404,12 +448,13 @@ export async function applyDns(cwd: string, root: string, name: string, plan: Aw
   }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   if (interrupted) {
-    const fresh = await planDns(cwd, root, `${name}-reconcile`, signal, true);
+    const fresh = await planDns(cwd, root, `${name}-reconcile`, plan, signal, true);
     if (fresh.decision.kind !== "Reconciled") throw new Blocked("Interrupted apply still has changes: invalidate approval, repair and obtain a fresh saved-plan confirmation");
     return { applied: true, reconciled: true, plan: fresh.plan, sha256: fresh.sha256 };
   }
   await writeFile(intent, JSON.stringify({ plan: plan.plan, sha256: plan.sha256 }), { flag: "wx", mode: 0o600 });
-  await applySavedDns(cwd, { ...plan, summary: plan.decision.summary }, signal);
+  if (sha256(await readFile(plan.plan)) !== plan.sha256) throw new Blocked("Saved Terraform plan changed after review");
+  await runStreaming(cwd, `nix run ${quote(`${plan.source}#terraform.terraform`)} -- apply -input=false ${quote(plan.plan)}`, signal);
   return { applied: true, reconciled: false, plan: plan.plan, sha256: plan.sha256 };
 }
 export async function dnsWitness(cwd: string, signal: AbortSignal) {
@@ -571,19 +616,26 @@ export async function rollback(cwd: string, signal: AbortSignal) {
   if (!removed.startsWith("/nix/store/") || !removed.endsWith(".drv") || normal === removed) throw new Blocked("Rollback did not produce a different valid derivation");
   return { normal, removed, trackedEdits: false };
 }
-export async function v6Probe(cwd: string, signal: AbortSignal) {
-  const remote = "git@github.com:cameronraysmith/vanixiets.git", ref = "refs/landings/v6-probe";
+const v6Remote = "git@github.com:cameronraysmith/vanixiets.git", v6Ref = "refs/landings/v6-probe";
+export async function v6Create(cwd: string, root: string, id: string, signal: AbortSignal) {
   if (await run(cwd, "gh api /user --jq .login", signal) !== "cameronraysmith") throw new Blocked("V6 requires orchestrator identity");
-  if ((await run(cwd, `git ls-remote ${quote(remote)} ${quote(ref)}`, signal)).trim()) throw new Blocked("V6 probe ref already exists; will not overwrite or delete it");
+  if ((await run(cwd, `git ls-remote ${quote(v6Remote)} ${quote(v6Ref)}`, signal)).trim()) throw new Blocked("V6 probe ref already exists; will not overwrite or delete it");
   const sha = await run(cwd, "git rev-parse HEAD", signal);
-  const pushed = await capture(cwd, `git push --porcelain --force-with-lease=${ref}: ${quote(remote)} ${sha}:${ref}`, signal);
-  const observed = (await run(cwd, `git ls-remote ${quote(remote)} ${quote(ref)}`, signal)).trim();
+  if (!/^[a-f0-9]{40}$/.test(sha)) throw new Blocked("Invalid V6 probe SHA");
+  // A resumed incomplete create must reconcile, never spend the same authorization twice.
+  await writeFile(join(cwd, root, `${id}.create-intent.json`), JSON.stringify({ sha, authorization: `${root}/G5-${id}.json` }), { flag: "wx", mode: 0o600 });
+  const pushed = await capture(cwd, `git push --porcelain --force-with-lease=${v6Ref}: ${quote(v6Remote)} ${sha}:${v6Ref}`, signal);
+  return { sha, accepted: pushed.exitCode === 0, logPath: pushed.logPath };
+}
+export async function v6Finish(cwd: string, created: Awaited<ReturnType<typeof v6Create>>, signal: AbortSignal) {
+  const { sha } = created;
+  const observed = (await run(cwd, `git ls-remote ${quote(v6Remote)} ${quote(v6Ref)}`, signal)).trim();
   if (observed) {
-    if (observed !== `${sha}\t${ref}`) throw new Blocked("V6 ref moved; not deleting foreign ref");
-    await run(cwd, `git push --porcelain --force-with-lease=${ref}:${sha} ${quote(remote)} :${ref}`, signal);
-    if (await run(cwd, `git ls-remote ${quote(remote)} ${quote(ref)}`, signal)) throw new Blocked("V6 cleanup failed");
-  } else if (pushed.exitCode === 0) throw new Blocked("V6 push reported success but readback was absent");
-  return { accepted: pushed.exitCode === 0, cleaned: true, result: { kind: "Fail" as const, evidence: pushed.logPath, reason: "V6 as written includes deletion protection. Rulesets target branches, tags, pushes, or the repository and cannot protect refs/landings/* from deletion; push accept/refuse is recorded separately." } };
+    if (observed !== `${sha}\t${v6Ref}`) throw new Blocked("V6 ref moved; not deleting foreign ref");
+    await run(cwd, `git push --porcelain --force-with-lease=${v6Ref}:${sha} ${quote(v6Remote)} :${v6Ref}`, signal);
+    if (await run(cwd, `git ls-remote ${quote(v6Remote)} ${quote(v6Ref)}`, signal)) throw new Blocked("V6 cleanup failed");
+  }
+  return { accepted: created.accepted, observed, cleaned: true, result: { kind: "Fail" as const, evidence: created.logPath, reason: "V6 as written includes deletion protection. Rulesets target branches, tags, pushes, or the repository and cannot protect refs/landings/* from deletion; push accept/refuse is recorded separately." } };
 }
 export async function pollLanding(cwd: string, selected: Awaited<ReturnType<typeof candidate>>, signal: AbortSignal) {
   const start = Date.now();
@@ -791,7 +843,7 @@ export async function identityWitness(cwd: string, appId: number, appSlug: strin
 
 // Linear 2.6.0: checked against all three installed --help pages and linear-cli/references/issue.md.
 export const linearUpdate = (state: LinearState) => `linear issue update CAM-56 --state ${quote(state)} --workspace cameronraysmith`;
-export const linearComment = (body: string) => `linear issue comment add CAM-56 --body ${quote(body)} --workspace cameronraysmith`;
+export const linearComment = (artifact: string) => `linear issue comment add CAM-56 --body-file ${quote(artifact)} --workspace cameronraysmith`;
 export const linearView = "linear issue view CAM-56 --json --no-comments --no-download --no-pager --workspace cameronraysmith";
 export async function linearReadback(cwd: string, expected: LinearState, signal: AbortSignal) {
   const issue = parse(Type.Object({ state: Type.Object({ name: Type.String() }) }), await json(cwd, linearView, signal));

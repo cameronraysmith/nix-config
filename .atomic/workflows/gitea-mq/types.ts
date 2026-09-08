@@ -15,17 +15,29 @@ export const inputs = {
     description: "Current rollup-landing chain tip change id; never @ or the join.",
   }),
   deploy: Type.Boolean({ default: true }),
-  max_repair_attempts: Type.Integer({
-    minimum: 1,
-    maximum: 3,
-    default: 3,
-    description: "Attempts per bounded batch, including the first gate execution.",
+  max_repair_attempts: Type.Union([Type.Literal(1), Type.Literal(2), Type.Literal(3)], {
+    default: 3, description: "Attempts per bounded batch, including the first gate execution.",
   }),
   build_timeout_minutes: Type.Integer({ minimum: 1, maximum: 180, default: 45 }),
   app_slug_hint: Type.Optional(Type.String({ pattern: "^[a-z0-9][a-z0-9-]*$" })),
 };
 export const Batch = Type.Union([Type.Literal(1), Type.Literal(2)]);
 export type Batch = Static<typeof Batch>;
+export type BatchSchedule = readonly [1, 2];
+export const batches: BatchSchedule = [1, 2];
+export type AttemptSchedule = readonly [1] | readonly [1, 2] | readonly [1, 2, 3];
+export function attemptsFor(count: 1 | 2 | 3): AttemptSchedule {
+  switch (count) {
+    case 1: return [1];
+    case 2: return [1, 2];
+    case 3: return [1, 2, 3];
+    default: return unreachable(count);
+  }
+}
+export function normalizeToolOutcome<T extends { cached?: boolean }>(outcome: T): Omit<T, "cached"> {
+  const { cached: _replayMetadata, ...stable } = outcome;
+  return stable;
+}
 export function nextBatch(batch: Batch): 2 | null {
   switch (batch) {
     case 1: return 2;
@@ -62,7 +74,12 @@ export const Diagnosis = Type.Union([
   Type.Object({ kind: Type.Literal("Blocked"), reason: text() }, { additionalProperties: false }),
 ]);
 export type Diagnosis = Static<typeof Diagnosis>;
-export const StageOutput = Type.Object({ summary: text() }, { additionalProperties: false });
+export const ProposedEdit = Type.Object({
+  path: text(), before: Type.Union([Type.String(), Type.Null()]),
+  after: Type.Union([Type.String(), Type.Null()]),
+}, { additionalProperties: false });
+export type ProposedEdit = Static<typeof ProposedEdit>;
+export const StageOutput = Type.Object({ summary: text(), edits: Type.Array(ProposedEdit) }, { additionalProperties: false });
 export const VerifyClaim = Type.Object({
   taskId: Type.String({ pattern: "^\\d+\\.\\d+$" }),
   evidence: text(),

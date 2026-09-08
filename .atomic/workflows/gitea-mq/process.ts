@@ -1,0 +1,112 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import { spawn } from "node:child_process";
+import { appendFileSync } from "node:fs";
+import { mkdir, mkdtemp, writeFile, open } from "node:fs/promises";
+import { homedir } from "node:os";
+import { resolve, relative, join } from "node:path";
+import { Blocked } from "../bump/types.js";
+import { assertCompactCheckpoint, processReceipt, save, type Observation, type ProcessReceipt } from "../bump/tools.js";
+
+export const responseLimit = 1024 * 1024;
+export const tailLimit = 8192;
+type Context = { root: string; node: string; next: number; receipts: ProcessReceipt[] };
+const context = new AsyncLocalStorage<Context>();
+
+export function assertExternalEvidence(cwd: string, root: string): void {
+  const path = relative(resolve(cwd), resolve(cwd, root));
+  if (path !== ".." && !path.startsWith(`../`)) throw new Blocked("Evidence must be outside the source tree");
+}
+export async function allocateEvidence(cwd: string): Promise<string> {
+  const base = resolve(process.env.XDG_STATE_HOME ?? join(homedir(), ".local/state"), "atomic/gitea-mq");
+  assertExternalEvidence(cwd, base);
+  await mkdir(base, { recursive: true, mode: 0o700 });
+  return relative(cwd, await mkdtemp(join(base, "run-")));
+}
+export async function processCheckpoint<T>(root: string, node: string, action: () => Promise<T>) {
+  const state: Context = { root, node, next: 0, receipts: [] };
+  return context.run(state, async () => {
+    const checkpoint = { receipt: state.receipts, evidence: await action() };
+    assertCompactCheckpoint(checkpoint);
+    return checkpoint;
+  });
+}
+
+/** Bounds parsed responses; streaming mode retains only the diagnostic tail. */
+export class OutputBuffer {
+  stdout = "";
+  stderr = "";
+  tail = "";
+  private bytes = 0;
+  constructor(readonly streaming: boolean, readonly limit = responseLimit) {}
+  append(stream: "stdout" | "stderr", data: string): void {
+    this.tail = Buffer.from(this.tail + data).subarray(-tailLimit).toString("utf8").replace(/^\uFFFD/, "");
+    if (this.streaming) return;
+    this.bytes += Buffer.byteLength(data);
+    if (this.bytes > this.limit) throw new Blocked(`Parsed process response exceeded ${this.limit} bytes; see disk log`);
+    this[stream] += data;
+  }
+}
+async function execute(cwd: string, command: string, signal: AbortSignal, streaming: boolean): Promise<Observation> {
+  signal.throwIfAborted();
+  const state = context.getStore();
+  if (!state) throw new Blocked("Process capture requires a durable process checkpoint");
+  const receiptPath = `${state.root}/${state.node}-${state.next++}.json`;
+  const logPath = receiptPath.replace(/\.json$/, ".log");
+  const buffer = new OutputBuffer(streaming);
+  const observation: Observation = { command, stdout: "", stderr: "", tail: "", exitCode: -1, state: "running", terminationSignal: null, logPath };
+  await save(cwd, receiptPath, processReceipt(observation));
+  await writeFile(resolve(cwd, logPath), "", { mode: 0o600 });
+  let failure: Error | undefined;
+  await new Promise<void>((done) => {
+    // CLAN_NO_COMMIT also reaches clan calls nested in Python and Terraform wrappers.
+    const child = spawn("bash", ["-c", `set -euo pipefail\n${command}`], {
+      cwd, signal, detached: true, env: { ...process.env, CLAN_NO_COMMIT: "1" },
+    });
+    const terminate = () => {
+      if (child.pid) try { process.kill(-child.pid, "SIGKILL"); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") failure ??= error as Error; }
+    };
+    signal.addEventListener("abort", terminate, { once: true });
+    if (signal.aborted) terminate();
+    for (const stream of ["stdout", "stderr"] as const) child[stream].setEncoding("utf8").on("data", (data: string) => {
+      try {
+        appendFileSync(resolve(cwd, logPath), data);
+        if (!failure) buffer.append(stream, data);
+      } catch (error) { failure ??= error as Error; terminate(); }
+    });
+    child.on("error", (error) => { failure ??= error; terminate(); });
+    child.on("close", (code, terminationSignal) => {
+      signal.removeEventListener("abort", terminate);
+      observation.exitCode = code ?? -1;
+      observation.terminationSignal = terminationSignal;
+      done();
+    });
+  });
+  Object.assign(observation, { stdout: buffer.stdout, stderr: buffer.stderr, tail: buffer.tail });
+  observation.state = signal.aborted ? "interrupted" : failure ? "failed" : "exited";
+  const receipt = processReceipt(observation);
+  state.receipts.push(receipt);
+  await save(cwd, receiptPath, receipt);
+  if (signal.aborted || failure) {
+    const error = failure ?? new Error("Process interrupted");
+    error.message += `\n${logPath}\n${buffer.tail}`;
+    throw Object.assign(error, { receipt });
+  }
+  return observation;
+}
+export const capture = (cwd: string, command: string, signal: AbortSignal) => execute(cwd, command, signal, false);
+export const captureStreaming = (cwd: string, command: string, signal: AbortSignal) => execute(cwd, command, signal, true);
+export async function readResponse(path: string): Promise<string> {
+  const file = await open(path, "r");
+  try {
+    const buffer = Buffer.alloc(responseLimit + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const { bytesRead } = await file.read(buffer, length, buffer.length - length, null);
+      if (!bytesRead) break;
+      length += bytesRead;
+    }
+    if (length > responseLimit) throw new Blocked("Parsed artifact response exceeded byte limit");
+    return buffer.subarray(0, length).toString("utf8");
+  } finally { await file.close(); }
+}

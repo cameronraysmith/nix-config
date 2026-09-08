@@ -5,14 +5,15 @@ const dataUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).toStr
 
 /** Execute the authored run function, not a second graph, with all effects in memory. */
 export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, slices, ledgerTools, assertCompactCheckpoint }) {
-  async function execute({ declineG2 = false, exhaust = false, replay = false, probeFailure = false, repairNix = false, v3Failure = false, repairEvalFailure = false } = {}) {
+  const { s1Coverage } = await import(moduleUrl(".atomic/workflows/gitea-mq/s1-observations.ts"));
+  async function execute({ declineG2 = false, decline = "", rejectS1 = false, revisePlan = false, createFailure = false, cleanupFailure = false, exhaust = false, replay = false, probeFailure = false, repairNix = false, v3Failure = false, repairEvalFailure = false } = {}) {
     const files = new Map();
     const events = [];
     const cache = new Map();
     const signal = new AbortController().signal;
     const cwd = "/mock";
     const tree = {};
-    let root = "", live = false, failProbe = probeFailure, failV3 = v3Failure, failRepairEval = repairEvalFailure;
+    let root = "", live = false, failProbe = probeFailure, failV3 = v3Failure, failRepairEval = repairEvalFailure, rejectReview = rejectS1, failCreate = createFailure, failCleanup = cleanupFailure;
     let callbacks = 0, stages = 0, prompts = 0, promptIndex = 0;
     const initialTasks = [...new Set(["1.1", "8.2", ...slices.s1.taskIds, "1.2", "1.3", "1.4", "3.2", "3.3", "6.1", "6.2", "8.1", "8.3", "8.4", "9.1", "10.1", ...Array.from({ length: 9 }, (_, i) => `11.${i + 1}`)])].map((id) => `- [ ] ${id} ${"task details ".repeat(30)}`).join("\n");
     assert(initialTasks.length > 8192);
@@ -29,6 +30,16 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
     };
     const snapshot = async () => ({ ...tree, [slices.tasks]: tools.sha256(get(join(cwd, slices.tasks))) });
     const mocked = {
+      allocateEvidence: async () => "../evidence/run",
+      processCheckpoint: async (_root, _name, action) => { const result = { receipt: [], evidence: await action() }; assertCompactCheckpoint(result); return result; },
+      applyStageEdits: async (_cwd, edits) => {
+        for (const edit of edits) {
+          files.set(join(cwd, edit.path), edit.after);
+          tree[edit.path] = edit.after;
+          if (repairNix && events.at(-1).startsWith("apply-repair-")) live = false;
+        }
+        return { applied: edits.map((edit) => edit.path) };
+      },
       sha256: tools.sha256,
       humanBoxes: tools.humanBoxes,
       assertTaskScope: tools.assertTaskScope,
@@ -44,7 +55,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
           failRepairEval = false;
           throw Error("mock assertion/eval failed");
         }
-        return { drv: "/nix/store/mock.drv" };
+        return { drv: "/nix/store/mock.drv", ...s1Coverage(["host-derivation", "four-negative-controls", "build-locks-unchanged", "build-metadata-unchanged", "build-aspects-unchanged", "nixbot-domain"]) };
       },
       diffArtifact: async (_cwd, evidence, name) => `${evidence}/${name}.diff`,
       route: async (_cwd, chain, slice) => {
@@ -58,6 +69,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       pendingPaths: async () => [slices.aspect],
       syncProposal: async () => ({ synced: true }),
       run: async (_cwd, command) => command.includes("github.appId") ? "1234" : "",
+      runStreaming: async () => "",
       generateVars: async () => ({ generated: true }),
       observeApp: async () => ({ id: 1234, slug: "queue" }),
       leakScan: async () => ({ leaked: false }),
@@ -84,7 +96,8 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
         if (failV3) { failV3 = false; throw Error("mock V3 failure"); }
         return { pr: 4, sha: "a".repeat(40), resolved: { method: "recomputation" } };
       },
-      v6Probe: async () => ({ result: { kind: "Fail", evidence: "push.log", reason: "Namespace has no deletion protection" } }),
+      v6Create: async () => { if (failCreate) { failCreate = false; throw Error("create failed"); } return { sha: "a".repeat(40), accepted: true, logPath: "push.log" }; },
+      v6Finish: async () => { if (failCleanup) { failCleanup = false; throw Error("readback failed"); } return { result: { kind: "Fail", evidence: "push.log", reason: "Namespace has no deletion protection" } }; },
       pollLanding: async () => ({ main: "a".repeat(40) }),
       tick,
       resetTasks: async (_cwd, ids) => {
@@ -118,7 +131,8 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
         const saved = cache.get(key);
         assert.deepEqual(args, saved.args, `Replay identity changed: ${key}`);
         events.push(`replay:${key}`);
-        return structuredClone(saved.value);
+        const value = structuredClone(saved.value);
+        return key.startsWith("tool:") ? { ...value, cached: true } : value;
       }
       const value = await action();
       cache.set(key, { args: structuredClone(args), value: structuredClone(value) });
@@ -133,20 +147,37 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
         try {
           const value = await action({ signal });
           if (name === "allocate-evidence") root = value;
-          return { ok: true, value };
-        } catch (error) { return { ok: false, error: { message: String(error) } }; }
+          return { ok: true, value, attempts: 1, cached: false };
+        } catch (error) { return { ok: false, error: { name: "Error", message: String(error) }, attempts: 1, cached: false }; }
       }),
       task: (name, options) => durable(`stage:${name}`, { model: options.model, prompt: options.prompt, reads: options.reads }, async () => {
         stages++; events.push(name);
         types.validateModelPolicy(options);
-        if (name === "implement") { tree["flake.nix"] = "input"; await tick(cwd, ["2.1"]); }
-        if (name === "patch-app-id") tree[slices.aspect] = "app 1234";
-        if (name === "hostname") tree["modules/terranix/cloudflare.nix"] = "dns";
-        if (name === "docs") tree["packages/docs/topology.md"] = "docs";
-        if (repairNix && name.startsWith("repair-")) { tree[slices.aspect] = name; live = false; }
-        let structured = { summary: "mock implementation" };
-        if (name.startsWith("review-") || name === "roborev") structured = { verdict: "Approve" };
-        if (name.startsWith("diagnose-")) structured = { kind: "Repair", instructions: "Re-probe or repair the witnessed failure" };
+        assert(!options.tools.includes("edit") && !options.tools.includes("write") && !options.tools.includes("bash"), "Every stage is read-only; only controller applies patches");
+        const edits = [];
+        const propose = (path, after) => edits.push({ path, before: files.get(join(cwd, path)) ?? null, after });
+        if (name === "implement") propose("flake.nix", "input");
+        if (name === "patch-app-id") propose(slices.aspect, "app 1234");
+        if (name === "hostname") propose("modules/terranix/cloudflare.nix", "dns");
+        if (name === "docs") propose("packages/docs/topology.md", "docs");
+        if (repairNix && name.startsWith("repair-")) propose(slices.aspect, name);
+        let structured = { summary: "mock implementation", edits };
+        if (name.startsWith("review-") || name === "roborev") {
+          structured = rejectReview ? { verdict: "Reject", findings: ["unique reviewer defect"] } : { verdict: "Approve" };
+          rejectReview = false;
+        }
+        if (name.startsWith("diagnose-")) {
+          if (rejectS1 && name === "diagnose-s1-b1-a1") {
+            const rejection = JSON.parse(get(join(cwd, options.reads[0])));
+            assert.deepEqual(rejection.findings, ["unique reviewer defect"]);
+            assert.match(rejection.reviewer, /review-s1.*\.md$/); assert.match(rejection.diff, /\.diff$/);
+          }
+          structured = revisePlan ? { kind: "RevisePlan", designDelta: "unique design delta", tasksDelta: "unique tasks delta", instructions: "unique repair payload" } : { kind: "Repair", instructions: "Re-probe or repair the witnessed failure" };
+        }
+        if (name.startsWith("repair-") || name.startsWith("replan-")) {
+          assert(options.reads.some((path) => /(?:diagnosis-|G3-).*\.json$/.test(path)));
+          assert(!options.prompt.includes("unique design delta") && !options.prompt.includes("unique repair payload"));
+        }
         if (name === "render-ruleset-diff") {
           const rule = tools.expectedRuleset(1234, 1);
           structured = { before: rule, after: rule, reverse: rule, question: "Approve?" };
@@ -160,9 +191,9 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       }),
       ui: Object.fromEntries(["input", "confirm", "select"].map((method) => [method, (question) => durable(`prompt:${promptIndex++}`, question, async () => {
         prompts++; events.push(`${method}:${question}`);
-        if (method === "input") return question.startsWith("G3") ? "One more bounded batch" : JSON.stringify({ slug: "queue", id: 1234 });
-        if (method === "select") return declineG2 ? "decline" : "approve with User bypass";
-        return true;
+        if (method === "input") return question.startsWith("G3") ? "One more bounded batch" : decline === "G1" ? null : JSON.stringify({ slug: "queue", id: 1234 });
+        if (method === "select") return declineG2 || decline === "G2" ? "decline" : "approve with User bypass";
+        return !decline || !question.startsWith(decline);
       })])),
       exit: (result) => result,
     };
@@ -189,6 +220,10 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
     assert(success.files.has(join(success.cwd, claim.evidence)), `Missing receipt ${claim.evidence}`);
   }
   assert(!claims.some((item) => ["1.1", "8.2", "4.4"].includes(item.taskId)));
+  for (const task of ["2.1", "3.1", "4.1", "4.2", "5.1"]) {
+    assert(!claims.some((claim) => claim.taskId === task), `Unobserved S1 task overclaimed: ${task}`);
+    assert(ledger.some((row) => row.taskIds.includes(task) && row.status.kind === "Unverified"));
+  }
   assert(success.events.indexOf("apply-rulesets") < success.events.indexOf("update-machine-deploy-b1-a1"));
   console.log("PASS mocked graph: success (V6 fail caveat), G1/rollback/docs/V2/V6 receipt binding");
 
@@ -196,6 +231,27 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
   assert.equal(declined.result.status, "declined");
   assert(!declined.events.includes("apply-rulesets"));
   assert(!("implemented" in declined.result) && !("deployed" in declined.result));
+  for (const decline of ["G1", "G2", "G4", "G5"]) {
+    const stopped = await execute({ decline });
+    assert.equal(stopped.result.status, "declined", stopped.result.summary);
+    for (const output of ["implemented", "deployed", "validated", "verify_md_written"]) assert(!(output in stopped.result));
+    assert(!stopped.events.includes("write-verify"));
+  }
+  console.log("PASS P1/P3: stages propose only; G1/G2/G4/G5 declines terminate without positive outputs");
+  const rejected = await execute({ rejectS1: true, revisePlan: true });
+  assert.equal(rejected.result.status, "completed-with-caveat", rejected.result.summary);
+  assert(rejected.events.includes("record-rejection-s1-b1-a1") && rejected.events.includes("replan-s1-b1-a1"));
+  console.log("PASS F6/P12: persisted reviewer rejection reaches diagnosis; replan and repair use artifact reads");
+  const recreated = await execute({ createFailure: true });
+  assert.equal(recreated.result.status, "completed-with-caveat", recreated.result.summary);
+  assert.equal(recreated.events.filter((event) => event.startsWith("confirm:G5")).length, 2);
+  assert.equal(recreated.events.filter((event) => /^create-V6-b/.test(event)).length, 2);
+  const recleaned = await execute({ cleanupFailure: true });
+  assert.equal(recleaned.result.status, "completed-with-caveat", recleaned.result.summary);
+  assert.equal(recleaned.events.filter((event) => event.startsWith("confirm:G5")).length, 1);
+  assert.equal(recleaned.events.filter((event) => /^create-V6-b/.test(event)).length, 1);
+  assert.equal(recleaned.events.filter((event) => /^V6-cleanup-.*-b1-a[12]$/.test(event)).length, 2);
+  console.log("PASS F5: every create retry gets fresh G5; cleanup retries never create");
   console.log("PASS mocked graph: G2 decline has no ruleset PUT, activation or positive outputs");
 
   const exhausted = await execute({ exhaust: true });

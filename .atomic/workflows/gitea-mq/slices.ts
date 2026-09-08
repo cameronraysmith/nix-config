@@ -48,11 +48,11 @@ export const negativeControls = [
   { setting: "requiredChecks", override: 'services.gitea-mq.requiredChecks = lib.mkForce [ "nixbot/nix-build" ];', message: `services.gitea-mq.requiredChecks must be exactly nixbot/nix-eval and nixbot/nix-build per ${adr}` },
   { setting: "GITEA_MQ_MERGE_LABEL", override: 'systemd.services.gitea-mq.environment.GITEA_MQ_MERGE_LABEL = "x";', message: `GITEA_MQ_MERGE_LABEL must not be set on gitea-mq.service; the upstream default merge-queue is the pinned value per ${adr}` },
 ].map((control) => ({ ...control, expr: `let f = ${flake}; in (f.nixosConfigurations.magnetite.extendModules { modules = [ ({ lib, ... }: { ${control.override} }) ]; }).config.system.build.toplevel.drvPath` }));
-export const rollbackExpr = `let f = ${flake}; host = f.outPath + "/${machine}";
-old = builtins.readFile host; needle = "        gitea-mq\\n";
-replacement = builtins.replaceStrings [ needle ] [ "" ] old;
-scratch = builtins.toFile "magnetite-without-gitea-mq.nix" replacement;
+export const rollbackExpr = `let f = ${flake};
 g = f.inputs.flake-parts.lib.mkFlake { inputs = f.inputs // { self = f; }; } {
-  imports = [ ((f.inputs.import-tree.filter (p: toString p != toString host)) (f.outPath + "/modules")) scratch ];
-}; in assert old != replacement; g.nixosConfigurations.magnetite.config.system.build.toplevel.drvPath`;
+  imports = [ (f.inputs.import-tree (f.outPath + "/modules"))
+    ({ lib, ... }: { flake.modules.nixos.gitea-mq = lib.mkForce {}; }) ];
+}; in assert f.nixosConfigurations.magnetite.config.services.gitea-mq.enable;
+assert !g.nixosConfigurations.magnetite.config.services.gitea-mq.enable;
+g.nixosConfigurations.magnetite.config.system.build.toplevel.drvPath`;
 export const runtimeEnvironment = ["GITEA_MQ_BATCH_MAX=0", "GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE=true", "GITEA_MQ_REQUIRED_CHECKS=nixbot/nix-eval,nixbot/nix-build"];

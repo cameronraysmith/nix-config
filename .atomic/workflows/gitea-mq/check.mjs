@@ -6,6 +6,8 @@ import { dirname, resolve, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { runExecutionChecks } from "./execution-checks.mjs";
 import { runCommandChecks } from "./command-checks.mjs";
+import { runReviewChecks } from "./review-checks.mjs";
+import { runProcessChecks } from "./process-checks.mjs";
 
 const require = createRequire(import.meta.url);
 const executable = realpathSync(execFileSync("bash", ["-c", "command -v atomic"], { encoding: "utf8" }).trim());
@@ -13,7 +15,7 @@ const atomic = resolve(dirname(executable), "../lib/node_modules/@bastani/atomic
 const compiler = execFileSync("bash", ["-c", "printf '%s\\n' /nix/store/*typescript*/lib/node_modules/typescript/lib/typescript.js | head -1"], { encoding: "utf8" }).trim();
 const ts = require(compiler);
 const entry = ".atomic/workflows/stand-up-gitea-mq.ts";
-const files = [entry, ...["types", "tools", "prompts", "slices", "ledger", "api-schemas"].map((n) => `.atomic/workflows/gitea-mq/${n}.ts`)];
+const files = [entry, ...["types", "tools", "prompts", "slices", "ledger", "api-schemas", "process", "s1-observations", "vcs"].map((n) => `.atomic/workflows/gitea-mq/${n}.ts`)];
 const options = {
   noEmit: true, strict: true, module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext,
   target: ts.ScriptTarget.ES2022, skipLibCheck: true,
@@ -30,7 +32,7 @@ if (diagnostics.length) { console.error(format(diagnostics)); process.exit(1); }
 console.log("PASS strict TypeScript against installed Atomic declarations");
 if (process.argv.includes("--typecheck-only")) process.exit(0);
 const fixture = resolve(".atomic/workflows/gitea-mq/negative-fixture.ts");
-const source = `import { completedRun, nextBatch, type Batch, type Validation } from "./types.js";
+const source = `import { completedRun, nextBatch, attemptsFor, type BatchSchedule, type AttemptSchedule, type Batch, type Validation } from "./types.js";
 import { type Witness } from "../bump/types.js";
 declare const changes: Witness<string[]>;
 declare const deployed: Witness<boolean>;
@@ -43,6 +45,12 @@ completedRun(changes, true, validation, written, [], "runs/test");
 completedRun([], deployed, validation, written, [], "runs/test");
 // @ts-expect-error No third bounded batch exists.
 const third: Batch = 3;
+// @ts-expect-error A third batch cannot be appended, even with a valid label.
+const longBatches: BatchSchedule = [1, 2, 1];
+// @ts-expect-error No repeated attempts can extend the schedule.
+const longAttempts: AttemptSchedule = [1, 2, 3, 1];
+// @ts-expect-error Only 1, 2 or 3 attempts may be requested.
+attemptsFor(4);
 // @ts-expect-error A stage report cannot forge the witness brand.
 const forged: Witness<boolean> = { value: true, source: "model", evidence: "prose" };
 nextBatch(2);
@@ -69,6 +77,7 @@ function moduleUrl(file) {
 const types = await import(moduleUrl(files[1]));
 const tools = await import(moduleUrl(files[2]));
 const slices = await import(moduleUrl(files[4]));
+await runReviewChecks({ types, tools, slices, moduleUrl });
 assert.equal(types.nextBatch(1), 2); assert.equal(types.nextBatch(2), null);
 assert.throws(() => types.parse(types.Diagnosis, { kind: "RetryForever" }));
 assert.throws(() => types.parse(types.VResult, { kind: "Pass" }));
@@ -140,6 +149,7 @@ for (const script of [tools.appScript, tools.leakScript]) execFileSync("python3"
 console.log("PASS schemas, model policy, task ownership, DNS identity/reconciliation, C6 classic checks, ledger binding, repair effects, Linear outcomes, exhaustive switches, finite tools, Nix/Python parsing");
 const { assertCompactCheckpoint } = await import(moduleUrl(".atomic/workflows/bump/tools.ts"));
 await runExecutionChecks({ ts, main: readFileSync(entry, "utf8"), moduleUrl, tools, types, slices, ledgerTools, assertCompactCheckpoint });
+await runProcessChecks({ ts, moduleUrl });
 try {
   await runCommandChecks({ ts, source: readFileSync(files[2], "utf8"), moduleUrl, tools, slices, typeboxUrl: pathToFileURL(join(atomic, "node_modules/typebox/build/index.mjs")).href });
 } catch (error) {

@@ -133,34 +133,44 @@ The controlling session owns registry reload and launch; live replay, worktree e
 
 ## stand-up-gitea-mq (draft; do not launch)
 
-`stand-up-gitea-mq.ts` authors the CAM-56 graph: preflight → Nix implementation/evaluation/fresh review/routing → G1 App and credential witnesses → dedicated App-id/vars route → DNS saved plan/apply/dig/route → G2 approved ruleset PUT/readback → optional pinned deployment → V2/V3/V6/V9 observations and scratch rollback evaluation → documentation → witnessed verify.md → terminal roborev.
-Linear T2/T3 tools are best-effort, retain separate command outcomes, and route proposal frontmatter updates with the relevant changes.
+`stand-up-gitea-mq.ts` authors the CAM-56 graph: preflight → proposed Nix patches/controller validation/evaluation/fresh review/routing → G1 App and credential witnesses → dedicated App-id/vars route → DNS source route/saved plan/apply/dig/ledger route → G2 approved ruleset PUT/readback → optional pinned deployment → V2/V3/V6/V9 observations and scratch rollback evaluation → documentation → witnessed verify.md → terminal roborev.
+Linear T2/T3 tools are best-effort, retain separate command outcomes, post comments via `--body-file <artifact> --workspace cameronraysmith`, and route proposal frontmatter updates with the relevant changes.
 Atomic 0.9.18's public `WorkflowRunContext` has no model-catalog port, although `RunOpts` does; absent catalog metadata does not block preflight, by explicit operator decision.
 The host can implicitly fall back to its controller model before the workflow can inspect the attempt; this risk is accepted, not prevented by an empty fallback list.
 After every stage and before using its output, the workflow records actual model/thinking metadata and rejects off-policy attempts or missing metadata with a blocked exit.
-The latest author report, `logs/adr-verify/workflow-author-report-3.md`, records closure evidence and remaining launch limitations.
+The latest author report, `logs/adr-verify/workflow-author-report-4.md`, records closure evidence and remaining launch limitations; report 3's prior limitations remain unless explicitly superseded.
 
 Inputs are `change` (constant `stand-up-gitea-mq-on-magnetite`), required `splice_after` (current `rollup-landing` tip change id), `deploy` (true), `max_repair_attempts` (3; range 1–3), `build_timeout_minutes` (45), and optional `app_slug_hint`.
 There is no `start_at`; Atomic resume is the only re-entry mechanism, and a fresh run requires empty `@` and no preexisting aspect.
-Completed tool/prompt nodes replay; interruption inside an unfinished external effect still requires reconciliation before retrying it, not an assumption of exactly-once effects.
-Each gate uses forward-only attempt ids with a `batch: 1 | 2` bound; G3 authorizes exactly one additional bounded batch, and second exhaustion blocks.
-Every workflow-owned process/network effect belongs to a finite `ctx.tool` callback forwarding its cancellation signal; reports and snapshots live under the ignored run evidence directory.
+Completed tool/prompt nodes replay; tool outcomes are normalized before ledger insertion and hashing to exclude Atomic's replay-only `cached` flag.
+Interruption inside an unfinished external effect still requires reconciliation before retrying it, not an assumption of exactly-once effects.
+Each gate uses forward-only attempt ids with the exact batch tuple `[1, 2]` and `attemptsFor(1 | 2 | 3)` bounded tuples; G3 authorizes exactly one additional bounded batch, and second exhaustion blocks.
+Every workflow-owned process/network effect belongs to a finite `ctx.tool` callback forwarding its cancellation signal.
+Run evidence lives outside the repository, under `$XDG_STATE_HOME/atomic/gitea-mq/run-*` (default `~/.local/state/atomic/gitea-mq/run-*`); in-tree evidence roots are rejected.
+Build, deployment and Terraform commands stream to disk with only an 8 KiB diagnostic tail in memory; parsed command responses fail beyond 1 MiB, and parsed artifact reads are bounded too.
 
 All model stages request only `openai-codex/gpt-6-astra`: high for implement/repair/replan/diagnose, medium for render/docs/verify-writer, and max for reviewers.
 When a catalog port is available, missing required levels blocks; otherwise native stage resolution is used, with the accepted implicit-fallback risk and mandatory post-call rejection above.
-Role constraints, paths and G1–G5 identities are protected with `<keepContext>`; structured stage outputs use TypeBox schemas and exhaustive constructor switches.
+Role constraints, paths, failed gate/receipt identifiers, review acceptance criteria and ruleset requirements are protected with `<keepContext>`; structured stage outputs use TypeBox schemas and exhaustive constructor switches.
+Diagnosis/replan artifacts travel through stage `reads`, not inline JSON; an S1 rejection receipt retains findings, reviewer artifact and diff path.
 Completion requires four branded tool witnesses for implemented changes, deployment, validation results, and report writing; blocked/declined exits expose no positive technical claims.
 Human gates are authorizations, not evidence that the technical checks passed.
 
 The workflow never moves or describes `@`, pushes to main, deletes a ref without G5, applies the `merge-queue` label, runs `linear auth`, or ticks operator tasks 1.1/8.2.
+All model stages are read-only and submit full-file proposals with exact before/after contents.
+The controller validates the entire proposal's canonical allowlisted paths, absence of symlink traversal, before-content preconditions and operator/task-box invariants before applying any write; an invalid proposal applies nothing, including earlier valid edits.
 Writers are restricted to their slice paths plus the change directory; build-service aspects remain untouched.
 The post-G1 exception permits exactly `vars/per-machine/magnetite/gitea-mq-github-app-secret-key` and `vars/per-machine/magnetite/gitea-mq-github-webhook-secret`, plus shared vars/sops paths only if the imported Omnigent helper enumerates them (currently none).
-The operator populates the PEM outside the workflow; generation checks both Clan help surfaces for no-commit support and blocks if Clan changes detached HEAD, creates a Git commit or jj change, or changes foreign paths.
+Every process receives `CLAN_NO_COMMIT=1`, including nested Python/Terraform Clan calls; controlled generation/list/update commands and G1's operator `clan vars set` instructions also state it explicitly.
+Installed Clan uses this environment variable, not a `--no-commit` option; it still registers paths with Git intent-to-add, but skips content staging and commits.
+The post-effect topology/commit/path checks remain a backstop, not the primary prevention mechanism.
 The App-id patch, generated envelopes, tasks.md and proposal.md route as one dedicated post-G1 change.
 Secrets remain inside opaque subprocesses; the leak scan reports counts only across working files including ignored paths, HEAD and history with a positive hostname control.
 
 G2 approves a saved JSON body and its hash, never a regenerated request.
-G5 permits only the exact `refs/landings/v6-probe` create/delete pair with leases and preexistence checks.
+Every V6 create attempt requires its own durable G5 authorization; a write-ahead create intent prevents an incomplete-node replay from creating twice under one authorization.
+Readback/leased cleanup have a separate bounded retry loop with no create capability; interruption before a durable create result can still require operator reconciliation.
+G1/G2/G4/G5 declines terminate the run via the declined path with no positive outputs; NotRun is reserved for genuinely unrunnable probes with reasons.
 V6 records push acceptance/refusal separately from its falsified deletion-protection claim; V2 branch polling cannot exclude transient refs between observations.
 `deploy=false` skips machine activation and live/ref validation, not the earlier G1, DNS or ruleset operations; it is not a dry run.
 Run `node .atomic/workflows/gitea-mq/check.mjs` for strict typing, negative witness/batch/schema fixtures, pure contracts, local Nix parsing (never evaluation), Python parsing, in-memory graph execution, and mocked command boundaries.
@@ -172,11 +182,19 @@ Task 11.5 now uses the authorized C6 deterministic recomputation from live effec
 The evidence and report must call it a recomputation, not queue journal/dashboard output.
 Task 8.4 uses owner-authenticated paginated installation/repository inventory, per-App installation checks for both Apps, and write-capable human collaborators; token restrictions can hide installations, so this is not an unrestricted-universe proof.
 DNS uses one bounded plan/approval/apply/dig budget, with fresh confirmation after changed plans; replay validates intent content against the saved-plan identity and reconciles only a zero-change refresh without output changes.
+DNS resolves the routed chain tip through Omnigent's `resolveSource`, which verifies the exported bookmark and returns `git+file://<repo>?ref=rollup-landing&rev=<commit-sha>`.
+Never use `path:<cwd>`: path sources can ingest ignored secrets and prior plan evidence into the Nix store.
+Hostname/repair source edits are therefore routed before planning; the later route carries the witnessed DNS task ledger.
+All evidence and plan files remain outside the source tree, even though the committed Git source already excludes untracked/ignored files.
+Rollback reconstructs the real flake module tree from `f.outPath`, replacing only the queue aspect via `lib.mkForce {}` and asserting that queue enablement disappears; it never copies the host module to `builtins.toFile`, so relative policy imports keep their original directory.
 Any later scope-approved repair touching `modules/terranix/**` invalidates DNS receipts and re-enters that gate; this does not expand any writer's path allowlist.
 `Repair(Noop)` re-probes without routing an empty change.
 Changed tracked Nix invalidates deployment/validation receipts, routes actual pending paths, and reactivates and probes the pinned source before retrying validation; previously completed dependent validations become NotRun until witnessed again.
 Gate/repair/Linear outcomes are tagged unions; the verify writer supplies exact task-to-receipt claims checked against the controller ledger, and the controller appends its authoritative ledger.
-G1, rollback, docs, V2 and V6 observations have explicit receipts; task 4.4 is excluded from passed claims because no lint/treefmt witness is run.
+G1, rollback, docs, V2 and V6 observations have explicit receipts.
+Each S1 task has named required observation arms; only completely observed tasks enter the passed ledger.
+Credential-file bindings, ensureUsers ownership, App-id equality after G1, and landing environment now have explicit checks.
+Tasks 2.1 (input/follows/lock delta), 3.1 (generator scripts/source owner), 4.2 (module-wide label assignment scan), 4.4 (header/lint), and 5.1 (import/aspect ordering) remain unverified where those arms are unobserved; implementation ticks are not verification.
 Free-form report prose still requires roborev; structural claim binding cannot establish semantic truth by itself.
 The following prior caveats remain explicitly out of scope: gap 2, same-path concurrent ownership/review-hash attribution during routing; gap 8, transient batch refs between V2 samples and stale candidate/head/label authorization across retries; gap 9, SSH transport identity equivalence to the gh identity and interrupted V6 cleanup recovery.
 Authenticated webhook redelivery remains NotRun, table presence is not a direct latest-migration log witness, and interrupted Linear comments lack reconciliation.
