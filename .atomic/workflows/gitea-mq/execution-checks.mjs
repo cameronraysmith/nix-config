@@ -6,13 +6,16 @@ const dataUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).toStr
 /** Execute the authored run function, not a second graph, with all effects in memory. */
 export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, slices, ledgerTools, assertCompactCheckpoint }) {
   const { s1Coverage } = await import(moduleUrl(".atomic/workflows/gitea-mq/s1-observations.ts"));
-  async function execute({ declineG2 = false, decline = "", rejectS1 = false, revisePlan = false, createFailure = false, cleanupFailure = false, exhaust = false, replay = false, probeFailure = false, repairNix = false, v3Failure = false, repairEvalFailure = false } = {}) {
+  async function execute({ declineG2 = false, decline = "", rejectS1 = false, revisePlan = false, createFailure = false, cleanupFailure = false, exhaust = false, replay = false, probeFailure = false, repairNix = false, v3Failure = false, repairEvalFailure = false, dnsReject = false, dnsRejectOnce = false, rejectRoborev = false, throwExit = false, noHostnameEdit = false } = {}) {
     const files = new Map();
     const events = [];
     const cache = new Map();
     const signal = new AbortController().signal;
     const cwd = "/mock";
     const tree = {};
+    let snapshotted = {}, routed = {}, failDns = dnsRejectOnce;
+    const revisions = new Map(), committedTasks = new Map();
+    const dnsPath = "modules/terranix/cloudflare.nix", dnsContent = 'resource.cloudflare_dns_record.mq = { name = "mq"; type = "CNAME"; content = "magnetite.scientistexperience.net"; proxied = false; };';
     let root = "", live = false, failProbe = probeFailure, failV3 = v3Failure, failRepairEval = repairEvalFailure, rejectReview = rejectS1, failCreate = createFailure, failCleanup = cleanupFailure;
     let callbacks = 0, stages = 0, prompts = 0, promptIndex = 0;
     const initialTasks = [...new Set(["1.1", "8.2", ...slices.s1.taskIds, "1.2", "1.3", "1.4", "3.2", "3.3", "6.1", "6.2", "8.1", "8.3", "8.4", "9.1", "10.1", ...Array.from({ length: 9 }, (_, i) => `11.${i + 1}`)])].map((id) => `- [ ] ${id} ${"task details ".repeat(30)}`).join("\n");
@@ -28,7 +31,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       files.set(path, get(path).split("\n").map((line) => ids.some((id) => line.startsWith(`- [ ] ${id} `)) ? line.replace("[ ]", "[x]") : line).join("\n"));
       return { completed: ids };
     };
-    const snapshot = async () => ({ ...tree, [slices.tasks]: tools.sha256(get(join(cwd, slices.tasks))) });
+    const snapshot = async () => ({ ...tree, [slices.tasks]: tools.sha256(get(join(cwd, slices.tasks))), ...(files.has(join(cwd, slices.verify)) ? { [slices.verify]: tools.sha256(get(join(cwd, slices.verify))) } : {}) });
     const mocked = {
       allocateEvidence: async () => "../evidence/run",
       processCheckpoint: async (_root, _name, action) => { const result = { receipt: [], evidence: await action() }; assertCompactCheckpoint(result); return result; },
@@ -46,9 +49,10 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       assertSameInputs: tools.assertSameInputs,
       save: async (_cwd, file, value) => files.set(join(cwd, file), JSON.stringify(value)),
       snapshot,
+      snapshotWorkingCopy: async (_cwd, actualSignal) => { assert.equal(actualSignal, signal); snapshotted = await snapshot(); return { snapshotted: true }; },
       scope: snapshot,
       topology: async (_cwd, chain) => chain.changes.map((change) => change.id),
-      preflight: async () => ({ chain: { workingCopy: "wwww", join: "jjjj", seed: "ssss", tip: "ssss", changes: [] }, lock: "baseline", baseline: {}, humanBoxes: tools.humanBoxes(initialTasks) }),
+      preflight: async () => ({ chain: { workingCopy: "wwww", join: "jjjj", seed: "ssss", tip: "ssss", changes: [] }, lock: "baseline", baseline: {}, taskIds: [...tools.taskLedger(initialTasks).keys()], humanBoxes: tools.humanBoxes(initialTasks) }),
       lockInput: async () => ({ declaration: tree["flake.nix"] ?? "declaration", relocked: true }),
       s1Gate: async () => {
         if (exhaust || failRepairEval && events.at(-1)?.startsWith("eval-repair-")) {
@@ -58,22 +62,42 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
         return { drv: "/nix/store/mock.drv", ...s1Coverage(["host-derivation", "four-negative-controls", "build-locks-unchanged", "build-metadata-unchanged", "build-aspects-unchanged", "nixbot-domain"]) };
       },
       diffArtifact: async (_cwd, evidence, name) => `${evidence}/${name}.diff`,
-      route: async (_cwd, chain, slice) => {
-        const id = `change-${chain.changes.length}`;
-        return { ...chain, tip: id, changes: [...chain.changes, { id, paths: slice.allowedPaths }] };
+      route: async (_cwd, chain, slice, _reviewed, actualSignal, into = null) => {
+        assert.equal(actualSignal, signal);
+        snapshotted = await snapshot();
+        const paths = Object.keys(snapshotted).filter((path) => snapshotted[path] !== routed[path] && slice.allowedPaths.some((prefix) => path === prefix || path.startsWith(`${prefix}/`)));
+        assert(paths.length, "Cannot route empty change");
+        const id = into ?? `change-${chain.changes.length}`;
+        if (into) events.push(`amend:${into}`);
+        for (const path of paths) routed[path] = snapshotted[path];
+        const sha = tools.sha256(JSON.stringify(routed));
+        const next = { ...chain, tip: into ? chain.tip : id, changes: into ? chain.changes.map((change) => change.id === into ? { id, paths: [...new Set([...change.paths, ...paths])] } : change) : [...chain.changes, { id, paths }] };
+        revisions.set(next.tip, { sha, tree: { ...routed } });
+        committedTasks.set(id, get(join(cwd, slices.tasks)));
+        return next;
       },
       linearUpdate: tools.linearUpdate,
       linearComment: tools.linearComment,
       linearOutcome: tools.linearOutcome,
       linearReadback: async (_cwd, state) => ({ state }),
-      pendingPaths: async () => [slices.aspect],
+      pendingPaths: async (_cwd, slice) => Object.keys(snapshotted).filter((path) => snapshotted[path] !== routed[path] && slice.allowedPaths.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))),
       syncProposal: async () => ({ synced: true }),
       run: async (_cwd, command) => command.includes("github.appId") ? "1234" : "",
       runStreaming: async () => "",
       generateVars: async () => ({ generated: true }),
       observeApp: async () => ({ id: 1234, slug: "queue" }),
       leakScan: async () => ({ leaked: false }),
-      planDns: async () => ({ plan: "mock.tfplan", sha256: "plan-hash", decision: { kind: "NeedsApply", summary: { name: slices.domain } } }),
+      reviewDnsContent: async () => ({ sha256: tools.sha256(tree[dnsPath] ?? "") }),
+      verifyDnsSource: async (_cwd, source, reviewed) => {
+        const revision = [...revisions.values()].find((rev) => rev.sha === source.sha);
+        assert.equal(tools.sha256(revision.tree[dnsPath] ?? ""), reviewed.sha256, "Pinned DNS source must contain the reviewed disk edit");
+        return { sha: source.sha, sha256: reviewed.sha256 };
+      },
+      planDns: async (_cwd, _root, _id, source) => {
+        assert([...revisions.values()].find((rev) => rev.sha === source.sha)?.tree[dnsPath]?.startsWith(dnsContent), "DNS plan pinned a stale source");
+        if (dnsReject || failDns) { failDns = false; throw Error("Rejected DNS delta"); }
+        return { plan: "mock.tfplan", sha256: "plan-hash", decision: { kind: "NeedsApply", summary: { name: slices.domain } } };
+      },
       applyDns: async () => ({ applied: true }),
       dnsWitness: async () => ({ cname: "magnetite.scientistexperience.net." }),
       readRules: async (_cwd, evidence) => ({ file: `${evidence}/rulesets-before.json`, userId: 1 }),
@@ -84,7 +108,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       },
       applyRules: async () => ({ applied: true }),
       identityWitness: async () => ({ identities: ["nixbot", "queue"] }),
-      resolveSource: async (_cwd, tip) => ({ source: tip }),
+      resolveSource: async (_cwd, tip) => ({ source: `git+file:///mock?ref=rollup-landing&rev=${revisions.get(tip)?.sha}`, sha: revisions.get(tip)?.sha }),
       ensureActivated: async () => { live = true; return { reconciled: true }; },
       runtimeProbe: async () => {
         assert(live, "Probe must follow activation");
@@ -105,11 +129,12 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
         files.set(path, tools.resetTaskText(get(path), ids));
         return { invalidated: ids };
       },
-      writeVerify: async (_cwd, markdown, claims, ledger) => {
+      writeVerify: async (_cwd, commentary, claims, ledger) => {
         ledgerTools.assertVerifyClaims(claims, ledger);
-        files.set(join(cwd, slices.verify), markdown + ledgerTools.renderGateLedger(ledger));
+        files.set(join(cwd, slices.verify), JSON.stringify(commentary) + ledgerTools.renderGateLedger(ledger));
         return { written: true };
       },
+      markRejected: async () => { files.set(join(cwd, slices.verify), get(join(cwd, slices.verify)) + "\n- [x] (fail) FAIL"); return { rejected: true }; },
     };
     // Every export is a trampoline; an unmocked external effect fails before any process can run.
     globalThis.__mqMock = { files, get, tools: mocked, assertCompactCheckpoint };
@@ -158,12 +183,13 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
         const propose = (path, after) => edits.push({ path, before: files.get(join(cwd, path)) ?? null, after });
         if (name === "implement") propose("flake.nix", "input");
         if (name === "patch-app-id") propose(slices.aspect, "app 1234");
-        if (name === "hostname") propose("modules/terranix/cloudflare.nix", "dns");
+        if (name === "hostname" && !noHostnameEdit) { propose(dnsPath, dnsContent); propose(slices.tasks, get(join(cwd, slices.tasks)).replace("[ ] 6.1", "[x] 6.1")); }
+        if (name.startsWith("repair-dns")) propose(dnsPath, `${dnsContent}\n# ${name}`);
         if (name === "docs") propose("packages/docs/topology.md", "docs");
         if (repairNix && name.startsWith("repair-")) propose(slices.aspect, name);
         let structured = { summary: "mock implementation", edits };
         if (name.startsWith("review-") || name === "roborev") {
-          structured = rejectReview ? { verdict: "Reject", findings: ["unique reviewer defect"] } : { verdict: "Approve" };
+          structured = rejectReview || name === "roborev" && rejectRoborev ? { verdict: "Reject", findings: ["unique reviewer defect"] } : { verdict: "Approve" };
           rejectReview = false;
         }
         if (name.startsWith("diagnose-")) {
@@ -184,28 +210,29 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
         }
         if (name === "write-verify") {
           const ledger = JSON.parse(get(join(cwd, root, "gate-ledger.json")));
-          structured = { markdown: "[verified here] [operator]\n" + Array.from({ length: 8 }, (_, i) => `## ${i + 1}. section`).join("\n"), claims: ledgerTools.passedClaims(ledger) };
+          structured = { commentary: { analysis: "Model analysis", caveats: "Model caveats" }, claims: ledgerTools.passedClaims(ledger) };
         }
         const [model, reasoningLevel] = options.model.split(":");
         return { structured, modelAttempts: [{ model, reasoningLevel, success: true }] };
       }),
       ui: Object.fromEntries(["input", "confirm", "select"].map((method) => [method, (question) => durable(`prompt:${promptIndex++}`, question, async () => {
         prompts++; events.push(`${method}:${question}`);
-        if (method === "input") return question.startsWith("G3") ? "One more bounded batch" : decline === "G1" ? null : JSON.stringify({ slug: "queue", id: 1234 });
+        if (method === "input") return question.startsWith("G3") ? decline === "G3" ? null : "One more bounded batch" : decline === "G1" ? null : JSON.stringify({ slug: "queue", id: 1234 });
         if (method === "select") return declineG2 || decline === "G2" ? "decline" : "approve with User bypass";
         return !decline || !question.startsWith(decline);
       })])),
-      exit: (result) => result,
+      exit: (result) => { if (throwExit) throw Object.assign(new Error("Atomic terminal exit"), { exitResult: result }); return result; },
     };
-    const first = await definition.run(context);
+    const run = async () => { try { return await definition.run(context); } catch (error) { if (error.exitResult) return error.exitResult; throw error; } };
+    const first = await run();
     if (replay) {
       const counts = { callbacks, stages, prompts };
       promptIndex = 0;
-      const second = await definition.run(context);
+      const second = await run();
       assert.deepEqual(second, first);
       assert.deepEqual({ callbacks, stages, prompts }, counts, "Completed nodes must not repeat any callback, model call or human prompt");
     }
-    return { result: first.outputs ?? first, events, files, root, cwd };
+    return { result: first.outputs ?? first, events, files, root, cwd, revisions, committedTasks };
   }
 
   const success = await execute();
@@ -226,6 +253,39 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
   }
   assert(success.events.indexOf("apply-rulesets") < success.events.indexOf("update-machine-deploy-b1-a1"));
   console.log("PASS mocked graph: success (V6 fail caveat), G1/rollback/docs/V2/V6 receipt binding");
+  assert(success.events.indexOf("snapshot-wc-route-dns-source-dns-b1-a1") < success.events.indexOf("pending-route-dns-source-dns-b1-a1"));
+  assert(success.events.indexOf("snapshot-wc-after-hostname") < success.events.indexOf("route-dns-source-dns-b1-a1"));
+  assert(success.events.indexOf("dns-content-dns-b1-a1") < success.events.indexOf("terraform-plan-dns-b1-a1"));
+  console.log("PASS R2: disk edits require durable jj snapshot before pending decisions; routed DNS rev contains reviewed hostname content");
+  const noPositiveOutputs = (run) => { for (const output of ["implemented", "deployed", "validated", "verify_md_written"]) assert(!(output in run.result), output); };
+  for (const options of [{ dnsReject: true, decline: "G3" }, { decline: "Apply exactly" }, { dnsReject: true }]) {
+    const stopped = await execute({ ...options, throwExit: true });
+    assert.equal(stopped.result.status, "blocked", stopped.result.summary);
+    noPositiveOutputs(stopped);
+    const terminal = JSON.parse(stopped.files.get(join(stopped.cwd, stopped.root, "terminal.json")));
+    assert.match(terminal.chain_state, /^quarantined\(change-\d+\)$/);
+    const id = terminal.chain_state.slice(12, -1);
+    assert(stopped.result.summary.includes(`jj abandon '${id}'`));
+    const chainLedger = JSON.parse(stopped.files.get(join(stopped.cwd, stopped.root, "ledger.json")));
+    assert(chainLedger.some((row) => row.chain_state === terminal.chain_state));
+    assert(!stopped.committedTasks.get(id).includes("[x] 6.1") && !stopped.committedTasks.get(id).includes("[x] 6.2"));
+    assert.equal(terminal.chain.changes.filter((change) => change.paths.includes("modules/terranix/cloudflare.nix")).length, 1, "Repairs must not append DNS changes");
+  }
+  const dnsRepair = await execute({ dnsRejectOnce: true });
+  assert.equal(dnsRepair.result.status, "completed-with-caveat", dnsRepair.result.summary);
+  assert(dnsRepair.events.some((event) => event.startsWith("amend:")), "Repair must amend the same candidate");
+  console.log("PASS R4: DNS rejection, decline and exhaustion persist quarantine with unchecked committed tasks and exact recovery; repair amends candidate");
+  const lateHostname = await execute({ noHostnameEdit: true });
+  assert.equal(lateHostname.result.status, "completed-with-caveat", lateHostname.result.summary);
+  assert(lateHostname.events.includes("diagnose-dns-b1-a1") && !lateHostname.events.includes("record-dns-quarantine-dns-b1-a1"));
+  assert.equal(JSON.parse(lateHostname.files.get(join(lateHostname.cwd, lateHostname.root, "terminal.json")) ?? "null"), null);
+  assert(lateHostname.events.includes("record-dns-quarantine-dns-b1-a2"), "Quarantine must name the actually routed candidate, never a prior change");
+  for (const options of [{ rejectRoborev: true }, { exhaust: true, decline: "G3" }, { exhaust: true }]) {
+    const stopped = await execute({ ...options, throwExit: true });
+    assert.equal(stopped.result.status, options.rejectRoborev ? "needs_rework" : "blocked");
+    noPositiveOutputs(stopped);
+  }
+  console.log("PASS negative exits: roborev rejection, G3 cancellation, DNS decline and exhaustion omit all four positive outputs with throwing ctx.exit");
 
   const declined = await execute({ declineG2: true });
   assert.equal(declined.result.status, "declined");

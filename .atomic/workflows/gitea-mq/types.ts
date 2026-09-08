@@ -85,8 +85,10 @@ export const VerifyClaim = Type.Object({
   evidence: text(),
 }, { additionalProperties: false });
 export type VerifyClaim = Static<typeof VerifyClaim>;
+export const VerifyCommentary = Type.Object({ analysis: text(), caveats: text() }, { additionalProperties: false });
+export type VerifyCommentary = Static<typeof VerifyCommentary>;
 export const VerifyDraft = Type.Object({
-  markdown: text(),
+  commentary: VerifyCommentary,
   claims: Type.Array(VerifyClaim),
 }, { additionalProperties: false });
 export const AppReply = Type.Object({

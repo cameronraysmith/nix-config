@@ -3,6 +3,29 @@ import { Blocked, unreachable } from "../bump/types.js";
 import type { Tree } from "../omnigent/tools.js";
 import type { VResult, VerifyClaim } from "./types.js";
 export type { VerifyClaim } from "./types.js";
+export type DnsChainState = { kind: "Absent" } | { kind: "Quarantined"; id: string } | { kind: "Accepted"; id: string };
+export function dnsChainLabel(state: DnsChainState): string {
+  switch (state.kind) {
+    case "Absent": return "no-dns-candidate";
+    case "Quarantined": return `quarantined(${state.id})`;
+    case "Accepted": return `accepted(${state.id})`;
+    default: return unreachable(state);
+  }
+}
+export function dnsCandidateId(state: DnsChainState): string | null {
+  switch (state.kind) {
+    case "Absent": return null;
+    case "Quarantined": case "Accepted": return state.id;
+    default: return unreachable(state);
+  }
+}
+export function dnsRecovery(state: DnsChainState): string | null {
+  switch (state.kind) {
+    case "Absent": case "Accepted": return null;
+    case "Quarantined": return `DNS change ${state.id} is quarantined and NOT landable; orchestrator may run: jj abandon '${state.id}' (workflow never abandons)`;
+    default: return unreachable(state);
+  }
+}
 
 export type RepairEffect =
   | { kind: "Noop" }

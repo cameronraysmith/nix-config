@@ -8,6 +8,7 @@ import { runExecutionChecks } from "./execution-checks.mjs";
 import { runCommandChecks } from "./command-checks.mjs";
 import { runReviewChecks } from "./review-checks.mjs";
 import { runProcessChecks } from "./process-checks.mjs";
+import { runBoundaryChecks } from "./boundary-checks.mjs";
 
 const require = createRequire(import.meta.url);
 const executable = realpathSync(execFileSync("bash", ["-c", "command -v atomic"], { encoding: "utf8" }).trim());
@@ -15,7 +16,7 @@ const atomic = resolve(dirname(executable), "../lib/node_modules/@bastani/atomic
 const compiler = execFileSync("bash", ["-c", "printf '%s\\n' /nix/store/*typescript*/lib/node_modules/typescript/lib/typescript.js | head -1"], { encoding: "utf8" }).trim();
 const ts = require(compiler);
 const entry = ".atomic/workflows/stand-up-gitea-mq.ts";
-const files = [entry, ...["types", "tools", "prompts", "slices", "ledger", "api-schemas", "process", "s1-observations", "vcs"].map((n) => `.atomic/workflows/gitea-mq/${n}.ts`)];
+const files = [entry, ...["types", "tools", "prompts", "slices", "ledger", "api-schemas", "process", "s1-observations", "vcs", "proposal-edits", "verify-report"].map((n) => `.atomic/workflows/gitea-mq/${n}.ts`)];
 const options = {
   noEmit: true, strict: true, module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext,
   target: ts.ScriptTarget.ES2022, skipLibCheck: true,
@@ -77,6 +78,13 @@ function moduleUrl(file) {
 const types = await import(moduleUrl(files[1]));
 const tools = await import(moduleUrl(files[2]));
 const slices = await import(moduleUrl(files[4]));
+if (process.argv.includes("--commands-only")) {
+  try { await runCommandChecks({ ts, source: readFileSync(files[2], "utf8"), moduleUrl, tools, slices, typeboxUrl: pathToFileURL(join(atomic, "node_modules/typebox/build/index.mjs")).href }); }
+  catch (error) { console.error(String(error)); process.exit(1); }
+  process.exit(0);
+}
+await runBoundaryChecks({ tools, slices });
+if (process.argv.includes("--boundary-only")) process.exit(0);
 await runReviewChecks({ types, tools, slices, moduleUrl });
 assert.equal(types.nextBatch(1), 2); assert.equal(types.nextBatch(2), null);
 assert.throws(() => types.parse(types.Diagnosis, { kind: "RetryForever" }));
@@ -149,6 +157,7 @@ for (const script of [tools.appScript, tools.leakScript]) execFileSync("python3"
 console.log("PASS schemas, model policy, task ownership, DNS identity/reconciliation, C6 classic checks, ledger binding, repair effects, Linear outcomes, exhaustive switches, finite tools, Nix/Python parsing");
 const { assertCompactCheckpoint } = await import(moduleUrl(".atomic/workflows/bump/tools.ts"));
 await runExecutionChecks({ ts, main: readFileSync(entry, "utf8"), moduleUrl, tools, types, slices, ledgerTools, assertCompactCheckpoint });
+if (process.argv.includes("--graph-only")) process.exit(0);
 await runProcessChecks({ ts, moduleUrl });
 try {
   await runCommandChecks({ ts, source: readFileSync(files[2], "utf8"), moduleUrl, tools, slices, typeboxUrl: pathToFileURL(join(atomic, "node_modules/typebox/build/index.mjs")).href });

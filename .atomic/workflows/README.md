@@ -133,12 +133,12 @@ The controlling session owns registry reload and launch; live replay, worktree e
 
 ## stand-up-gitea-mq (draft; do not launch)
 
-`stand-up-gitea-mq.ts` authors the CAM-56 graph: preflight → proposed Nix patches/controller validation/evaluation/fresh review/routing → G1 App and credential witnesses → dedicated App-id/vars route → DNS source route/saved plan/apply/dig/ledger route → G2 approved ruleset PUT/readback → optional pinned deployment → V2/V3/V6/V9 observations and scratch rollback evaluation → documentation → witnessed verify.md → terminal roborev.
+`stand-up-gitea-mq.ts` authors the CAM-56 graph: preflight → proposed Nix patches/controller validation/evaluation/fresh review/routing → G1 App and credential witnesses → dedicated App-id/vars route → quarantined DNS candidate/content-pin/saved plan/apply/dig/acceptance → G2 approved ruleset PUT/readback → optional pinned deployment → V2/V3/V6/V9 observations and scratch rollback evaluation → documentation → deterministic verify.md → terminal roborev.
 Linear T2/T3 tools are best-effort, retain separate command outcomes, post comments via `--body-file <artifact> --workspace cameronraysmith`, and route proposal frontmatter updates with the relevant changes.
 Atomic 0.9.18's public `WorkflowRunContext` has no model-catalog port, although `RunOpts` does; absent catalog metadata does not block preflight, by explicit operator decision.
 The host can implicitly fall back to its controller model before the workflow can inspect the attempt; this risk is accepted, not prevented by an empty fallback list.
 After every stage and before using its output, the workflow records actual model/thinking metadata and rejects off-policy attempts or missing metadata with a blocked exit.
-The latest author report, `logs/adr-verify/workflow-author-report-4.md`, records closure evidence and remaining launch limitations; report 3's prior limitations remain unless explicitly superseded.
+The latest author report, `logs/adr-verify/workflow-author-report-5.md`, records closure evidence and remaining launch limitations; prior limitations remain unless explicitly superseded.
 
 Inputs are `change` (constant `stand-up-gitea-mq-on-magnetite`), required `splice_after` (current `rollup-landing` tip change id), `deploy` (true), `max_repair_attempts` (3; range 1–3), `build_timeout_minutes` (45), and optional `app_slug_hint`.
 There is no `start_at`; Atomic resume is the only re-entry mechanism, and a fresh run requires empty `@` and no preexisting aspect.
@@ -158,7 +158,11 @@ Human gates are authorizations, not evidence that the technical checks passed.
 
 The workflow never moves or describes `@`, pushes to main, deletes a ref without G5, applies the `merge-queue` label, runs `linear auth`, or ticks operator tasks 1.1/8.2.
 All model stages are read-only and submit full-file proposals with exact before/after contents.
-The controller validates the entire proposal's canonical allowlisted paths, absence of symlink traversal, before-content preconditions and operator/task-box invariants before applying any write; an invalid proposal applies nothing, including earlier valid edits.
+Before allowlist and task checks, the controller resolves existing proposal components with `lstat`/`realpath`, compares canonical spelling byte-for-byte, and compares device/inode identities with tasks.md, proposal.md and every other proposed file.
+Symlink parents/leaves, case aliases, protected hardlinks, duplicate identities, absolute paths and traversal are rejected before any write, including earlier valid edits.
+Absent paths also require consistent component spelling across the proposal; a proposed file cannot be another proposed file's parent.
+Task rows have unique canonical IDs; malformed/duplicate rows and any row change outside the slice are rejected, including during replan.
+Operator rows are always compared with the immutable preflight human baseline, not potentially corrupted current text; replan may only revise in-slice descriptions without changing checkbox states.
 Writers are restricted to their slice paths plus the change directory; build-service aspects remain untouched.
 The post-G1 exception permits exactly `vars/per-machine/magnetite/gitea-mq-github-app-secret-key` and `vars/per-machine/magnetite/gitea-mq-github-webhook-secret`, plus shared vars/sops paths only if the imported Omnigent helper enumerates them (currently none).
 Every process receives `CLAN_NO_COMMIT=1`, including nested Python/Terraform Clan calls; controlled generation/list/update commands and G1's operator `clan vars set` instructions also state it explicitly.
@@ -173,9 +177,10 @@ Readback/leased cleanup have a separate bounded retry loop with no create capabi
 G1/G2/G4/G5 declines terminate the run via the declined path with no positive outputs; NotRun is reserved for genuinely unrunnable probes with reasons.
 V6 records push acceptance/refusal separately from its falsified deletion-protection claim; V2 branch polling cannot exclude transient refs between observations.
 `deploy=false` skips machine activation and live/ref validation, not the earlier G1, DNS or ruleset operations; it is not a dry run.
-Run `node .atomic/workflows/gitea-mq/check.mjs` for strict typing, negative witness/batch/schema fixtures, pure contracts, local Nix parsing (never evaluation), Python parsing, in-memory graph execution, and mocked command boundaries.
-The four required graph scenarios are success, G2 decline, two-batch G3 exhaustion, and completed-node replay; replay asserts zero repeated callbacks, model calls, or human prompts.
-Additional tests cover no-op repairs, Nix invalidation/reactivation, repair-eval failure reaching G3, interrupted relock, DNS saved-plan intent reconciliation, classic protection before/after PUT, paginated/per-App installation checks, runtime table/ACME controls, and Linear readback/comment outcomes.
+Run `node .atomic/workflows/gitea-mq/check.mjs` for strict typing, negative witness/batch/schema fixtures, pure contracts, local Nix parsing (never evaluation), Python parsing, real temporary APFS proposal-boundary tests, in-memory graph execution, and mocked command boundaries.
+The graph fixture separates disk contents from jj snapshots and resolved revision trees; completed-node replay asserts zero repeated callbacks, model calls, or human prompts.
+DNS rejection/decline/exhaustion fixtures assert durable quarantine, unchecked committed DNS tasks and same-change repair; roborev rejection, G3 cancellation, DNS decline and exhaustion omit all four positive outputs, including with throwing `ctx.exit`.
+Additional checks retain the earlier repair, relock, DNS intent, ruleset, installation, runtime, process and Linear cases.
 These are local authoring checks, not real Atomic persistence/recovery, topology mutation correctness, live credentials, deployment, or end-to-end acceptance.
 
 Task 11.5 now uses the authorized C6 deterministic recomputation from live effective branch rules, classic `.contexts` and `.checks[].context`, and the running MainPID's non-secret fallback environment.
@@ -184,18 +189,26 @@ Task 8.4 uses owner-authenticated paginated installation/repository inventory, p
 DNS uses one bounded plan/approval/apply/dig budget, with fresh confirmation after changed plans; replay validates intent content against the saved-plan identity and reconciles only a zero-change refresh without output changes.
 DNS resolves the routed chain tip through Omnigent's `resolveSource`, which verifies the exported bookmark and returns `git+file://<repo>?ref=rollup-landing&rev=<commit-sha>`.
 Never use `path:<cwd>`: path sources can ingest ignored secrets and prior plan evidence into the Nix store.
-Hostname/repair source edits are therefore routed before planning; the later route carries the witnessed DNS task ledger.
+Every proposal application is followed by a durable, signal-forwarding `jj debug snapshot` node; `land` snapshots again before consulting pending paths or taking a no-op branch.
+DNS candidates reset tasks 6.1/6.2 before routing and persist `chain_state: quarantined(<change id>)` before planning.
+Before any plan, `git show <resolved rev>:modules/terranix/cloudflare.nix` must match the reviewed content hash, and `git grep` must find the mq hostname record in that same revision.
+Repairs use `jj squash --into <candidate>` rather than append another DNS change; only successful plan/apply/dig permits an accepted state and witnessed task ticks.
+Any terminal failure while quarantined exits blocked with the candidate ID and exact `jj abandon '<id>'` recovery command for the orchestrator; the workflow never abandons and the quarantined chain is not landable.
+The durable ledger is the quarantine authority; this is not an isolated bookmark or an automatic rollback of a partially applied external effect.
 All evidence and plan files remain outside the source tree, even though the committed Git source already excludes untracked/ignored files.
 Rollback reconstructs the real flake module tree from `f.outPath`, replacing only the queue aspect via `lib.mkForce {}` and asserting that queue enablement disappears; it never copies the host module to `builtins.toFile`, so relative policy imports keep their original directory.
 Any later scope-approved repair touching `modules/terranix/**` invalidates DNS receipts and re-enters that gate; this does not expand any writer's path allowlist.
 `Repair(Noop)` re-probes without routing an empty change.
 Changed tracked Nix invalidates deployment/validation receipts, routes actual pending paths, and reactivates and probes the pinned source before retrying validation; previously completed dependent validations become NotRun until witnessed again.
-Gate/repair/Linear outcomes are tagged unions; the verify writer supplies exact task-to-receipt claims checked against the controller ledger, and the controller appends its authoritative ledger.
+Gate/repair/Linear/DNS-chain outcomes are tagged unions; the verify writer supplies exact task-to-receipt claims checked against the controller ledger.
+The preflight task-ID inventory seeds unverified ledger rows, so every task receives a deterministic verdict even without a later receipt.
+The controller renders report sections 1–8, every task verdict and the attribution ledger; model output contributes only escaped analysis/caveats in fixed non-verdict slots.
 G1, rollback, docs, V2 and V6 observations have explicit receipts.
 Each S1 task has named required observation arms; only completely observed tasks enter the passed ledger.
 Credential-file bindings, ensureUsers ownership, App-id equality after G1, and landing environment now have explicit checks.
 Tasks 2.1 (input/follows/lock delta), 3.1 (generator scripts/source owner), 4.2 (module-wide label assignment scan), 4.4 (header/lint), and 5.1 (import/aspect ordering) remain unverified where those arms are unobserved; implementation ticks are not verification.
-Free-form report prose still requires roborev; structural claim binding cannot establish semantic truth by itself.
+Roborev still checks implementation and evidence quality; arbitrary model markdown can no longer supply or inject report verdict/attribution sections.
+Proposal validation is not a cross-file transaction against I/O interruption or a lock against concurrent path swaps after validation.
 The following prior caveats remain explicitly out of scope: gap 2, same-path concurrent ownership/review-hash attribution during routing; gap 8, transient batch refs between V2 samples and stale candidate/head/label authorization across retries; gap 9, SSH transport identity equivalence to the gh identity and interrupted V6 cleanup recovery.
 Authenticated webhook redelivery remains NotRun, table presence is not a direct latest-migration log witness, and interrupted Linear comments lack reconciliation.
 Do not launch until the orchestrator reviews these boundaries and remaining gaps.

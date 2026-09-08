@@ -1,5 +1,5 @@
-import { readFile, writeFile, lstat, mkdir, unlink } from "node:fs/promises";
-import { resolve, join, dirname, posix } from "node:path";
+import { readFile, writeFile, lstat, mkdir } from "node:fs/promises";
+import { resolve, join, dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { Type } from "typebox";
@@ -18,18 +18,21 @@ export { processCheckpoint, allocateEvidence } from "./process.js";
 import { s1Coverage, type S1Arm } from "./s1-observations.js";
 import {
   parse, Ruleset, type AppReply, type RulesetDraft, type VResult,
-  type LinearState, type LinearOutcome, type ProposedEdit,
+  type LinearState, type LinearOutcome, type VerifyCommentary,
 } from "./types.js";
 import {
   api, rulesetApi, aspect, dir, tasks, proposal, verify, domain, repository,
   varsAllowed, negativeControls, rollbackExpr, runtimeEnvironment, type Slice,
 } from "./slices.js";
-import { assertVerifyClaims, renderGateLedger, type GateEntry, type VerifyClaim } from "./ledger.js";
+import { assertVerifyClaims, type GateEntry, type VerifyClaim } from "./ledger.js";
+import { renderVerify, renderRoborevRejection } from "./verify-report.js";
 import {
   App, AppInstallation, InstallationPages, RepositoryPages, CollaboratorPages,
   CheckPages, Pull, EventPages, StatusPages, DnsPlan, DnsRecord, S1Configuration,
 } from "./api-schemas.js";
 export { capture, save, snapshot };
+import { taskLedger, humanBoxes, assertHumanBoxes } from "./proposal-edits.js";
+export { applyStageEdits, assertTaskScope, taskLedger, humanBoxes, assertHumanBoxes } from "./proposal-edits.js";
 export const resolveSource = (cwd: string, tip: string, name: string, signal: AbortSignal) => sharedResolveSource(cwd, tip, name, signal, capture);
 export const runStreaming = async (cwd: string, command: string, signal: AbortSignal) => requireSuccess(await captureStreaming(cwd, command, signal));
 export const assertSameInputs = (before: Tree, after: Tree): void =>
@@ -101,73 +104,19 @@ export async function preflight(cwd: string, splice: string, signal: AbortSignal
   });
   const baseline = parse(baselineSchema, await json(cwd,
     `nix eval --no-write-lock-file --option allow-import-from-derivation false --json .#nixosConfigurations.magnetite.config --apply ${quote('c: { pre = c.systemd.services.gitea.serviceConfig.ExecStartPre or null; }')}`, signal));
-  return { chain, lock, baseline, humanBoxes: humanBoxes(await readFile(join(cwd, tasks), "utf8")) };
-}
-export const humanBoxes = (text: string) => text.split("\n")
-  .filter((line) => /^- \[[ x]\] (1\.1|8\.2) /.test(line)).join("\n");
-export function assertHumanBoxes(before: string, after: string): void {
-  for (const id of ["1.1", "8.2"]) {
-    const rows = (text: string) => text.split("\n")
-      .filter((line) => line.startsWith("- [") && line.slice(6).startsWith(`${id} `));
-    if (rows(before).length !== 1 || !isDeepStrictEqual(rows(before), rows(after))) {
-      throw new Blocked(`Operator-owned task ${id} changed`);
-    }
-  }
-}
-export function assertTaskScope(before: string, after: string, allowed: readonly string[]): void {
-  const boxes = (text: string) => new Map([...text.matchAll(/^- \[([ x])\] (\d+\.\d+) /gm)].map((m) => [m[2], m[1]]));
-  const old = boxes(before);
-  const current = boxes(after);
-  for (const [id, state] of current) {
-    if (state === "x" && old.get(id) !== "x" && !allowed.includes(id)) throw new Blocked(`Stage tick outside slice: ${id}`);
-  }
-  for (const [id, state] of old) {
-    if (!allowed.includes(id) && current.get(id) !== state) throw new Blocked(`Stage changed foreign task: ${id}`);
-  }
-}
-export async function applyStageEdits(cwd: string, edits: readonly ProposedEdit[], slice: Slice, signal: AbortSignal) {
-  const seen = new Set<string>();
-  for (const edit of edits) {
-    signal.throwIfAborted();
-    if (posix.normalize(edit.path) !== edit.path || edit.path.startsWith("/") || edit.path.split("/").some((part) => ["", ".", "..", ".git", ".jj"].includes(part)) || edit.path.includes("\\") || seen.has(edit.path) || !slice.allowedPaths.some((prefix) => within(edit.path, prefix))) throw new Blocked(`Proposed path outside allowlist: ${edit.path}`);
-    seen.add(edit.path);
-    let part = cwd;
-    for (const segment of edit.path.split("/")) {
-      part = join(part, segment);
-      try { if ((await lstat(part)).isSymbolicLink()) throw new Blocked(`Symlink in proposed path: ${edit.path}`); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-    }
-    let current: string | null = null;
-    try { current = await readFile(join(cwd, edit.path), "utf8"); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-    if (current !== edit.before) throw new Blocked(`Proposed edit baseline changed: ${edit.path}`);
-    if (edit.path === tasks) {
-      assertHumanBoxes(current ?? "", edit.after ?? "");
-      assertTaskScope(current ?? "", edit.after ?? "", slice.taskIds);
-    }
-  }
-  // Validation of the entire proposal precedes the first write, including task-box checks.
-  signal.throwIfAborted();
-  for (const edit of edits) {
-    if (edit.before === edit.after) continue;
-    if (edit.after === null) await unlink(join(cwd, edit.path));
-    else {
-      await mkdir(dirname(join(cwd, edit.path)), { recursive: true });
-      await writeFile(join(cwd, edit.path), edit.after);
-    }
-  }
-  return { applied: edits.filter((edit) => edit.before !== edit.after).map((edit) => edit.path) };
+  const taskText = await readFile(join(cwd, tasks), "utf8");
+  return { chain, lock, baseline, taskIds: [...taskLedger(taskText).keys()], humanBoxes: humanBoxes(taskText) };
 }
 export function resetTaskText(text: string, ids: readonly string[]): string {
   return text.split("\n").map((line) =>
     ids.some((id) => line.startsWith(`- [x] ${id} `))
       ? line.replace("- [x]", "- [ ]") : line).join("\n");
 }
-export async function resetTasks(cwd: string, ids: readonly string[], signal: AbortSignal) {
+export async function resetTasks(cwd: string, ids: readonly string[], signal: AbortSignal, humanBaseline: string) {
   signal.throwIfAborted();
   const before = await readFile(join(cwd, tasks), "utf8");
   const after = resetTaskText(before, ids);
-  assertHumanBoxes(before, after);
+  assertHumanBoxes(humanBaseline, after);
   await writeFile(join(cwd, tasks), after);
   return { invalidated: [...ids] };
 }
@@ -198,21 +147,39 @@ export async function scope(cwd: string, before: Tree, allowed: readonly string[
   assertHumanBoxes(humanBefore, await readFile(join(cwd, tasks), "utf8"));
   return after;
 }
+export async function snapshotWorkingCopy(cwd: string, signal: AbortSignal) {
+  await run(cwd, "jj debug snapshot", signal);
+  return { snapshotted: true };
+}
+const dnsPath = "modules/terranix/cloudflare.nix";
+export async function reviewDnsContent(cwd: string, signal: AbortSignal) {
+  signal.throwIfAborted();
+  return { sha256: sha256(await readFile(join(cwd, dnsPath))) };
+}
+export async function verifyDnsSource(cwd: string, source: DeploymentSource, reviewed: { sha256: string }, signal: AbortSignal) {
+  if (!source.source.startsWith("git+file://") || new URL(source.source).searchParams.get("rev") !== source.sha || !/^[0-9a-f]{40}$/.test(source.sha)) throw new Blocked("DNS source must be revision-pinned git+file");
+  const content = await capture(cwd, `git show ${quote(`${source.sha}:${dnsPath}`)}`, signal);
+  requireSuccess(content);
+  if (sha256(content.stdout) !== reviewed.sha256) throw new Blocked("Routed DNS source differs from reviewed hostname content");
+  const record = await run(cwd, `git grep -n -E ${quote('name[[:space:]]*=[[:space:]]*"(mq|mq\\.scientistexperience\\.net)"')} ${quote(source.sha)} -- ${quote(dnsPath)}`, signal);
+  return { sha: source.sha, sha256: reviewed.sha256, record };
+}
 export async function pendingPaths(cwd: string, slice: Slice, signal: AbortSignal): Promise<string[]> {
   return (await pathsIn(cwd, "@", signal))
     .filter((path) => slice.allowedPaths.some((prefix) => within(path, prefix)));
 }
-export async function route(cwd: string, chain: Chain, slice: Slice, reviewed: Tree, signal: AbortSignal): Promise<Chain> {
+export async function route(cwd: string, chain: Chain, slice: Slice, reviewed: Tree, signal: AbortSignal, into: string | null = null): Promise<Chain> {
   await topology(cwd, chain, signal);
   assertSameInputs(reviewed, await snapshot(cwd, signal));
   await run(cwd, "jj debug snapshot", signal);
   const paths = await pendingPaths(cwd, slice, signal);
   if (!paths.length) throw new Blocked("Cannot route empty change");
-  await run(cwd, `jj new --no-edit -A ${quote(chain.tip)} -m ${quote(`feat(gitea-mq): ${slice.name}`)}`, signal);
-  const id = await oneId(cwd, `${chain.tip}+`, signal);
+  if (into !== null && !chain.changes.some((change) => change.id === into)) throw new Blocked("Amendment target is not on the owned chain");
+  if (into === null) await run(cwd, `jj new --no-edit -A ${quote(chain.tip)} -m ${quote(`feat(gitea-mq): ${slice.name}`)}`, signal);
+  const id = into ?? await oneId(cwd, `${chain.tip}+`, signal);
   await run(cwd, squashCommand(id, paths, slice.allowedPaths), signal);
-  await run(cwd, `jj bookmark set rollup-landing -r ${quote(id)}`, signal);
-  const next = { ...chain, tip: id, changes: [...chain.changes, { id, paths }] };
+  if (into === null) await run(cwd, `jj bookmark set rollup-landing -r ${quote(id)}`, signal);
+  const next = { ...chain, tip: into === null ? id : chain.tip, changes: into === null ? [...chain.changes, { id, paths }] : chain.changes.map((change) => change.id === id ? { id, paths: [...new Set([...change.paths, ...paths])] } : change) };
   await topology(cwd, next, signal);
   if ((await pendingPaths(cwd, slice, signal)).length) throw new Blocked("Routed paths remain in @");
   return next;
@@ -667,12 +634,12 @@ export async function pollLanding(cwd: string, selected: Awaited<ReturnType<type
   }
   throw new Blocked("V2 did not fast-forward/merge with successful gitea-mq status within 20 minutes");
 }
-export async function tick(cwd: string, completed: readonly string[], signal: AbortSignal) {
+export async function tick(cwd: string, completed: readonly string[], signal: AbortSignal, humanBaseline: string) {
   signal.throwIfAborted();
   if (completed.some((id) => ["1.1", "8.2"].includes(id))) throw new Blocked("Cannot tick operator gate");
   const before = await readFile(join(cwd, tasks), "utf8");
   const after = before.split("\n").map((line) => completed.some((id) => line.startsWith(`- [ ] ${id} `)) ? line.replace("- [ ]", "- [x]") : line).join("\n");
-  assertHumanBoxes(before, after); await writeFile(join(cwd, tasks), after);
+  assertHumanBoxes(humanBaseline, after); await writeFile(join(cwd, tasks), after);
   return { completed: [...completed] };
 }
 export async function syncProposal(cwd: string, state: LinearState, outcome: LinearOutcome, signal: AbortSignal) {
@@ -695,12 +662,10 @@ export async function syncProposal(cwd: string, state: LinearState, outcome: Lin
   await writeFile(join(cwd, proposal), after);
   return { state, outcome, at: now };
 }
-export async function writeVerify(cwd: string, markdown: string, claims: readonly VerifyClaim[], ledger: readonly GateEntry[], signal: AbortSignal) {
+export async function writeVerify(cwd: string, commentary: VerifyCommentary, claims: readonly VerifyClaim[], ledger: readonly GateEntry[], signal: AbortSignal) {
   signal.throwIfAborted();
-  for (let i = 1; i <= 8; i++) if (!markdown.includes(`## ${i}. `)) throw new Blocked(`Missing verify section ${i}`);
-  if (!markdown.includes("[verified here]") || !markdown.includes("[operator]")) throw new Blocked("Missing attribution contract");
   assertVerifyClaims(claims, ledger);
-  markdown += renderGateLedger(ledger);
+  const markdown = renderVerify(commentary, ledger);
   await writeFile(join(cwd, verify), markdown);
   await run(cwd, `openspec validate ${quote(dir.split("/").at(-1)!)} --strict`, signal);
   const actual = await readFile(join(cwd, verify), "utf8");
@@ -709,7 +674,7 @@ export async function writeVerify(cwd: string, markdown: string, claims: readonl
 export async function markRejected(cwd: string, findings: readonly string[], signal: AbortSignal) {
   signal.throwIfAborted();
   const before = await readFile(join(cwd, verify), "utf8");
-  await writeFile(join(cwd, verify), `${before}\n## roborev disposition\n\n- [x] (fail) FAIL\n\n${findings.map((f) => `- ${f}`).join("\n")}\n`);
+  await writeFile(join(cwd, verify), before + renderRoborevRejection(findings));
   return { rejected: true };
 }
 
