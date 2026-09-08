@@ -65,6 +65,35 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   });
   code = code.replace('from "typebox"', `from "${typeboxUrl}"`);
   const actual = await import(dataUrl(code));
+  // Shared @ may contain unrelated edits; all commands below remain mocked.
+  {
+    const repo = "/Users/crs58/projects/vanixiets", mock = globalThis.__mqCommandMock;
+    const original = { pathsIn: mock.pathsIn, ids: mock.ids, snapshot: mock.snapshot };
+    const foreign = [".atomic/workflows/deploy-omnigent.ts", ".atomic/todos/x.md"];
+    let pending = [...foreign];
+    mock.pathsIn = async () => pending;
+    mock.ids = async () => ["ssss", "kkkk"];
+    files.set(join(repo, "flake.lock"), JSON.stringify({ nodes: {} }));
+    const taskText = "- [ ] 1.1 G1\n- [ ] 8.2 G2\n- [ ] 2.1 input";
+    files.set(join(repo, slices.tasks), taskText);
+    handler = (command) => command === "git symbolic-ref -q HEAD" ? observed("", 1)
+      : command.startsWith("nix eval ") ? observed({ pre: null }) : observed();
+    const result = await actual.preflight(repo, "ssss", signal);
+    await actual.save(repo, "preflight.json", result);
+    assert.deepEqual(JSON.parse(files.get(join(repo, "preflight.json"))).foreign, foreign);
+    const baseline = Object.fromEntries(foreign.map((path) => [path, "100644:preexisting"]));
+    mock.snapshot = async () => ({ ...baseline, [slices.aspect]: "100644:owned" });
+    await actual.scope(repo, baseline, slices.s1.allowedPaths, tools.humanBoxes(taskText), signal);
+    mock.snapshot = async () => ({ ...baseline, [foreign[0]]: "100644:drift" });
+    await assert.rejects(() => actual.scope(repo, baseline, slices.s1.allowedPaths, tools.humanBoxes(taskText), signal), /Foreign paths changed: .atomic\/workflows\/deploy-omnigent.ts/);
+    const owned = [...new Set([slices.s1, slices.postG1, slices.s2, slices.s4, slices.docs, slices.report].flatMap((slice) => slice.allowedPaths))];
+    for (const path of [...owned, `${slices.dir}/tasks.md`, ...slices.varsAllowed.map((path) => `${path}/secret`)]) {
+      pending = [...foreign, path];
+      await assert.rejects(() => actual.preflight(repo, "ssss", signal), (error) => error.message.includes(path));
+    }
+    Object.assign(mock, original);
+    console.log("PASS preflight shared @: foreign paths recorded and baseline-preserved; workflow scope (including change/vars directories) blocks with offending paths; later foreign drift blocks");
+  }
   // Real physical paths, closed process port: even old code cannot execute POST.
   const physical = await mkdtemp(join(tmpdir(), "gitea-mq-confinement-"));
   try {

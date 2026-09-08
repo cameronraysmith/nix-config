@@ -23,7 +23,7 @@ import {
 } from "./types.js";
 import {
   api, rulesetApi, aspect, dir, tasks, proposal, verify, domain, repository,
-  varsAllowed, negativeControls, rollbackExpr, runtimeEnvironment, type Slice,
+  varsAllowed, negativeControls, rollbackExpr, runtimeEnvironment, s1, postG1, s2, s4, docs, report, type Slice,
 } from "./slices.js";
 import { passedClaims, type GateEntry } from "./ledger.js";
 import { renderVerify, renderRoborevRejection } from "./verify-report.js";
@@ -83,7 +83,12 @@ export async function preflight(cwd: string, splice: string, signal: AbortSignal
   if (resolve(cwd) !== "/Users/crs58/projects/vanixiets") throw new Blocked("Wrong repository cwd");
   await run(cwd, `openspec validate ${quote(dir.split("/").at(-1)!)} --strict`, signal);
   await run(cwd, "jj debug snapshot", signal);
-  if ((await pathsIn(cwd, "@", signal)).length) throw new Blocked("Fresh run requires empty @");
+  const allowed = [...new Set([s1, postG1, s2, s4, docs, report].flatMap((slice) => slice.allowedPaths))];
+  const workingPaths = await pathsIn(cwd, "@", signal);
+  const owned = workingPaths.filter((path) => allowed.some((prefix) => within(path, prefix)));
+  if (owned.length) throw new Blocked(`Preexisting workflow changes require ownership reconciliation: ${owned.join(", ")}`);
+  // Retain unrelated edits in the working tree and subsequent full-tree stage baselines.
+  const foreign = workingPaths.filter((path) => !allowed.some((prefix) => within(path, prefix)));
   try {
     await lstat(join(cwd, aspect));
     throw new Blocked("gitea-mq aspect already exists");
@@ -107,7 +112,7 @@ export async function preflight(cwd: string, splice: string, signal: AbortSignal
   const baseline = parse(baselineSchema, await json(cwd,
     `nix eval --no-write-lock-file --option allow-import-from-derivation false --json .#nixosConfigurations.magnetite.config --apply ${quote('c: { pre = c.systemd.services.gitea.serviceConfig.ExecStartPre or null; }')}`, signal));
   const taskText = await readFile(join(cwd, tasks), "utf8");
-  return { chain, lock, baseline, taskIds: [...taskLedger(taskText).keys()], humanBoxes: humanBoxes(taskText) };
+  return { chain, lock, baseline, foreign, taskIds: [...taskLedger(taskText).keys()], humanBoxes: humanBoxes(taskText) };
 }
 export function resetTaskText(text: string, ids: readonly string[]): string {
   return text.split("\n").map((line) =>

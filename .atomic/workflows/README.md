@@ -141,7 +141,7 @@ After every stage and before using its output, the workflow records actual model
 The latest author report, `logs/adr-verify/workflow-author-report-6.md`, records closure evidence and remaining launch limitations; prior limitations remain unless explicitly superseded.
 
 Inputs are `change` (constant `stand-up-gitea-mq-on-magnetite`), required `splice_after` (current `rollup-landing` tip change id), `deploy` (true), `max_repair_attempts` (3; range 1–3), `build_timeout_minutes` (45), and optional `app_slug_hint`.
-There is no `start_at`; Atomic resume is the only re-entry mechanism, and a fresh run requires empty `@` and no preexisting aspect.
+There is no `start_at`; Atomic resume is the only re-entry mechanism, and a fresh run requires no preexisting aspect or `@` changes within any workflow slice's allowed paths (including the change directory and both vars generator directories). Unrelated `@` paths are listed as `foreign` in preflight evidence and retained in full-tree stage baselines; later foreign-path drift still blocks.
 Completed tool/prompt nodes replay; tool outcomes are normalized before ledger insertion and hashing to exclude Atomic's replay-only `cached` flag.
 Fatal non-gate tool calls use throwing failure mode so failed callbacks have no replayable return-failure checkpoint; non-Stop Blocked exits use Atomic `{status:"failed", resumable:true}`.
 Only `read-rulesets` enables `retriesAllowed:true, maxAttempts:3`; `G1-witnesses`, `write-capable-identities`, and every mint/create/apply/push/deploy node have no automatic retries.
