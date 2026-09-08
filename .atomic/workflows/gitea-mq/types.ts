@@ -75,7 +75,7 @@ export const Diagnosis = Type.Union([
 ]);
 export type Diagnosis = Static<typeof Diagnosis>;
 export const ProposedEdit = Type.Object({
-  path: text(), before: Type.Union([Type.String(), Type.Null()]),
+  path: text(), baseSha256: Type.Union([Type.String({ pattern: "^[0-9a-f]{64}$" }), Type.Null()]),
   after: Type.Union([Type.String(), Type.Null()]),
 }, { additionalProperties: false });
 export type ProposedEdit = Static<typeof ProposedEdit>;
@@ -89,7 +89,6 @@ export const VerifyCommentary = Type.Object({ analysis: text(), caveats: text() 
 export type VerifyCommentary = Static<typeof VerifyCommentary>;
 export const VerifyDraft = Type.Object({
   commentary: VerifyCommentary,
-  claims: Type.Array(VerifyClaim),
 }, { additionalProperties: false });
 export const AppReply = Type.Object({
   slug: Type.String({ pattern: "^[a-z0-9][a-z0-9-]*$" }),

@@ -17,14 +17,14 @@ import { capture, captureStreaming, readResponse, assertExternalEvidence } from 
 export { processCheckpoint, allocateEvidence } from "./process.js";
 import { s1Coverage, type S1Arm } from "./s1-observations.js";
 import {
-  parse, Ruleset, type AppReply, type RulesetDraft, type VResult,
+  parse, Ruleset, AppReply, type RulesetDraft, type VResult,
   type LinearState, type LinearOutcome, type VerifyCommentary,
 } from "./types.js";
 import {
   api, rulesetApi, aspect, dir, tasks, proposal, verify, domain, repository,
   varsAllowed, negativeControls, rollbackExpr, runtimeEnvironment, type Slice,
 } from "./slices.js";
-import { assertVerifyClaims, type GateEntry, type VerifyClaim } from "./ledger.js";
+import { passedClaims, type GateEntry } from "./ledger.js";
 import { renderVerify, renderRoborevRejection } from "./verify-report.js";
 import {
   App, AppInstallation, InstallationPages, RepositoryPages, CollaboratorPages,
@@ -40,6 +40,7 @@ export const assertSameInputs = (before: Tree, after: Tree): void =>
 export const run = async (cwd: string, command: string, signal: AbortSignal) =>
   requireSuccess(await capture(cwd, command, signal));
 export const sha256 = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
+export const proposalBases = (tree: Tree, slice: Slice): Record<string, string> => Object.fromEntries(Object.entries(tree).filter(([path]) => slice.allowedPaths.some((prefix) => within(path, prefix))).map(([path, value]) => [path, value.replace(/^\d{6}:/, "")]));
 const json = async (cwd: string, command: string, signal: AbortSignal): Promise<unknown> =>
   JSON.parse(await run(cwd, command, signal));
 const ssh = (command: string) =>
@@ -642,6 +643,18 @@ export async function tick(cwd: string, completed: readonly string[], signal: Ab
   assertHumanBoxes(humanBaseline, after); await writeFile(join(cwd, tasks), after);
   return { completed: [...completed] };
 }
+export async function tickOperator(cwd: string, gate: "G1" | "G2", receipt: string, humanBaseline: string, signal: AbortSignal) {
+  signal.throwIfAborted();
+  const decision: unknown = JSON.parse(await readFile(join(cwd, receipt), "utf8"));
+  if (gate === "G1") parse(Type.Object({ kind: Type.Literal("operator"), reply: AppReply }), decision);
+  else parse(Type.Object({ kind: Type.Literal("operator"), choice: Type.Union([Type.Literal("approve with User bypass"), Type.Literal("approve admin role only")]) }), decision);
+  const before = await readFile(join(cwd, tasks), "utf8"), id = gate === "G1" ? "1.1" : "8.2";
+  const tick = (text: string) => text.replace(new RegExp(`^- \\[ \\] ${id.replace(".", "\\.")} `, "m"), `- [x] ${id} `);
+  const expected = tick(humanBaseline), after = tick(before);
+  assertHumanBoxes(expected, after);
+  await writeFile(join(cwd, tasks), after);
+  return { humanBaseline: humanBoxes(after), taskId: id, receipt };
+}
 export async function syncProposal(cwd: string, state: LinearState, outcome: LinearOutcome, signal: AbortSignal) {
   signal.throwIfAborted();
   const before = await readFile(join(cwd, proposal), "utf8");
@@ -662,19 +675,18 @@ export async function syncProposal(cwd: string, state: LinearState, outcome: Lin
   await writeFile(join(cwd, proposal), after);
   return { state, outcome, at: now };
 }
-export async function writeVerify(cwd: string, commentary: VerifyCommentary, claims: readonly VerifyClaim[], ledger: readonly GateEntry[], signal: AbortSignal) {
+export async function writeVerify(cwd: string, commentary: VerifyCommentary, ledger: readonly GateEntry[], root: string, signal: AbortSignal) {
   signal.throwIfAborted();
-  assertVerifyClaims(claims, ledger);
-  const markdown = renderVerify(commentary, ledger);
+  const markdown = renderVerify(commentary, ledger, { root, verifiedAt: new Date().toISOString() });
   await writeFile(join(cwd, verify), markdown);
   await run(cwd, `openspec validate ${quote(dir.split("/").at(-1)!)} --strict`, signal);
   const actual = await readFile(join(cwd, verify), "utf8");
-  return { written: actual === markdown, sha256: sha256(actual) };
+  return { written: actual === markdown, sha256: sha256(actual), claims: passedClaims(ledger) };
 }
 export async function markRejected(cwd: string, findings: readonly string[], signal: AbortSignal) {
   signal.throwIfAborted();
   const before = await readFile(join(cwd, verify), "utf8");
-  await writeFile(join(cwd, verify), before + renderRoborevRejection(findings));
+  await writeFile(join(cwd, verify), renderRoborevRejection(before, findings));
   return { rejected: true };
 }
 

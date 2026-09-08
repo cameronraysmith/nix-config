@@ -1,5 +1,4 @@
-import { isDeepStrictEqual } from "node:util";
-import { Blocked, unreachable } from "../bump/types.js";
+import { unreachable } from "../bump/types.js";
 import type { Tree } from "../omnigent/tools.js";
 import type { VResult, VerifyClaim } from "./types.js";
 export type { VerifyClaim } from "./types.js";
@@ -82,12 +81,6 @@ export function passedClaims(ledger: readonly GateEntry[]): VerifyClaim[] {
   return [...latest.values()].sort((a, b) => a.taskId.localeCompare(b.taskId));
 }
 
-export function assertVerifyClaims(claims: readonly VerifyClaim[], ledger: readonly GateEntry[]): void {
-  const sorted = [...claims].sort((a, b) => a.taskId.localeCompare(b.taskId));
-  if (!isDeepStrictEqual(sorted, passedClaims(ledger))) {
-    throw new Blocked("Verify task claims differ from current gate receipts (missing, stale, duplicate or invented witness)");
-  }
-}
 
 export function renderGateLedger(ledger: readonly GateEntry[]): string {
   return "\n## Controller-bound gate receipts\n\n" + ledger.map((entry) => {

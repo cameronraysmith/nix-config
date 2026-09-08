@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { lstat, realpath, readFile, writeFile, mkdir, unlink } from "node:fs/promises";
 import { join, dirname, posix } from "node:path";
 import { Blocked, within } from "../bump/types.js";
@@ -84,21 +85,22 @@ export async function applyStageEdits(cwd: string, edits: readonly ProposedEdit[
     if (identity.inode !== null) seenInodes.add(identity.inode);
   }
   assertHumanBoxes(humanBaseline, await readFile(join(cwd, tasks), "utf8"));
+  const changed: ProposedEdit[] = [];
   for (const edit of edits) {
     let current: string | null = null;
     try { current = await readFile(join(cwd, edit.path), "utf8"); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-    if (current !== edit.before) throw new Blocked(`Proposed edit baseline changed: ${edit.path}`);
+    if ((current === null ? null : createHash("sha256").update(current).digest("hex")) !== edit.baseSha256) throw new Blocked(`Proposed edit baseline changed: ${edit.path}`);
+    if (current !== edit.after) changed.push(edit);
     if (edit.path === tasks) {
       assertHumanBoxes(humanBaseline, edit.after ?? "");
       assertTaskScope(current ?? "", edit.after ?? "", slice.taskIds, replan);
     }
   }
   signal.throwIfAborted();
-  for (const edit of edits) {
-    if (edit.before === edit.after) continue;
+  for (const edit of changed) {
     if (edit.after === null) await unlink(join(cwd, edit.path));
     else { await mkdir(dirname(join(cwd, edit.path)), { recursive: true }); await writeFile(join(cwd, edit.path), edit.after); }
   }
-  return { applied: edits.filter((edit) => edit.before !== edit.after).map((edit) => edit.path) };
+  return { applied: changed.map((edit) => edit.path) };
 }

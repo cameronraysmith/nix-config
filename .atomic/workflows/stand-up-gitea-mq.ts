@@ -3,51 +3,49 @@ import { join } from "node:path";
 import process from "node:process";
 import { workflow, type WorkflowSerializableValue, type WorkflowTaskOptions } from "@bastani/atomic/workflows";
 import { Blocked, witness, unreachable, type Witness } from "./bump/types.js";
-import { quote } from "./bump/tools.js";
 import { inputs, outputs, HIGH, MEDIUM, MAX, READ_ONLY, StageOutput, VerifyDraft, Diagnosis, Review, RulesetDraft, AppReply, parse, assertCatalog, validateModelPolicy, validateModelAttempts, nextBatch, completedRun, batches, attemptsFor, normalizeToolOutcome, type Validation } from "./gitea-mq/types.js";
 import { Validation as ValidationSchema } from "./gitea-mq/types.js";
-import { dir, tasks, proposal, design, verify, aspect, reads, s1, postG1, s2, s4, docs, report, negativeControls, varsAllowed, type Slice } from "./gitea-mq/slices.js";
+import { tasks, design, verify, reads, s1, postG1, s2, s4, docs, report, negativeControls, type Slice } from "./gitea-mq/slices.js";
 import * as t from "./gitea-mq/tools.js";
 import * as p from "./gitea-mq/prompts.js";
 import { repairEffect, repairPaths, dnsChainLabel, dnsCandidateId, dnsRecovery, type DnsChainState, type RepairEffect, type GateEntry, type GateStatus } from "./gitea-mq/ledger.js";
 import type { LinearState } from "./gitea-mq/types.js";
-
-class GateFailure extends Error { constructor(readonly gate: string, readonly receipt: string, reason: string) { super(reason); } }
-class Stop extends Blocked { constructor(readonly status: "blocked" | "declined" | "needs_rework", message: string) { super(message); } }
+import { GateFailure, Stop, ProposalRejected, proposalValue, proposalLoop } from "./gitea-mq/control.js";
 
 export default workflow({
   name: "stand-up-gitea-mq", description: "G1–G5 guarded gitea-mq implementation, pinned deployment, live validation and evidence-driven replanning.",
   autoAttach: true, inputs, outputs,
   run: async (ctx) => {
     const cwd = ctx.cwd ?? process.cwd(), input = ctx.inputs, timeout = input.build_timeout_minutes * 60_000;
-    const allocated = await ctx.tool("allocate-evidence", { ...input }, async ({ signal }) => {
+    const root = await ctx.tool("allocate-evidence", { ...input }, async ({ signal }) => {
       signal.throwIfAborted();
       return t.allocateEvidence(cwd);
-    }, { failureMode: "return", timeoutMs: 120_000 });
-    if (!allocated.ok) return ctx.exit({ status: "blocked", reason: "Evidence allocation failed" });
-    const root = allocated.value, ledger: unknown[] = [], linearTransitions: LinearState[] = [];
+    }, { failureMode: "throw", timeoutMs: 120_000 }).catch((error: unknown) => ctx.exit({ status: "failed", resumable: true, reason: `Evidence allocation failed: ${String(error)}` }));
+    const ledger: unknown[] = [], linearTransitions: LinearState[] = [];
+    const index: { node: string; ok: boolean; evidence: string }[] = [];
     let lockedDeclaration: string | null = null;
     let humanBaseline = "";
     let dnsState: DnsChainState = { kind: "Absent" };
     const gateLedger: GateEntry[] = [];
     const passed = (gate: string, taskIds: string[], evidence: string, status: GateStatus = { kind: "Passed" }) => gateLedger.push({ gate, taskIds, evidence, status });
-    let recheckDns: ((id: string) => Promise<void>) | null = null;
     const recordS1 = (gate: Awaited<ReturnType<typeof t.s1Gate>>, evidence: string) => { for (const row of gate.observations) passed("s1", [row.taskId], evidence, row.missing.length ? { kind: "Unverified", reason: row.missing.join(", ") } : { kind: "Passed" }); };
     let chain: t.Chain | null = null, tracked: Witness<string[]> | null = null, deployed: Witness<boolean> | null = null, written: Witness<boolean> | null = null;
     let validation: Validation = { v2: { kind: "NotRun", reason: "Not reached" }, v3: { kind: "NotRun", reason: "Not reached" }, v6: { kind: "NotRun", reason: "Not reached" }, v9: { kind: "NotRun", reason: "Not reached" } };
     const persist = async (name: string, data: unknown) => {
-      const result = await ctx.tool(`record-${name}`, { root, hash: t.sha256(JSON.stringify(data)) }, async ({ signal }) => {
-        signal.throwIfAborted(); await t.save(cwd, `${root}/${name}.json`, data); await t.save(cwd, `${root}/ledger.json`, ledger); return { file: `${root}/${name}.json` };
-      }, { failureMode: "return", timeoutMs: 120_000 });
-      if (!result.ok) throw new Blocked(`Could not persist ${name}`);
+      await ctx.tool(`record-${name}`, { root, hash: t.sha256(JSON.stringify(data)) }, async ({ signal }) => {
+        signal.throwIfAborted(); await t.save(cwd, `${root}/${name}.json`, data); await t.save(cwd, `${root}/ledger.json`, ledger); await t.save(cwd, `${root}/ledger-index.json`, index); return { file: `${root}/${name}.json` };
+      }, { failureMode: "throw", timeoutMs: 120_000 }).catch((error: unknown) => { throw new Blocked(`Could not persist ${name}: ${String(error)}`); });
     };
-    const recordDns = async (name: string, state: DnsChainState) => { dnsState = state; const entry = { chain_state: dnsChainLabel(state) }; ledger.push(entry); await persist(name, entry); };
-    const observe = async <T extends WorkflowSerializableValue>(name: string, action: (signal: AbortSignal) => Promise<T>, timeoutMs = 120_000) => {
-      const result = await ctx.tool(name, { root, inputs: { ...input }, tip: chain?.tip ?? null }, async ({ signal }) => t.processCheckpoint(root, name, () => action(signal)), { failureMode: "return", timeoutMs });
-      const stable = normalizeToolOutcome(result); ledger.push({ node: name, kind: "tool", result: stable }); await persist(name, stable); return result;
+    const recordDns = async (name: string, state: DnsChainState) => { dnsState = state; const entry = { chain_state: dnsChainLabel(state), recovery: dnsRecovery(state) }; ledger.push(entry); await persist(name, entry); };
+    const observe = async <T extends WorkflowSerializableValue>(name: string, action: (signal: AbortSignal) => Promise<T>, timeoutMs = 120_000, readOnly = false, fatal = false) => {
+      const args = { root, inputs: { ...input }, tip: chain?.tip ?? null }, retry = readOnly ? { retriesAllowed: true, maxAttempts: 3 } : {};
+      const result = fatal
+        ? { ok: true as const, cached: false, value: await ctx.tool(name, args, async ({ signal }) => t.processCheckpoint(root, name, () => action(signal)), { failureMode: "throw", timeoutMs, ...retry }).catch((error: unknown) => { throw new Blocked(`${name}: ${String(error)}`); }) }
+        : await ctx.tool(name, args, async ({ signal }) => t.processCheckpoint(root, name, () => action(signal)), { failureMode: "return", timeoutMs, ...retry });
+      const stable = normalizeToolOutcome(result); ledger.push({ node: name, kind: "tool", result: stable }); index.push({ node: name, ok: result.ok, evidence: `${root}/${name}.json` }); await persist(name, stable); return result;
     };
-    const tool = async <T extends WorkflowSerializableValue>(name: string, action: (signal: AbortSignal) => Promise<T>, timeoutMs = 120_000, gate = false) => {
-      const result = await observe(name, action, timeoutMs);
+    const tool = async <T extends WorkflowSerializableValue>(name: string, action: (signal: AbortSignal) => Promise<T>, timeoutMs = 120_000, gate = false, readOnly = false) => {
+      const result = await observe(name, action, timeoutMs, readOnly, !gate);
       if (!result.ok) {
         if (gate) throw new GateFailure(name, `${root}/${name}.json`, JSON.stringify(result.error));
         throw new Blocked(`${name}: ${JSON.stringify(result.error)}`);
@@ -56,25 +54,28 @@ export default workflow({
     };
     const stage = async (name: string, options: WorkflowTaskOptions) => {
       validateModelPolicy(options);
-      const result = await ctx.task(name, { ...options, context: "fresh", output: `${root}/${name}.md`, outputMode: "file-only", mcp: { allow: [] } });
+      const result = await ctx.task(name, { ...options, reads: [...new Set([...(options.reads || []), `${root}/ledger-index.json`])], context: "fresh", output: `${root}/${name}.md`, outputMode: "file-only", mcp: { allow: [] } });
       const actual = result.modelAttempts?.filter((attempt) => attempt.success).at(-1);
       ledger.push({ node: name, kind: "stage", model: actual?.model ?? result.model ?? null, thinking: actual?.reasoningLevel ?? null, attempts: result.modelAttempts ?? [] });
+      index.push({ node: name, ok: !!actual, evidence: `${root}/metadata-${name}.json` });
       await persist(`metadata-${name}`, ledger.at(-1));
       if (!actual?.model || !actual.reasoningLevel) throw new Blocked(`${name}: actual model/thinking metadata unavailable`);
       validateModelAttempts(options.model, result.modelAttempts); return result;
     };
-    const implement = async (name: string, slice: Slice, instructions = "", replan = false, medium = false, artifacts: string[] = []) => {
-      const before = await tool(`snapshot-${name}`, (signal) => t.snapshot(cwd, signal));
-      const result = await stage(name, { ...(medium ? MEDIUM : HIGH), ...READ_ONLY, reads: [...reads, `${root}/contracts.json`, `${root}/ledger.json`, ...artifacts], schema: StageOutput, prompt: replan ? p.replanPrompt(cwd, root, artifacts[0]!) : p.implementPrompt(cwd, root, slice, instructions) });
-      const patch = parse(StageOutput, result.structured);
-      const scoped = await tool(`apply-${name}`, async (signal) => {
+    const propose = <T>(name: string, execute: (id: string, feedback: string[]) => Promise<T>) => proposalLoop(name, input.max_repair_attempts, root, execute, persist, (question) => ctx.ui.input(question));
+    const implement = (name: string, slice: Slice, instructions = "", replan = false, medium = false, artifacts: string[] = []) => propose(name, async (id, feedback) => {
+      const before = await tool(`snapshot-${id}`, (signal) => t.snapshot(cwd, signal));
+      await persist(`bases-${id}`, t.proposalBases(before.value, slice));
+      const result = await stage(id, { ...(medium ? MEDIUM : HIGH), ...READ_ONLY, reads: [...reads, `${root}/contracts.json`, `${root}/ledger-index.json`, `${root}/bases-${id}.json`, ...artifacts, ...feedback], schema: StageOutput, prompt: replan ? p.replanPrompt(cwd, root, artifacts[0]!) : p.implementPrompt(cwd, root, slice, instructions) });
+      const patch = proposalValue(StageOutput, result.structured);
+      const scoped = await observe(`apply-${id}`, async (signal) => {
         t.assertSameInputs(before.value, await t.snapshot(cwd, signal)); await t.topology(cwd, chain!, signal);
-        await t.applyStageEdits(cwd, patch.edits, slice, signal, humanBaseline, replan);
-        return t.snapshot(cwd, signal);
+        await t.applyStageEdits(cwd, patch.edits, slice, signal, humanBaseline, replan); return t.snapshot(cwd, signal);
       });
-      await tool(`snapshot-wc-after-${name}`, (signal) => t.snapshotWorkingCopy(cwd, signal));
-      return repairEffect(before.value, scoped.value);
-    };
+      if (!scoped.ok) throw new ProposalRejected(`apply-${id}: ${JSON.stringify(scoped.error)}; ${root}/apply-${id}.json`);
+      await tool(`snapshot-wc-after-${id}`, (signal) => t.snapshotWorkingCopy(cwd, signal));
+      return repairEffect(before.value, scoped.value.evidence);
+    });
     const land = async (name: string, slice: Slice, allowNoop = false, into: string | null = null): Promise<string | null> => {
       await tool(`snapshot-wc-${name}`, (signal) => t.snapshotWorkingCopy(cwd, signal));
       if (allowNoop && !(await tool(`pending-${name}`, (signal) => t.pendingPaths(cwd, slice, signal))).value.length) return null;
@@ -98,7 +99,6 @@ export default workflow({
           try {
             if (instructions) {
               pendingPaths.push(...repairPaths(await implement(`repair-${id}`, slice, instructions, false, false, diagnosisArtifact)));
-              if (recheckDns && !name.startsWith("dns") && pendingPaths.some((path) => path.startsWith("modules/terranix/"))) await recheckDns(id);
             }
             if (slice.allowedPaths.includes("flake.nix")) {
               const lock = await tool(`relock-${id}`, (signal) => t.lockInput(cwd, lockedDeclaration, humanBaseline, signal), timeout, true);
@@ -172,9 +172,10 @@ export default workflow({
       const reply = await ctx.ui.input(`${p.registration}\nMaterial: ${root}/G1.md\nSuggested slug: ${input.app_slug_hint ?? "sciexp-gitea-mq"}`);
       if (!reply?.trim()) throw new Stop("declined", "G1 declined");
       const appReply = parse(AppReply, JSON.parse(reply)); await persist("G1", { kind: "operator", reply: appReply });
-      passed("G1", [], `${root}/G1.json`, { kind: "Operator", decision: "approved" });
+      humanBaseline = (await tool("G1-operator-task", (signal) => t.tickOperator(cwd, "G1", `${root}/G1.json`, humanBaseline, signal))).value.humanBaseline;
+      passed("G1", ["1.1"], `${root}/G1.json`, { kind: "Operator", decision: "approved" });
       const credentials = await tool("generate-vars", (signal) => t.generateVars(cwd, chain!, signal), timeout);
-      const app = await tool("G1-witnesses", (signal) => t.observeApp(cwd, root, appReply, signal));
+      const app = await tool("G1-witnesses", (signal) => t.observeApp(cwd, root, appReply, signal), 120_000, false, true);
       const leaks = await tool("positive-controlled-leak-scan", (signal) => t.leakScan(cwd, signal), timeout);
       await implement("patch-app-id", postG1, `Set services.gitea-mq.github.appId to tool-observed ${app.value.id}; remove the placeholder, change no other settings.`);
       const patched = await bounded("post-g1-s1-gate", postG1, (id) => tool(id, async (signal) => {
@@ -216,28 +217,21 @@ export default workflow({
       const dns = await dnsGate("dns");
       await tool("dns-ledger", (signal) => t.tick(cwd, ["6.1", "6.2"], signal, humanBaseline));
       passed("dns", ["6.1", "6.2"], dns.evidence);
-      recheckDns = async (id) => {
-        for (const entry of gateLedger) if (entry.gate === "dns") entry.status = { kind: "Invalidated", reason: `Terranix repair ${id}` };
-        await tool(`dns-invalidated-${id}`, (signal) => t.resetTasks(cwd, ["6.1", "6.2"], signal, humanBaseline));
-        await persist(`dns-invalidation-${id}`, gateLedger);
-        const fresh = await dnsGate(`dns-refresh-${id}`);
-        await tool(`dns-ledger-${id}`, (signal) => t.tick(cwd, ["6.1", "6.2"], signal, humanBaseline));
-        passed("dns", ["6.1", "6.2"], fresh.evidence);
-      };
       await land("route-s2", s2, true, dnsCandidateId(dnsState));
 
-      const beforeRules = await tool("read-rulesets", (signal) => t.readRules(cwd, root, signal));
+      const beforeRules = await tool("read-rulesets", (signal) => t.readRules(cwd, root, signal), 120_000, false, true);
       const draft = parse(RulesetDraft, (await stage("render-ruleset-diff", { ...MEDIUM, ...READ_ONLY, reads: [...reads, beforeRules.value.file, `${root}/app.json`], schema: RulesetDraft, prompt: p.rulesetPrompt(cwd, root) })).structured);
       const rendered = await tool("validate-ruleset-diff", (signal) => t.approveDraft(cwd, root, draft, app.value.id, beforeRules.value.userId, signal));
       const hashes = await tool("G2-approved-body-hashes", async (signal) => { signal.throwIfAborted(); return { withUser: t.sha256(await readFile(join(cwd, rendered.value.withUser))), adminOnly: t.sha256(await readFile(join(cwd, rendered.value.adminOnly))) }; });
-      const g2 = await ctx.ui.select(`G2 — Read full before/after/reverse at ${rendered.value.file}. ${draft.question}\nClassic main protection unchanged; allow_auto_merge=true; no PR/workflows rule.`, ["approve with User bypass", "approve admin role only", "decline"] as const);
+      const g2 = await ctx.ui.select(`G2 — Read full before/after/reverse at ${rendered.value.file}. ${draft.question}\nClassic main protection unchanged; allow_auto_merge=true; no PR/workflows rule. Do not edit tasks.md until the run terminates; the controller records 8.2 under the Operator receipt.`, ["approve with User bypass", "approve admin role only", "decline"] as const);
       if (g2 === "decline") throw new Stop("declined", "G2 declined");
       const approved = g2 === "approve with User bypass" ? rendered.value.withUser : rendered.value.adminOnly;
       const approvedHash = g2 === "approve with User bypass" ? hashes.value.withUser : hashes.value.adminOnly;
       await persist("G2", { kind: "operator", choice: g2, approved, sha256: approvedHash });
-      passed("G2", [], `${root}/G2.json`, { kind: "Operator", decision: "approved" });
+      humanBaseline = (await tool("G2-operator-task", (signal) => t.tickOperator(cwd, "G2", `${root}/G2.json`, humanBaseline, signal))).value.humanBaseline;
+      passed("G2", ["8.2"], `${root}/G2.json`, { kind: "Operator", decision: "approved" });
       const rules = await tool("apply-rulesets", (signal) => t.applyRules(cwd, approved, approvedHash, beforeRules.value.file, signal));
-      const identities = await tool("write-capable-identities", (signal) => t.identityWitness(cwd, app.value.id, app.value.slug, signal));
+      const identities = await tool("write-capable-identities", (signal) => t.identityWitness(cwd, app.value.id, app.value.slug, signal), 120_000, false, true);
       await tool("ruleset-ledger", (signal) => t.tick(cwd, ["8.1", "8.3", "8.4"], signal, humanBaseline));
       passed("rulesets-before", ["8.1"], beforeRules.evidence); passed("rulesets", ["8.3"], rules.evidence); passed("identities", ["8.4"], identities.evidence);
       await land("route-s3", report);
@@ -316,12 +310,12 @@ export default workflow({
       const structure = await tool("verify-structural-input", async (signal) => { await t.run(cwd, `openspec validate ${input.change} --strict`, signal); return { valid: true }; });
       passed("structural-validation", [], structure.evidence);
       await persist("gate-ledger", gateLedger);
-      const verification = parse(VerifyDraft, (await stage("write-verify", { ...MEDIUM, ...READ_ONLY, reads: [...reads.filter((path) => path !== tasks), `${root}/gate-ledger.json`, `${root}/ledger.json`, `${root}/validation.json`, "openspec/changes/stand-up-nixbot-on-magnetite/verify.md"], schema: VerifyDraft, prompt: p.verifyPrompt(cwd, root) })).structured);
-      const verified = await tool("write-verify-observation", (signal) => t.writeVerify(cwd, verification.commentary, verification.claims, gateLedger, signal));
+      const verification = await propose("write-verify", async (id, feedback) => proposalValue(VerifyDraft, (await stage(id, { ...MEDIUM, ...READ_ONLY, reads: [...reads.filter((path) => path !== tasks), `${root}/gate-ledger.json`, `${root}/ledger-index.json`, `${root}/validation.json`, "openspec/changes/stand-up-nixbot-on-magnetite/verify.md", ...feedback], schema: VerifyDraft, prompt: p.verifyPrompt(cwd, root) })).structured));
+      const verified = await tool("write-verify-observation", (signal) => t.writeVerify(cwd, verification.commentary, gateLedger, root, signal));
       written = witness("write-verify", verified.outcome, (v) => ({ value: v.evidence.written, evidence: verified.evidence }));
       await transition("T3", "In Review", `Verification report has been written for CAM-56. Read ${verify} and ${root} for witnessed results and caveats.`);
       await land("route-verify", report);
-      const finalReview = parse(Review, (await stage("roborev", { ...MAX, ...READ_ONLY, reads: [...reads, verify, `${root}/ledger.json`, `${root}/validation.json`], schema: Review, prompt: p.reviewPrompt(cwd, root, true) })).structured);
+      const finalReview = parse(Review, (await stage("roborev", { ...MAX, ...READ_ONLY, reads: [...reads, verify, `${root}/ledger-index.json`, `${root}/validation.json`], schema: Review, prompt: p.reviewPrompt(cwd, root, true) })).structured);
       switch (finalReview.verdict) {
         case "Approve": break;
         case "Reject": await tool("roborev-rejected", (signal) => t.markRejected(cwd, finalReview.findings, signal)); await land("route-roborev-fail", report); throw new Stop("needs_rework", `roborev rejected: ${root}/roborev.md`);
@@ -337,10 +331,12 @@ export default workflow({
       if (!tracked || !deployed || !written || !validated) throw new Blocked("Completion requires all four tool witnesses");
       return completedRun(tracked, deployed, validated, written, linearTransitions, root);
     } catch (error) {
-      if (!(error instanceof Blocked) && !(error instanceof GateFailure)) throw error;
       const recovery = dnsRecovery(dnsState), status = recovery ? "blocked" : error instanceof Stop ? error.status : "blocked", summary = `${String(error)}; ${recovery ?? ""}; evidence: ${root}`;
-      await persist("terminal", { status, summary, chain, chain_state: dnsChainLabel(dnsState), validation, linearTransitions });
-      return ctx.exit({ status: status === "needs_rework" ? "blocked" : status === "declined" ? "cancelled" : "blocked", reason: summary, outputs: { status, summary, evidence_root: root } });
+      try { await persist("terminal", { status, summary, recovery, chain, chain_state: dnsChainLabel(dnsState), validation, linearTransitions }); }
+      catch (recordError) { throw new AggregateError([error, recordError], summary); }
+      if (!(error instanceof Blocked) && !(error instanceof GateFailure)) throw error;
+      const exit = error instanceof Stop ? { status: error.status === "declined" ? "cancelled" as const : "blocked" as const } : { status: "failed" as const, resumable: true };
+      return ctx.exit({ ...exit, reason: summary, outputs: { status, summary, evidence_root: root } });
     }
   },
 });

@@ -6,7 +6,8 @@ const dataUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).toStr
 /** Execute the authored run function, not a second graph, with all effects in memory. */
 export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, slices, ledgerTools, assertCompactCheckpoint }) {
   const { s1Coverage } = await import(moduleUrl(".atomic/workflows/gitea-mq/s1-observations.ts"));
-  async function execute({ declineG2 = false, decline = "", rejectS1 = false, revisePlan = false, createFailure = false, cleanupFailure = false, exhaust = false, replay = false, probeFailure = false, repairNix = false, v3Failure = false, repairEvalFailure = false, dnsReject = false, dnsRejectOnce = false, rejectRoborev = false, throwExit = false, noHostnameEdit = false } = {}) {
+  const report = await import(moduleUrl(".atomic/workflows/gitea-mq/verify-report.ts"));
+  async function execute({ declineG2 = false, decline = "", rejectS1 = false, revisePlan = false, createFailure = false, cleanupFailure = false, exhaust = false, replay = false, probeFailure = false, repairNix = false, v3Failure = false, repairEvalFailure = false, dnsReject = false, dnsRejectOnce = false, rejectRoborev = false, throwExit = false, noHostnameEdit = false, proposalFailure = "", extraClaims = false, transientFailure = false, resumeFailure = false, unexpected = "" } = {}) {
     const files = new Map();
     const events = [];
     const cache = new Map();
@@ -17,6 +18,8 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
     const revisions = new Map(), committedTasks = new Map();
     const dnsPath = "modules/terranix/cloudflare.nix", dnsContent = 'resource.cloudflare_dns_record.mq = { name = "mq"; type = "CNAME"; content = "magnetite.scientistexperience.net"; proxied = false; };';
     let root = "", live = false, failProbe = probeFailure, failV3 = v3Failure, failRepairEval = repairEvalFailure, rejectReview = rejectS1, failCreate = createFailure, failCleanup = cleanupFailure;
+    let failProposal = !!proposalFailure, failClaims = extraClaims, failTransient = transientFailure;
+    const toolOptions = new Map();
     let callbacks = 0, stages = 0, prompts = 0, promptIndex = 0;
     const initialTasks = [...new Set(["1.1", "8.2", ...slices.s1.taskIds, "1.2", "1.3", "1.4", "3.2", "3.3", "6.1", "6.2", "8.1", "8.3", "8.4", "9.1", "10.1", ...Array.from({ length: 9 }, (_, i) => `11.${i + 1}`)])].map((id) => `- [ ] ${id} ${"task details ".repeat(30)}`).join("\n");
     assert(initialTasks.length > 8192);
@@ -26,7 +29,8 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       if (!files.has(path)) throw Object.assign(new Error(`Missing mock file: ${path}`), { code: "ENOENT" });
       return files.get(path);
     };
-    const tick = async (_cwd, ids) => {
+    const tick = async (_cwd, ids, _signal, baseline) => {
+      if (baseline !== undefined) tools.assertHumanBoxes(baseline, get(join(cwd, slices.tasks)));
       const path = join(cwd, slices.tasks);
       files.set(path, get(path).split("\n").map((line) => ids.some((id) => line.startsWith(`- [ ] ${id} `)) ? line.replace("[ ]", "[x]") : line).join("\n"));
       return { completed: ids };
@@ -35,7 +39,9 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
     const mocked = {
       allocateEvidence: async () => "../evidence/run",
       processCheckpoint: async (_root, _name, action) => { const result = { receipt: [], evidence: await action() }; assertCompactCheckpoint(result); return result; },
-      applyStageEdits: async (_cwd, edits) => {
+      applyStageEdits: async (_cwd, edits, _slice, _signal, baseline) => {
+        tools.assertHumanBoxes(baseline, get(join(cwd, slices.tasks)));
+        if (failProposal && events.at(-1).startsWith("apply-implement")) { failProposal = proposalFailure === "always"; throw Error("rejected proposal: stale hash or forbidden task"); }
         for (const edit of edits) {
           files.set(join(cwd, edit.path), edit.after);
           tree[edit.path] = edit.after;
@@ -45,6 +51,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       },
       sha256: tools.sha256,
       humanBoxes: tools.humanBoxes,
+      proposalBases: tools.proposalBases,
       assertTaskScope: tools.assertTaskScope,
       assertSameInputs: tools.assertSameInputs,
       save: async (_cwd, file, value) => files.set(join(cwd, file), JSON.stringify(value)),
@@ -84,7 +91,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       syncProposal: async () => ({ synced: true }),
       run: async (_cwd, command) => command.includes("github.appId") ? "1234" : "",
       runStreaming: async () => "",
-      generateVars: async () => ({ generated: true }),
+      generateVars: async () => { if (failTransient) { failTransient = false; throw Error("transient connection failure"); } return { generated: true }; },
       observeApp: async () => ({ id: 1234, slug: "queue" }),
       leakScan: async () => ({ leaked: false }),
       reviewDnsContent: async () => ({ sha256: tools.sha256(tree[dnsPath] ?? "") }),
@@ -124,17 +131,24 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       v6Finish: async () => { if (failCleanup) { failCleanup = false; throw Error("readback failed"); } return { result: { kind: "Fail", evidence: "push.log", reason: "Namespace has no deletion protection" } }; },
       pollLanding: async () => ({ main: "a".repeat(40) }),
       tick,
+      tickOperator: async (_cwd, gate, receipt, baseline, actualSignal) => {
+        assert.equal(actualSignal, signal);
+        tools.assertHumanBoxes(baseline, get(join(cwd, slices.tasks)));
+        assert.equal(JSON.parse(get(join(cwd, receipt))).kind, "operator");
+        const taskId = gate === "G1" ? "1.1" : "8.2";
+        await tick(_cwd, [taskId]);
+        return { taskId, receipt, humanBaseline: tools.humanBoxes(get(join(cwd, slices.tasks))) };
+      },
       resetTasks: async (_cwd, ids) => {
         const path = join(cwd, slices.tasks);
         files.set(path, tools.resetTaskText(get(path), ids));
         return { invalidated: ids };
       },
-      writeVerify: async (_cwd, commentary, claims, ledger) => {
-        ledgerTools.assertVerifyClaims(claims, ledger);
-        files.set(join(cwd, slices.verify), JSON.stringify(commentary) + ledgerTools.renderGateLedger(ledger));
-        return { written: true };
+      writeVerify: async (_cwd, commentary, ledger, evidence) => {
+        files.set(join(cwd, slices.verify), report.renderVerify(commentary, ledger, { root: evidence, verifiedAt: "2026-09-07T00:00:00.000Z" }));
+        return { written: true, claims: ledgerTools.passedClaims(ledger) };
       },
-      markRejected: async () => { files.set(join(cwd, slices.verify), get(join(cwd, slices.verify)) + "\n- [x] (fail) FAIL"); return { rejected: true }; },
+      markRejected: async (_cwd, findings) => { files.set(join(cwd, slices.verify), report.renderRoborevRejection(get(join(cwd, slices.verify)), findings)); return { rejected: true }; },
     };
     // Every export is a trampoline; an unmocked external effect fails before any process can run.
     globalThis.__mqMock = { files, get, tools: mocked, assertCompactCheckpoint };
@@ -157,7 +171,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
         assert.deepEqual(args, saved.args, `Replay identity changed: ${key}`);
         events.push(`replay:${key}`);
         const value = structuredClone(saved.value);
-        return key.startsWith("tool:") ? { ...value, cached: true } : value;
+        return key.startsWith("tool:") && value && typeof value === "object" && "ok" in value ? { ...value, cached: true } : value;
       }
       const value = await action();
       cache.set(key, { args: structuredClone(args), value: structuredClone(value) });
@@ -168,24 +182,27 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       inputs: { change: types.change, splice_after: "ssss", deploy: true, max_repair_attempts: 2, build_timeout_minutes: 1 },
       tool: (name, args, action, options) => durable(`tool:${name}`, args, async () => {
         callbacks++; events.push(name);
-        assert(options.timeoutMs > 0 && options.failureMode === "return");
+        assert(options.timeoutMs > 0 && ["return", "throw"].includes(options.failureMode));
+        toolOptions.set(name, options);
         try {
           const value = await action({ signal });
           if (name === "allocate-evidence") root = value;
-          return { ok: true, value, attempts: 1, cached: false };
-        } catch (error) { return { ok: false, error: { name: "Error", message: String(error) }, attempts: 1, cached: false }; }
+          return options.failureMode === "throw" ? value : { ok: true, value, attempts: 1, cached: false };
+        } catch (error) { if (options.failureMode === "throw") throw error; return { ok: false, error: { name: "Error", message: String(error) }, attempts: 1, cached: false }; }
       }),
       task: (name, options) => durable(`stage:${name}`, { model: options.model, prompt: options.prompt, reads: options.reads }, async () => {
         stages++; events.push(name);
+        if (unexpected && name.startsWith("diagnose-dns")) throw unexpected === "abort" ? Object.assign(new Error("Atomic aborted stage"), { name: "AbortError" }) : new TypeError("unexpected controller error");
+        assert(!options.reads?.some((path) => path.endsWith("/ledger.json")), "3.5: stages must read compact index, not full ledger");
         types.validateModelPolicy(options);
         assert(!options.tools.includes("edit") && !options.tools.includes("write") && !options.tools.includes("bash"), "Every stage is read-only; only controller applies patches");
         const edits = [];
-        const propose = (path, after) => edits.push({ path, before: files.get(join(cwd, path)) ?? null, after });
-        if (name === "implement") propose("flake.nix", "input");
-        if (name === "patch-app-id") propose(slices.aspect, "app 1234");
-        if (name === "hostname" && !noHostnameEdit) { propose(dnsPath, dnsContent); propose(slices.tasks, get(join(cwd, slices.tasks)).replace("[ ] 6.1", "[x] 6.1")); }
+        const propose = (path, after) => edits.push({ path, baseSha256: files.has(join(cwd, path)) ? tools.sha256(get(join(cwd, path))) : null, after });
+        if (name.startsWith("implement")) propose("flake.nix", "input");
+        if (name.startsWith("patch-app-id")) propose(slices.aspect, "app 1234");
+        if (name.startsWith("hostname") && !noHostnameEdit) { propose(dnsPath, dnsContent); propose(slices.tasks, get(join(cwd, slices.tasks)).replace("[ ] 6.1", "[x] 6.1")); }
         if (name.startsWith("repair-dns")) propose(dnsPath, `${dnsContent}\n# ${name}`);
-        if (name === "docs") propose("packages/docs/topology.md", "docs");
+        if (name.startsWith("docs")) propose("packages/docs/topology.md", "docs");
         if (repairNix && name.startsWith("repair-")) propose(slices.aspect, name);
         let structured = { summary: "mock implementation", edits };
         if (name.startsWith("review-") || name === "roborev") {
@@ -208,9 +225,14 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
           const rule = tools.expectedRuleset(1234, 1);
           structured = { before: rule, after: rule, reverse: rule, question: "Approve?" };
         }
-        if (name === "write-verify") {
-          const ledger = JSON.parse(get(join(cwd, root, "gate-ledger.json")));
-          structured = { commentary: { analysis: "Model analysis", caveats: "Model caveats" }, claims: ledgerTools.passedClaims(ledger) };
+        if (name.startsWith("write-verify")) {
+          structured = { commentary: { analysis: "Model analysis", caveats: "Model caveats" } };
+          if (failClaims) { failClaims = false; structured.claims = [{ taskId: "4.4", evidence: "invented" }]; }
+        }
+        if (name === "implement-b1-a2" && proposalFailure || name === "write-verify-b1-a2" && extraClaims) {
+          const path = options.reads.find((path) => path.includes("proposal-rejection-"));
+          assert(path, "Retry needs rejection via reads");
+          assert(JSON.parse(get(join(cwd, path))).reason);
         }
         const [model, reasoningLevel] = options.model.split(":");
         return { structured, modelAttempts: [{ model, reasoningLevel, success: true }] };
@@ -223,7 +245,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       })])),
       exit: (result) => { if (throwExit) throw Object.assign(new Error("Atomic terminal exit"), { exitResult: result }); return result; },
     };
-    const run = async () => { try { return await definition.run(context); } catch (error) { if (error.exitResult) return error.exitResult; throw error; } };
+    const run = async () => { try { return await definition.run(context); } catch (error) { if (error.exitResult) return error.exitResult; if (unexpected) return { unexpected: error }; throw error; } };
     const first = await run();
     if (replay) {
       const counts = { callbacks, stages, prompts };
@@ -232,7 +254,15 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       assert.deepEqual(second, first);
       assert.deepEqual({ callbacks, stages, prompts }, counts, "Completed nodes must not repeat any callback, model call or human prompt");
     }
-    return { result: first.outputs ?? first, events, files, root, cwd, revisions, committedTasks };
+    if (resumeFailure) {
+      assert.equal(first.status, "failed"); assert.equal(first.resumable, true);
+      promptIndex = 0;
+      const resumed = await run();
+      assert.equal(resumed.status, "completed-with-caveat");
+      assert.equal(events.filter((event) => event === "generate-vars").length, 2);
+      assert.equal(events.filter((event) => event === "route-s1").length, 1);
+    }
+    return { result: first.outputs ?? first, exit: first, events, files, root, cwd, revisions, committedTasks, toolOptions };
   }
 
   const success = await execute();
@@ -254,7 +284,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
   assert(success.events.indexOf("apply-rulesets") < success.events.indexOf("update-machine-deploy-b1-a1"));
   console.log("PASS mocked graph: success (V6 fail caveat), G1/rollback/docs/V2/V6 receipt binding");
   assert(success.events.indexOf("snapshot-wc-route-dns-source-dns-b1-a1") < success.events.indexOf("pending-route-dns-source-dns-b1-a1"));
-  assert(success.events.indexOf("snapshot-wc-after-hostname") < success.events.indexOf("route-dns-source-dns-b1-a1"));
+  assert(success.events.indexOf("snapshot-wc-after-hostname-b1-a1") < success.events.indexOf("route-dns-source-dns-b1-a1"));
   assert(success.events.indexOf("dns-content-dns-b1-a1") < success.events.indexOf("terraform-plan-dns-b1-a1"));
   console.log("PASS R2: disk edits require durable jj snapshot before pending decisions; routed DNS rev contains reviewed hostname content");
   const noPositiveOutputs = (run) => { for (const output of ["implemented", "deployed", "validated", "verify_md_written"]) assert(!(output in run.result), output); };
@@ -300,7 +330,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
   console.log("PASS P1/P3: stages propose only; G1/G2/G4/G5 declines terminate without positive outputs");
   const rejected = await execute({ rejectS1: true, revisePlan: true });
   assert.equal(rejected.result.status, "completed-with-caveat", rejected.result.summary);
-  assert(rejected.events.includes("record-rejection-s1-b1-a1") && rejected.events.includes("replan-s1-b1-a1"));
+  assert(rejected.events.includes("record-rejection-s1-b1-a1") && rejected.events.includes("replan-s1-b1-a1-b1-a1"));
   console.log("PASS F6/P12: persisted reviewer rejection reaches diagnosis; replan and repair use artifact reads");
   const recreated = await execute({ createFailure: true });
   assert.equal(recreated.result.status, "completed-with-caveat", recreated.result.summary);
@@ -340,5 +370,45 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
   assert(failedEval.events.includes("diagnose-V3-b1-a2"));
   assert.equal(failedEval.events.filter((event) => event.startsWith("input:G3")).length, 1);
   console.log("PASS mocked repairs: activation-success/probe-failure no-op, Nix invalidation/reactivation before validation, repair-eval failure reaches G3");
+  for (const [gate, id] of [["G1", "1.1"], ["G2", "8.2"]]) {
+    assert.match(success.files.get(join(success.cwd, slices.tasks)), new RegExp(`- \\[x\\] ${id}`));
+    assert(ledger.some((row) => row.gate === gate && row.taskIds.includes(id) && row.status.kind === "Operator"));
+    assert(success.events.some((event) => event.includes(`${gate} —`) && /do not edit tasks\.md.*until the run terminates/i.test(event)));
+  }
+  console.log("PASS 2.5 graph: G1/G2 Operator receipts own controller ticks; refreshed baselines allow all subsequent stages");
+  const proposalRetry = await execute({ proposalFailure: "once" });
+  assert.equal(proposalRetry.result.status, "completed-with-caveat");
+  assert(proposalRetry.events.includes("implement-b1-a2"));
+  assert.equal(proposalRetry.events.filter((event) => event === "route-s1").length, 1);
+  const proposalExhaustion = await execute({ proposalFailure: "always" });
+  assert.equal(proposalExhaustion.result.status, "blocked");
+  assert.equal(proposalExhaustion.events.filter((event) => /^implement-b[12]-a[12]$/.test(event)).length, 4);
+  assert.equal(proposalExhaustion.events.filter((event) => event.startsWith("input:G3")).length, 1);
+  assert(!proposalExhaustion.events.includes("route-s1"));
+  console.log("PASS 3.1 graph: rejected apply re-invokes stage with fresh id/rejection reads; two bounded batches, one G3, no premature route");
+  const claimRetry = await execute({ extraClaims: true });
+  assert.equal(claimRetry.result.status, "completed-with-caveat");
+  assert(claimRetry.events.includes("write-verify-b1-a2"));
+  assert.equal(claimRetry.events.filter((event) => event === "write-verify-observation").length, 1);
+  console.log("PASS 3.2 graph: commentary-only draft succeeds; extra invented claims retry inside bounded proposal loop");
+  const interrupted = await execute({ transientFailure: true, resumeFailure: true });
+  assert.equal(interrupted.exit.status, "failed"); assert.equal(interrupted.exit.resumable, true);
+  for (const name of ["G1-witnesses", "read-rulesets", "write-capable-identities"]) assert.deepEqual([success.toolOptions.get(name).retriesAllowed, success.toolOptions.get(name).maxAttempts], [true, 3]);
+  for (const [name, options] of success.toolOptions) if (options.retriesAllowed) assert(["G1-witnesses", "read-rulesets", "write-capable-identities"].includes(name), `Retry on effect: ${name}`);
+  for (const decline of ["G1", "G2", "G4", "G5"]) assert.equal((await execute({ decline })).exit.status, "cancelled");
+  console.log("PASS 3.3: transient fatal tool exits failed/resumable and re-executes on resume; completed effects replay; only read probes retry; declines cancel");
+  const index = JSON.parse(success.files.get(join(success.cwd, success.root, "ledger-index.json")));
+  assert(index.length > 20);
+  for (const row of index) { assert.deepEqual(Object.keys(row).sort(), ["evidence", "node", "ok"]); assert(success.files.has(join(success.cwd, row.evidence))); }
+  assert(success.files.has(join(success.cwd, success.root, "ledger.json")));
+  console.log("PASS 3.5: persisted stage index contains only node/ok/evidence; full payload ledger remains on disk, never in stage reads");
+  for (const unexpected of ["type", "abort"]) {
+    const crashed = await execute({ unexpected, dnsReject: true });
+    assert(crashed.exit.unexpected);
+    const terminal = JSON.parse(crashed.files.get(join(crashed.cwd, crashed.root, "terminal.json")));
+    assert.match(terminal.chain_state, /^quarantined\(/); assert.match(terminal.recovery, /jj abandon/);
+    assert.match(terminal.summary, unexpected === "type" ? /TypeError/ : /AbortError/);
+  }
+  console.log("PASS 3.6: unexpected TypeError and Atomic-style abort persist terminal plus quarantined DNS recovery before rethrow");
   delete globalThis.__mqMock;
 }

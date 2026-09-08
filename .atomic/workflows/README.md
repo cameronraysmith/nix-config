@@ -138,11 +138,14 @@ Linear T2/T3 tools are best-effort, retain separate command outcomes, post comme
 Atomic 0.9.18's public `WorkflowRunContext` has no model-catalog port, although `RunOpts` does; absent catalog metadata does not block preflight, by explicit operator decision.
 The host can implicitly fall back to its controller model before the workflow can inspect the attempt; this risk is accepted, not prevented by an empty fallback list.
 After every stage and before using its output, the workflow records actual model/thinking metadata and rejects off-policy attempts or missing metadata with a blocked exit.
-The latest author report, `logs/adr-verify/workflow-author-report-5.md`, records closure evidence and remaining launch limitations; prior limitations remain unless explicitly superseded.
+The latest author report, `logs/adr-verify/workflow-author-report-6.md`, records closure evidence and remaining launch limitations; prior limitations remain unless explicitly superseded.
 
 Inputs are `change` (constant `stand-up-gitea-mq-on-magnetite`), required `splice_after` (current `rollup-landing` tip change id), `deploy` (true), `max_repair_attempts` (3; range 1–3), `build_timeout_minutes` (45), and optional `app_slug_hint`.
 There is no `start_at`; Atomic resume is the only re-entry mechanism, and a fresh run requires empty `@` and no preexisting aspect.
 Completed tool/prompt nodes replay; tool outcomes are normalized before ledger insertion and hashing to exclude Atomic's replay-only `cached` flag.
+Fatal non-gate tool calls use throwing failure mode so failed callbacks have no replayable return-failure checkpoint; non-Stop Blocked exits use Atomic `{status:"failed", resumable:true}`.
+Only the read-only App, ruleset inventory and write-capable identity probes enable `retriesAllowed:true, maxAttempts:3`; create/apply/push/deploy nodes never automatically retry.
+Bounded gates, proposal validation and best-effort Linear observations retain return-mode failures as durable data; declines remain cancelled, while G3 exhaustion/roborev rejection remain deliberate non-resumable stops.
 Interruption inside an unfinished external effect still requires reconciliation before retrying it, not an assumption of exactly-once effects.
 Each gate uses forward-only attempt ids with the exact batch tuple `[1, 2]` and `attemptsFor(1 | 2 | 3)` bounded tuples; G3 authorizes exactly one additional bounded batch, and second exhaustion blocks.
 Every workflow-owned process/network effect belongs to a finite `ctx.tool` callback forwarding its cancellation signal.
@@ -156,13 +159,17 @@ Diagnosis/replan artifacts travel through stage `reads`, not inline JSON; an S1 
 Completion requires four branded tool witnesses for implemented changes, deployment, validation results, and report writing; blocked/declined exits expose no positive technical claims.
 Human gates are authorizations, not evidence that the technical checks passed.
 
-The workflow never moves or describes `@`, pushes to main, deletes a ref without G5, applies the `merge-queue` label, runs `linear auth`, or ticks operator tasks 1.1/8.2.
-All model stages are read-only and submit full-file proposals with exact before/after contents.
+The workflow never moves or describes `@`, pushes to main, deletes a ref without G5, applies the `merge-queue` label, or runs `linear auth`.
+All model stages are read-only and submit `{path,baseSha256,after}` proposals; a controller-produced scoped bases artifact supplies hashes, null denotes an absent base or deleted result, and the controller compares hashes with disk before any writes.
+Every implementation/replan/docs proposal executes inside its own bounded attempt loop; rejected schemas or applications persist the reason and re-invoke the stage with fresh IDs, fresh bases and rejection artifacts via `reads`, escalating to G3 after `max_repair_attempts` and permitting only one further bounded batch.
+Unified diff hunks are not supported: hash plus full after content halves duplicated baseline payload without adding a second patch parser and its context/offset ambiguity.
 Before allowlist and task checks, the controller resolves existing proposal components with `lstat`/`realpath`, compares canonical spelling byte-for-byte, and compares device/inode identities with tasks.md, proposal.md and every other proposed file.
 Symlink parents/leaves, case aliases, protected hardlinks, duplicate identities, absolute paths and traversal are rejected before any write, including earlier valid edits.
 Absent paths also require consistent component spelling across the proposal; a proposed file cannot be another proposed file's parent.
 Task rows have unique canonical IDs; malformed/duplicate rows and any row change outside the slice are rejected, including during replan.
-Operator rows are always compared with the immutable preflight human baseline, not potentially corrupted current text; replan may only revise in-slice descriptions without changing checkbox states.
+Model edits and controller technical ticks compare operator rows with the current human baseline; only affirmative G1/G2 receipts authorize the controller to tick 1.1/8.2 and refresh that baseline, and repeated interrupted operator ticks are idempotent.
+G1/G2 material says "do not edit tasks.md until the run terminates"; those ticks are Operator attributions, never technical passes.
+Replan may only revise in-slice descriptions without changing checkbox states and explicitly forbids nested bullets or new non-task rows in tasks.md.
 Writers are restricted to their slice paths plus the change directory; build-service aspects remain untouched.
 The post-G1 exception permits exactly `vars/per-machine/magnetite/gitea-mq-github-app-secret-key` and `vars/per-machine/magnetite/gitea-mq-github-webhook-secret`, plus shared vars/sops paths only if the imported Omnigent helper enumerates them (currently none).
 Every process receives `CLAN_NO_COMMIT=1`, including nested Python/Terraform Clan calls; controlled generation/list/update commands and G1's operator `clan vars set` instructions also state it explicitly.
@@ -193,16 +200,22 @@ Every proposal application is followed by a durable, signal-forwarding `jj debug
 DNS candidates reset tasks 6.1/6.2 before routing and persist `chain_state: quarantined(<change id>)` before planning.
 Before any plan, `git show <resolved rev>:modules/terranix/cloudflare.nix` must match the reviewed content hash, and `git grep` must find the mq hostname record in that same revision.
 Repairs use `jj squash --into <candidate>` rather than append another DNS change; only successful plan/apply/dig permits an accepted state and witnessed task ticks.
-Any terminal failure while quarantined exits blocked with the candidate ID and exact `jj abandon '<id>'` recovery command for the orchestrator; the workflow never abandons and the quarantined chain is not landable.
+Every caught error kind, including unexpected exceptions and Atomic-style aborts, attempts terminal persistence with the DNS recovery string before deliberate exit or rethrow; a quarantined candidate remains blocked in domain outputs and is not landable.
+The record cannot be guaranteed if evidence allocation/storage fails or Atomic has already closed tool admission; native cancellation still governs the run.
 The durable ledger is the quarantine authority; this is not an isolated bookmark or an automatic rollback of a partially applied external effect.
 All evidence and plan files remain outside the source tree, even though the committed Git source already excludes untracked/ignored files.
 Rollback reconstructs the real flake module tree from `f.outPath`, replacing only the queue aspect via `lib.mkForce {}` and asserting that queue enablement disappears; it never copies the host module to `builtins.toFile`, so relative policy imports keep their original directory.
-Any later scope-approved repair touching `modules/terranix/**` invalidates DNS receipts and re-enters that gate; this does not expand any writer's path allowlist.
+Only s2 permits Terranix edits; the unreachable cross-slice `recheckDns` callback was removed rather than expanding later repair scopes.
+The same-candidate DNS repair fixture exercises an actual s2 plan rejection, not a fabricated later-slice Terranix edit.
 `Repair(Noop)` re-probes without routing an empty change.
 Changed tracked Nix invalidates deployment/validation receipts, routes actual pending paths, and reactivates and probes the pinned source before retrying validation; previously completed dependent validations become NotRun until witnessed again.
-Gate/repair/Linear/DNS-chain outcomes are tagged unions; the verify writer supplies exact task-to-receipt claims checked against the controller ledger.
+Gate/repair/Linear/DNS-chain outcomes are tagged unions; expected verification claims are computed solely from the controller ledger, never supplied by the verify writer.
+The commentary-only writer retries malformed/extra structured claims inside the same bounded proposal loop; model commentary is escaped and cannot create positive task verdicts.
+Stage `reads` use `ledger-index.json` (node, ok, evidence path), not the growing payload ledger; full `ledger.json` and individual receipts remain on disk for targeted inspection.
 The preflight task-ID inventory seeds unverified ledger rows, so every task receives a deterministic verdict even without a later receipt.
 The controller renders report sections 1–8, every task verdict and the attribution ledger; model output contributes only escaped analysis/caveats in fixed non-verdict slots.
+The report includes Change/Verified at/Verifier metadata and nixbot's section headings; its Overall Decision tri-box checks `(warn)` normally and `(fail) FAIL` on roborev Reject by replacing the existing section, never appending a competing disposition or checking `(pass)`.
+V6 remains Fail and authenticated webhook redelivery remains NotRun, so roborev approval is not an overall unqualified pass.
 G1, rollback, docs, V2 and V6 observations have explicit receipts.
 Each S1 task has named required observation arms; only completely observed tasks enter the passed ledger.
 Credential-file bindings, ensureUsers ownership, App-id equality after G1, and landing environment now have explicit checks.

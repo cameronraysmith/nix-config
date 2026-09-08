@@ -9,6 +9,7 @@ import { runCommandChecks } from "./command-checks.mjs";
 import { runReviewChecks } from "./review-checks.mjs";
 import { runProcessChecks } from "./process-checks.mjs";
 import { runBoundaryChecks } from "./boundary-checks.mjs";
+import { runRevisionChecks } from "./revision-checks.mjs";
 
 const require = createRequire(import.meta.url);
 const executable = realpathSync(execFileSync("bash", ["-c", "command -v atomic"], { encoding: "utf8" }).trim());
@@ -16,7 +17,7 @@ const atomic = resolve(dirname(executable), "../lib/node_modules/@bastani/atomic
 const compiler = execFileSync("bash", ["-c", "printf '%s\\n' /nix/store/*typescript*/lib/node_modules/typescript/lib/typescript.js | head -1"], { encoding: "utf8" }).trim();
 const ts = require(compiler);
 const entry = ".atomic/workflows/stand-up-gitea-mq.ts";
-const files = [entry, ...["types", "tools", "prompts", "slices", "ledger", "api-schemas", "process", "s1-observations", "vcs", "proposal-edits", "verify-report"].map((n) => `.atomic/workflows/gitea-mq/${n}.ts`)];
+const files = [entry, ...["types", "tools", "prompts", "slices", "ledger", "api-schemas", "process", "s1-observations", "vcs", "proposal-edits", "verify-report", "control"].map((n) => `.atomic/workflows/gitea-mq/${n}.ts`)];
 const options = {
   noEmit: true, strict: true, module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext,
   target: ts.ScriptTarget.ES2022, skipLibCheck: true,
@@ -83,6 +84,8 @@ if (process.argv.includes("--commands-only")) {
   catch (error) { console.error(String(error)); process.exit(1); }
   process.exit(0);
 }
+await runRevisionChecks({ types, moduleUrl });
+if (process.argv.includes("--revision-only")) process.exit(0);
 await runBoundaryChecks({ tools, slices });
 if (process.argv.includes("--boundary-only")) process.exit(0);
 await runReviewChecks({ types, tools, slices, moduleUrl });
@@ -126,9 +129,8 @@ tools.assertDnsIntent({ plan: "saved", sha256: "hash" }, { plan: "saved", sha256
 assert.throws(() => tools.assertDnsIntent({ plan: "foreign", sha256: "hash" }, { plan: "saved", sha256: "hash" }));
 const ledgerTools = await import(moduleUrl(".atomic/workflows/gitea-mq/ledger.ts"));
 const receipt = { gate: "s1", taskIds: ["4.1"], evidence: "gate.json", status: { kind: "Passed" } };
-ledgerTools.assertVerifyClaims([{ taskId: "4.1", evidence: "gate.json" }], [receipt]);
-assert.throws(() => ledgerTools.assertVerifyClaims([{ taskId: "4.1", evidence: "model.md" }], [receipt]));
-assert.throws(() => ledgerTools.assertVerifyClaims([{ taskId: "4.1", evidence: "gate.json" }], [{ ...receipt, status: { kind: "Invalidated", reason: "repair" } }]));
+assert.deepEqual(ledgerTools.passedClaims([receipt]), [{ taskId: "4.1", evidence: "gate.json" }]);
+assert.deepEqual(ledgerTools.passedClaims([{ ...receipt, status: { kind: "Invalidated", reason: "repair" } }]), []);
 assert.deepEqual(ledgerTools.repairEffect({ a: "same" }, { a: "same" }), { kind: "Noop" });
 assert.deepEqual(ledgerTools.repairPaths(ledgerTools.repairEffect({ a: "old" }, { a: "new" })), ["a"]);
 tools.assertMigratedTables("public|queue|table|gitea-mq");
@@ -145,7 +147,7 @@ for (const [i, text] of texts.entries()) {
     if (ts.isCallExpression(node) && node.expression.getText(ast) === "ctx.tool") {
       assert(node.arguments[2].getText(ast).includes("signal"));
       assert(node.arguments[3].getText(ast).includes("timeoutMs"));
-      assert(node.arguments[3].getText(ast).includes('failureMode: "return"'));
+      assert(/failureMode: "(?:return|throw)"/.test(node.arguments[3].getText(ast)));
     }
     ts.forEachChild(node, visit);
   }; visit(ast);
