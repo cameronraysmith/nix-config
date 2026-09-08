@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { resolve, join } from "node:path";
 import { mkdtemp, mkdir, symlink, rm, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { runVarsChecks } from "./vars-checks.mjs";
 
 const dataUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`;
 const observed = (stdout = "", exitCode = 0, stderr = "") => ({
@@ -72,6 +73,10 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   });
   code = code.replace('from "typebox"', `from "${typeboxUrl}"`);
   const actual = await import(dataUrl(code));
+  if (process.argv.includes("--vars-only")) {
+    await runVarsChecks({ actual, mock: globalThis.__mqCommandMock, files, cwd: "/mock", signal, setHandler: (next) => { handler = next; }, varsAllowed: slices.varsAllowed });
+    return;
+  }
   {
     const queue = { id: 4875422, slug: "sciexp-gitea-mq", owner: { login: "sciexp" }, permissions: { administration: "write", checks: "write", contents: "write", metadata: "read", pull_requests: "write", statuses: "read" }, events: ["pull_request", "check_run", "status", "installation", "installation_repositories"] };
     const nixbot = { id: 4743700, slug: "sciexp-nixbot", owner: { login: "sciexp" }, permissions: { checks: "write", contents: "read", members: "read", metadata: "read", pull_requests: "read" }, events: ["check_run", "check_suite", "pull_request", "push"] };
@@ -531,20 +536,7 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   }
   console.log("PASS F7: task-arm receipts, unobserved tasks unverified, credential/ownership/environment negative controls");
 
-  for (const path of [slices.varsAllowed[0] + "/key.pem/secret", slices.varsAllowed[1] + "/secret/secret"]) files.set(join(cwd, path), '{"sops":{},"secret":"ENC[opaque]"}');
-  handler = (command) => {
-    assert(!command.includes("--no-commit") && !command.includes("--help"));
-    if (command.includes("clan ")) {
-      assert(command.startsWith("CLAN_NO_COMMIT=1 clan vars "));
-      return observed("gitea-mq-github-app-secret-key set\ngitea-mq-github-webhook-secret set");
-    }
-    if (command === "git symbolic-ref -q HEAD") return observed("", 1);
-    if (command === "git rev-parse HEAD" || command === "git rev-list --all | sort") return observed("unchanged");
-    throw Error(`Unexpected vars command ${command}`);
-  };
-  const generated = await actual.generateVars(cwd, { workingCopy: "wwww", join: "jjjj", seed: "ssss", tip: "ssss", changes: [] }, signal);
-  assert.equal(generated.noCommitEnvironment, "CLAN_NO_COMMIT=1");
-  console.log("PASS F3: Clan generation/list explicitly disable commits and retain topology backstop");
+  await runVarsChecks({ actual, mock: globalThis.__mqCommandMock, files, cwd, signal, setHandler: (next) => { handler = next; }, varsAllowed: slices.varsAllowed });
   let probeRef = "", creates = 0, deletes = 0, failReadback = false;
   handler = (command) => {
     if (command === "gh api /user --jq .login") return observed("cameronraysmith");

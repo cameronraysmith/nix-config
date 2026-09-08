@@ -459,27 +459,114 @@ export async function s1Gate(cwd: string, baselineLock: string, baseline: unknow
   if (expectedAppId !== null) observed.push("observed-app-id");
   return { drv, forgePre, negativeControls: negativeControls.map((c) => c.setting), ...s1Coverage(observed) };
 }
+const appPemVar = "gitea-mq-github-app-secret-key/key.pem";
+const webhookVar = "gitea-mq-github-webhook-secret/secret";
+/** Installed Clan Var.__str__: `generator/file: ********` or `: <not set>`.
+ * Help describes key/value rows but omits the literal colon. Unknown formats,
+ * duplicate rows and omitted targets are not proof that a secret is missing. */
+export function parseCredentialListing(listing: string) {
+  const entries = new Map<string, string>();
+  for (const line of listing.trim().split("\n")) {
+    const row = /^([^\s/:]+\/[^\s:]+): (.*)$/.exec(line);
+    if (!row || entries.has(row[1]!)) throw new Blocked("Unparseable vars list; generation is unsafe");
+    entries.set(row[1]!, row[2]!);
+  }
+  const status = (name: string) => {
+    const value = entries.get(name);
+    if (value === "********") return "already-present" as const;
+    if (value === "<not set>") return "missing" as const;
+    throw new Blocked(`Vars list has no unambiguous secret status for ${name}`);
+  };
+  return { appPem: status(appPemVar), webhookSecret: status(webhookVar) };
+}
+async function observeCredentialListing(cwd: string, signal: AbortSignal) {
+  const command = "CLAN_NO_COMMIT=1 clan vars list magnetite";
+  const result = await capture(cwd, command, signal);
+  return { command, receipt: result.logPath.replace(/\.log$/, ".json"), value: parseCredentialListing(requireSuccess(result)) };
+}
+type ClanRevision = { changeId: string; commitId: string };
+/** Capture commit identities as well as change IDs: a rewrite is also observable.
+ * @'s content commit may legitimately change as Clan/another agent snapshots it;
+ * its change identity and parent commits, and all join ancestors, may not. */
+async function clanTopologySnapshot(cwd: string, chain: Chain, signal: AbortSignal) {
+  const workingCopy = await oneId(cwd, "@", signal);
+  const landing = await oneId(cwd, "rollup-landing", signal);
+  const ancestorIds = await ids(cwd, `::${chain.join}`, signal);
+  // Commit IDs bind ancestor parentage already. Do not repeat all parent hashes
+  // in this global listing: the live repository has ~9k changes (1 MiB cap).
+  const template = 'change_id ++ " " ++ commit_id ++ "\\n"';
+  const output = await run(cwd, `jj --ignore-working-copy log --no-graph -r 'all()' -T ${quote(template)}`, signal);
+  const revisions: ClanRevision[] = lines(output).map((line) => {
+    const row = /^([k-z]+) ([a-f0-9]{40})$/.exec(line);
+    if (!row) throw new Blocked("Unparseable Clan topology snapshot");
+    return { changeId: row[1]!, commitId: row[2]! };
+  });
+  const unique = (id: string) => {
+    const matches = revisions.filter((revision) => revision.changeId === id);
+    if (matches.length !== 1) throw new Blocked(`Missing/divergent protected topology identity: ${id}`);
+    return matches[0]!;
+  };
+  if (!ancestorIds.includes(chain.join) || !ancestorIds.includes(landing)) throw new Blocked("rollup-landing left the join ancestry");
+  const ancestors = [...new Set(ancestorIds)].sort().map(unique);
+  unique(workingCopy);
+  const parents = (await run(cwd, `jj --ignore-working-copy log --no-graph -r '@' -T 'parents.map(|p| p.commit_id()).join(",")'`, signal)).split(",");
+  if (!parents.length || parents.some((id) => !/^[a-f0-9]{40}$/.test(id))) throw new Blocked("Unparseable working-copy parent identities");
+  return { revisions, topology: { workingCopy, parents, landing: unique(landing), ancestors } };
+}
+async function checkClanTopology(cwd: string, chain: Chain, before: Awaited<ReturnType<typeof clanTopologySnapshot>>, signal: AbortSignal) {
+  const after = await clanTopologySnapshot(cwd, chain, signal);
+  if (!isDeepStrictEqual(before.topology, after.topology)) throw new Blocked("Clan-window protected topology/ancestry changed; stop for reconciliation");
+  const previous = new Set(before.revisions.map((revision) => revision.commitId));
+  const foreignChanges: { changeId: string; commitId: string; paths: string[] }[] = [];
+  for (const revision of after.revisions) {
+    if (previous.has(revision.commitId) || revision.changeId === chain.workingCopy) continue;
+    const paths = (await pathsIn(cwd, revision.commitId, signal)).sort();
+    if (paths.some((path) => within(path, "vars/per-machine/magnetite"))) throw new Blocked(`New change touching vars/per-machine/magnetite: ${revision.changeId} (${revision.commitId}); stop for topology reconciliation`);
+    foreignChanges.push({ changeId: revision.changeId, commitId: revision.commitId, paths });
+  }
+  foreignChanges.sort((a, b) => a.commitId.localeCompare(b.commitId));
+  const summary = (value: typeof before.topology) => ({ ...value, ancestors: { count: value.ancestors.length, sha256: sha256(JSON.stringify(value.ancestors)) } });
+  return { topology: { before: summary(before.topology), after: summary(after.topology) }, foreignChanges };
+}
 export async function generateVars(cwd: string, chain: Chain, signal: AbortSignal) {
   await topology(cwd, chain, signal);
   const before = await snapshot(cwd, signal);
-  const head = await run(cwd, "git rev-parse HEAD", signal);
-  const gitCommits = await run(cwd, "git rev-list --all | sort", signal);
-  const changes = await ids(cwd, "all()", signal);
-  try { await runStreaming(cwd, "CLAN_NO_COMMIT=1 clan vars generate magnetite --generator gitea-mq-github-webhook-secret", signal); }
-  finally {
-    await topology(cwd, chain, signal);
-    if (head !== await run(cwd, "git rev-parse HEAD", signal) || gitCommits !== await run(cwd, "git rev-list --all | sort", signal) || !isDeepStrictEqual(changes, await ids(cwd, "all()", signal))) throw new Blocked("Clan created a commit or jj change; stop for topology reconciliation");
-    if (classifyScope(before, await snapshot(cwd, signal), varsAllowed, []).foreignDuringStage.length) throw new Blocked("Clan changed paths outside the two generator directories");
+  const vcsBefore = await clanTopologySnapshot(cwd, chain, signal);
+  let generated = false;
+  let guard: Awaited<ReturnType<typeof checkClanTopology>>;
+  let foreignDrift: string[];
+  let observation: Awaited<ReturnType<typeof observeCredentialListing>>;
+  let verification: Awaited<ReturnType<typeof observeCredentialListing>>;
+  try {
+    observation = await observeCredentialListing(cwd, signal);
+    if (observation.value.appPem !== "already-present") throw new Blocked("App PEM must be supplied by the operator; workflow never generates or sets it");
+    verification = observation;
+    if (observation.value.webhookSecret === "missing") {
+      // Also avoid regeneration if another operator populates it after our list.
+      await runStreaming(cwd, "CLAN_NO_COMMIT=1 clan vars generate magnetite --generator gitea-mq-github-webhook-secret --no-regenerate", signal);
+      generated = true;
+      verification = await observeCredentialListing(cwd, signal);
+    }
+    if (verification.value.appPem !== "already-present" || verification.value.webhookSecret !== "already-present") throw new Blocked("Vars list missing populated credentials after generation");
+    for (const file of [`${varsAllowed[0]}/key.pem/secret`, `${varsAllowed[1]}/secret/secret`]) {
+      const envelope = await readFile(join(cwd, file), "utf8");
+      if (!envelope.includes('"sops"') || !envelope.includes("ENC[") || envelope.includes("PRIVATE KEY")) throw new Blocked("Expected sops envelope, not plaintext");
+    }
+  } finally {
+    // Run even on Clan/list failures. Global foreign commits are evidence, not
+    // attributable to Clan merely because this working copy is shared.
+    await assertHealthy(cwd, chain.workingCopy, signal);
+    await detached(cwd, signal);
+    guard = await checkClanTopology(cwd, chain, vcsBefore, signal);
+    const after = await snapshot(cwd, signal);
+    const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])].filter((path) => before[path] !== after[path]).sort();
+    if (changed.some((path) => within(path, "vars/per-machine/magnetite") && !(generated && within(path, varsAllowed[1]!)))) throw new Blocked("Unexpected magnetite vars disk change (operator credentials are immutable)");
+    foreignDrift = changed.filter((path) => !within(path, "vars/per-machine/magnetite"));
   }
-  const listing = await run(cwd, "CLAN_NO_COMMIT=1 clan vars list magnetite", signal);
-  for (const name of ["gitea-mq-github-app-secret-key", "gitea-mq-github-webhook-secret"]) {
-    if (!listing.split("\n").some((line) => line.includes(name) && !/not.set|missing|false|unset/i.test(line))) throw new Blocked(`Vars list missing populated ${name}`);
-  }
-  for (const file of [`${varsAllowed[0]}/key.pem/secret`, `${varsAllowed[1]}/secret/secret`]) {
-    const envelope = await readFile(join(cwd, file), "utf8");
-    if (!envelope.includes('"sops"') || !envelope.includes("ENC[") || envelope.includes("PRIVATE KEY")) throw new Blocked("Expected sops envelope, not plaintext");
-  }
-  return { generated: true, noCommitEnvironment: "CLAN_NO_COMMIT=1", generators: varsAllowed };
+  return { generated, noCommitEnvironment: "CLAN_NO_COMMIT=1", generators: varsAllowed,
+    webhookSecret: { status: generated ? "generated" as const : "already-present" as const,
+      observation: { ...observation, value: observation.value.webhookSecret }, verification },
+    ...guard, foreignDrift };
 }
 
 const appAuthScript = `import base64,json,os,subprocess,sys,time,tempfile
