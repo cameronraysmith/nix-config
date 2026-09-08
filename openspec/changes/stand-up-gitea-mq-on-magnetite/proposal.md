@@ -6,11 +6,12 @@ linear_story_url: https://linear.app/cameronraysmith/issue/CAM-56/stand-up-gitea
 linear_story_state: Todo
 linear_team: CAM
 linear_project: nixbot-herculesci-cicd
-last_synced_state: Todo
-last_synced_at: 2026-09-07T20:57:01Z
+last_synced_state: In Progress
+last_synced_at: 2026-09-08T17:30:46.247Z
 review_round: 0
 max_review_rounds: 3
 attempt_log:
+  - {"at":"2026-09-08T17:30:46.247Z","transition":"In Progress","outcome":{"kind":"TransitionObserved","comment":"Posted"}}
   - { at: "2026-09-07T20:57:01Z", transition: "Backlog->Todo", outcome: "posted", note: "T1 bind; issue created in the existing project, seeded from this proposal, moved to Todo, one comment posted" }
 ---
 

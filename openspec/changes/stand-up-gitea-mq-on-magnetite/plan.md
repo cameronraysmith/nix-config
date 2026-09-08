@@ -286,8 +286,21 @@ Verify: `git diff --stat` shows no change under `modules/nixos/nixbot.nix` or `m
 
 - [ ] **Step 3: Disjoint resources and no injection into gitea's unit (tasks.md 5.3)**
 
-Run: `nix eval .#nixosConfigurations.magnetite.config --apply 'c: { dyn = c.systemd.services.gitea-mq.serviceConfig.DynamicUser; cache = c.systemd.services.gitea-mq.serviceConfig.CacheDirectory; user = c.users.users ? gitea-mq; pre = c.systemd.services.gitea.serviceConfig.ExecStartPre or null; }' --json`
-Expected: `dyn` true, `cache` `gitea-mq`, `user` false, and `pre` equal to the same expression evaluated on `git show HEAD` (stash the change or evaluate the parent commit in a worktree).
+The controller evaluates the candidate magnetite configuration to confirm `systemd.services.gitea-mq.serviceConfig.DynamicUser` is true, `CacheDirectory` is `gitea-mq`, no `users.users.gitea-mq` exists, and the listener is `127.0.0.1:8092`.
+For `forge-pre-unchanged`, compare the complete evaluated `systemd.services.gitea.serviceConfig.ExecStartPre` with an independently identified immutable source that predates S1.
+Identify and record the full revision of the pre-S1 `rollup-landing` tip, the workflow-authoring commit containing no gitea-mq aspect, before evaluating it through this immutable source form:
+
+```text
+git+file:///Users/crs58/projects/vanixiets?ref=rollup-landing&rev=<full-pre-S1-revision>
+```
+
+Evaluate both that baseline and the immutable candidate with `nix eval --no-write-lock-file --json <immutable-source>#nixosConfigurations.magnetite.config --apply 'c: { pre = c.systemd.services.gitea.serviceConfig.ExecStartPre or null; }'`.
+Record the baseline's full revision, evidence establishing its pre-S1 provenance, immutable source identity, and lock-file identity alongside the candidate's full revision, immutable source identity, and lock-file identity.
+Retain both exact evaluation commands, exit statuses, complete results, and the comparison command, exit status, and result.
+Neither the already-adopted local candidate nor a candidate with queue settings disabled is a valid baseline.
+Keep task 5.3 unverified until provenance is established, both evaluations succeed, and the complete values compare equal without suppressing differences.
+If the independent baseline cannot be obtained or its provenance cannot be established, record `forge-pre-unchanged` as NotRun with the reason and leave task 5.3 unchecked.
+Investigate mismatches rather than selecting a baseline because it produces equality.
 
 - [ ] **Step 4: Commit point**
 

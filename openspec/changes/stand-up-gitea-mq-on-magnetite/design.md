@@ -76,7 +76,7 @@ Any upstream filing to gitea-mq.
 - **Choice**: a second App with repository permissions Contents read and write, Administration read and write, Checks read and write, Pull requests read and write, Commit statuses read, Metadata read, and events `pull_request`, `check_run`, `status`, `installation`, `installation_repositories`; proposed name `sciexp-gitea-mq`, owner `sciexp`, public, installed on `cameronraysmith/vanixiets` alone; its numeric id written into the aspect as `github.appId`.
 - **Rationale**: this is R15 and the README's "GitHub setup" section verbatim, the only place gitea-mq states its permission set. Contents write and Administration write are permissions the build service must never hold, and adding them to `sciexp-nixbot` would edit a registration a running service depends on. The name and owner mirror the sibling and are the operator's to change at the gate.
 - **Alternatives considered**: reusing `sciexp-nixbot`, rejected above. Registering without Administration so that `EnsureRepoSetup` is skipped, rejected because R15 fixes the set and the ADR relies on setup to keep the App a bypass actor on every branch ruleset.
-- **Trust boundary**: the installation selection is set on the forge by a person and is not observable to this machine; the interface capability states it rather than claiming it.
+- **Trust boundary**: the installation selection is externally maintained forge state, not a restriction enforced by this NixOS configuration. D11 requires complete external verification of the one-repository installation scope before deployment authorization.
 
 ### D7: Rulesets require only `gitea-mq`, and the existing nixbot requirement is removed
 
@@ -105,8 +105,8 @@ Any upstream filing to gitea-mq.
 
 ### D11: Repository allowlist
 
-- **Choice**: `github.repos = [ "cameronraysmith/vanixiets" ]`.
-- **Rationale**: the option is additive to the installation selection (README "GitHub setup": listed repositories stay managed even if the installation is later removed), so it is a second, machine-asserted boundary beside the selection, matching the nixbot change's shape of one boundary outside the machine and one within it. There is no topic-based discovery on the GitHub backend, so no third boundary is needed.
+- **Choice**: keep `github.repos = [ "cameronraysmith/vanixiets" ]` and require the App to be installed on `cameronraysmith/vanixiets` alone. The one-repository constraint applies to both the explicit configuration and the externally verified installation scope.
+- **Rationale**: `github.repos` is additive explicit configuration, not a machine-enforced exclusion boundary. At `d44c45589fdb59e57b7996809526eac03811babe`, `internal/github/discovery.go::InstallationSource` returns installed repositories and `internal/discovery/discovery.go::DiscoverOnce` adds them independently of `ExplicitRepos`. A repository omitted from `github.repos` is therefore not excluded when the App is installed on it. Before deployment authorization, record complete enumeration of all App installations and the repositories available to each, with pagination where applicable, or equivalent complete operator-page evidence, establishing that the App is installed only on `cameronraysmith/vanixiets`. The target-repository installation endpoint alone cannot establish exclusivity. Missing or incomplete evidence prevents deployment authorization; broader installation violates the one-repository boundary and also prevents authorization. No filtering implementation or upstream change is authorized by this decision; machine-enforced filtering requires a separately approved design change.
 
 ### D12: No upstream filing
 
@@ -122,7 +122,7 @@ Any upstream filing to gitea-mq.
 
 [Risk] Certificate issuance fails at activation because the DNS record is absent or proxied → Mitigation: D10 applies and verifies the record before the host is deployed.
 
-[Risk] The App's Contents write and Administration write are installed more broadly than intended → Mitigation: the installation selection is one repository and is recorded verbatim; D11 adds the machine-side allowlist; the interface capability states that the outer boundary is not machine-assertable.
+[Risk] The App's Contents write and Administration write are installed more broadly than intended → Mitigation: D11 requires complete external evidence of installation on `cameronraysmith/vanixiets` alone before deployment authorization. Missing or incomplete evidence blocks authorization, and broader installation is a boundary violation, not a condition filtered by `github.repos`. The explicit list remains one repository but supplies no machine-side confinement.
 
 [Risk] A pull request with auto-merge enabled enters the queue without a label → Mitigation: D8 records the collaborator set that bounds who can enable it; the world assumption carries the violation condition.
 

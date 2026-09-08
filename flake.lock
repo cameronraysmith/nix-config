@@ -602,6 +602,29 @@
         "type": "github"
       }
     },
+    "gitea-mq": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ],
+        "treefmt-nix": [
+          "treefmt-nix"
+        ]
+      },
+      "locked": {
+        "lastModified": 1788406460,
+        "narHash": "sha256-FYSLwfTckoXHARUQ7IAuB1FbNZ06J/7vdMUi6KWdyPg=",
+        "owner": "Mic92",
+        "repo": "gitea-mq",
+        "rev": "d44c45589fdb59e57b7996809526eac03811babe",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Mic92",
+        "repo": "gitea-mq",
+        "type": "github"
+      }
+    },
     "haumea": {
       "inputs": {
         "nixpkgs": [
@@ -1488,6 +1511,7 @@
         "flake-parts": "flake-parts_2",
         "gateway-api-src": "gateway-api-src",
         "git-hooks": "git-hooks",
+        "gitea-mq": "gitea-mq",
         "hercules-ci-effects": "hercules-ci-effects",
         "hermes-agent": "hermes-agent",
         "home-manager": "home-manager_2",

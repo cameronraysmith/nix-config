@@ -67,6 +67,10 @@
     nixbot.inputs.nixpkgs.follows = "nixpkgs";
     nixbot.inputs.treefmt-nix.follows = "treefmt-nix";
 
+    gitea-mq.url = "github:Mic92/gitea-mq";
+    gitea-mq.inputs.nixpkgs.follows = "nixpkgs";
+    gitea-mq.inputs.treefmt-nix.follows = "treefmt-nix";
+
     hercules-ci-effects.url = "github:hercules-ci/hercules-ci-effects";
     hercules-ci-effects.inputs.flake-parts.follows = "flake-parts";
     hercules-ci-effects.inputs.nixpkgs.follows = "nixpkgs";

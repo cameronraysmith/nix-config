@@ -35,6 +35,7 @@ in
         inputs.buildbot-nix.nixosModules.buildbot-master
         inputs.buildbot-nix.nixosModules.buildbot-worker
         inputs.nixbot.nixosModules.nixbot
+        inputs.gitea-mq.nixosModules.default
       ]
       ++ (with flakeModules; [
         base
@@ -45,6 +46,7 @@ in
         stibnite-session
         buildbot
         nixbot
+        gitea-mq
         gitea
         sso-gateway
         gitea-actions-runner

@@ -64,6 +64,10 @@ Each forge credential the merge queue uses SHALL reach it as a systemd credentia
 ### Requirement: The forge application holds exactly the queue's permission and event set
 
 The forge application the merge queue acts through SHALL hold repository permissions Contents read and write, Administration read and write, Checks read and write, Pull requests read and write, Commit statuses read, and Metadata read, SHALL subscribe to the events `pull_request`, `check_run`, `status`, `installation`, and `installation_repositories`, and SHALL be a registration distinct from the build service's.
+The application SHALL be installed on `cameronraysmith/vanixiets` alone, and the machine SHALL retain `github.repos = [ "cameronraysmith/vanixiets" ]` as additive explicit registration, not an exclusion filter.
+Installation scope supplies confinement and is externally maintained forge state, not a restriction enforced by this NixOS configuration.
+Before deployment authorization, verification SHALL establish the one-repository installation scope through complete enumeration of all App installations and the repositories available to each, with pagination where applicable, or equivalent complete operator-page evidence.
+The target-repository installation endpoint alone cannot establish exclusivity; missing or incomplete evidence SHALL prevent deployment authorization.
 
 #### Scenario: The application is read on the forge
 
@@ -72,8 +76,8 @@ The forge application the merge queue acts through SHALL hold repository permiss
 
 #### Scenario: The application is installed more broadly than intended
 
-- **WHEN** the forge application is installed on repositories beyond those intended for the queue
-- **THEN** the machine's own repository list is what bounds which repositories the queue manages, and the installation selection is not a boundary this machine can assert
+- **WHEN** the forge application is installed on any repository beyond `cameronraysmith/vanixiets`
+- **THEN** the one-repository boundary is violated and deployment authorization is withheld, because installation discovery adds those repositories independently of `github.repos`; the explicit list does not filter them out
 
 ### Requirement: The default branch is governed by the queue's ruleset
 
