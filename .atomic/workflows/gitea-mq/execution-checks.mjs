@@ -11,14 +11,14 @@ const dataUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).toStr
 export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, slices, ledgerTools, assertCompactCheckpoint }) {
   const { s1Coverage } = await import(moduleUrl(".atomic/workflows/gitea-mq/s1-observations.ts"));
   const report = await import(moduleUrl(".atomic/workflows/gitea-mq/verify-report.ts"));
-  async function execute({ changeProposal = false, proposalValidateFailure = false, adoptWorkingCopy = false, forgeFailure = false, g3Recovery = "", blockedDiagnosis = false, declineG2 = false, decline = "", rejectS1 = false, revisePlan = false, createFailure = false, cleanupFailure = false, exhaust = false, replay = false, probeFailure = false, repairNix = false, v3Failure = false, repairEvalFailure = false, dnsReject = false, dnsRejectOnce = false, rejectRoborev = false, throwExit = false, noHostnameEdit = false, proposalFailure = "", extraClaims = false, transientFailure = false, resumeFailure = false, unexpected = "", wrongRules = "", drift = "", structuralFailure = "", nativeFailure = "", nativeMessage = "", tokenDirectory = "", terminalRecordFailure = false, postMintFailure = false, catalog, proposalDrift = "" } = {}) {
+  async function execute({ deferInstallation, deploy = true, pauseG6 = false, installationMissing = false, staleDeferred = false, changeProposal = false, proposalValidateFailure = false, adoptWorkingCopy = false, adoptRoutedS1 = false, forgeFailure = false, g3Recovery = "", blockedDiagnosis = false, declineG2 = false, decline = "", rejectS1 = false, revisePlan = false, createFailure = false, cleanupFailure = false, exhaust = false, replay = false, probeFailure = false, repairNix = false, v3Failure = false, repairEvalFailure = false, dnsReject = false, dnsRejectOnce = false, rejectRoborev = false, throwExit = false, noHostnameEdit = false, proposalFailure = "", extraClaims = false, transientFailure = false, resumeFailure = false, unexpected = "", wrongRules = "", drift = "", structuralFailure = "", nativeFailure = "", nativeMessage = "", tokenDirectory = "", terminalRecordFailure = false, postMintFailure = false, catalog, proposalDrift = "" } = {}) {
     const files = new Map();
     const events = [];
     const cache = new Map();
     const signal = new AbortController().signal;
     const cwd = "/mock";
     const tree = {};
-    let snapshotted = {}, routed = {}, failDns = dnsRejectOnce;
+    let snapshotted = {}, routed = {}, failDns = dnsRejectOnce, adoptedTaskHash = "";
     const revisions = new Map(), committedTasks = new Map();
     const dnsPath = "modules/terranix/cloudflare.nix", dnsContent = 'resource.cloudflare_dns_record.mq = { name = "mq"; type = "CNAME"; content = "magnetite.scientistexperience.net"; proxied = false; };';
     let root = "", live = false, failProbe = probeFailure, failV3 = v3Failure, failRepairEval = repairEvalFailure, rejectReview = rejectS1, failCreate = createFailure, failCleanup = cleanupFailure;
@@ -33,6 +33,13 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
     assert.throws(() => assertCompactCheckpoint({ evidence: { taskText: initialTasks } }), /8 KB/);
     files.set(join(cwd, slices.tasks), initialTasks);
     if (adoptWorkingCopy) { tree["flake.nix"] = "adopted input"; tree[slices.aspect] = "adopted aspect"; files.set(join(cwd, slices.tasks), initialTasks.replace("[ ] 2.1", "[x] 2.1")); }
+    const routedChangeId = "lxutrqykwqtkqysmyxtvvooowwtqqvkq", routedCommit = "a1".repeat(20);
+    if (adoptRoutedS1) {
+      // The routed S1 change already carries the aspect, its ticks and the input.
+      tree["flake.nix"] = "routed input"; tree[slices.aspect] = "routed aspect"; tree[slices.machine] = "routed host";
+      files.set(join(cwd, slices.tasks), initialTasks.replace("[ ] 2.1", "[x] 2.1"));
+    }
+    if (staleDeferred) files.set(join(cwd, slices.tasks), files.get(join(cwd, slices.tasks)).replace(/\[ \] (1\.3|11\.2|8\.4) /g, "[x] $1 "));
     const get = (path) => {
       if (!files.has(path)) throw Object.assign(new Error(`Missing mock file: ${path}`), { code: "ENOENT" });
       return files.get(path);
@@ -68,6 +75,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
         return { applied: edits.map((edit) => edit.path) };
       },
       sha256: tools.sha256,
+      adoptionMode: tools.adoptionMode,
       humanBoxes: tools.humanBoxes,
       proposalBases: tools.proposalBases,
       assertTaskScope: tools.assertTaskScope,
@@ -81,14 +89,29 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       scope: snapshot,
       topology: async (_cwd, chain) => chain.changes.map((change) => change.id),
       preflight: async (_cwd, _splice, _signal, adoption) => {
-        assert.equal(!!adoption, adoptWorkingCopy);
+        assert.equal(!!adoption, adoptWorkingCopy || adoptRoutedS1);
+        if (adoption) assert.equal(adoption.mode, adoptRoutedS1 ? "routed" : "working-copy");
         const baseline = { chain: { workingCopy: "wwww", join: "jjjj", seed: "ssss", tip: "ssss", changes: [] }, lock: "baseline", baseline: {}, taskIds: [...tools.taskLedger(initialTasks).keys()], humanBoxes: tools.humanBoxes(initialTasks) };
         if (!adoption) return baseline;
+        if (adoptRoutedS1) {
+          const file = `${adoption.root}/routed-s1.json`;
+          routed = { ...tree };
+          revisions.set(routedChangeId, { sha: routedCommit, tree: { ...routed } });
+          committedTasks.set(routedChangeId, get(join(cwd, slices.tasks)));
+          files.set(join(cwd, file), JSON.stringify({ adopted: true, mode: "routed", changeId: routedChangeId, commit: routedCommit, parent: "b2".repeat(20), paths: ["flake.nix", "flake.lock", slices.aspect, slices.machine] }));
+          return { ...baseline, routedAdoption: { adopted: true, file } };
+        }
         const file = `${adoption.root}/adopted-s1.json`;
+        adoptedTaskHash = tools.sha256(get(join(cwd, slices.tasks)));
         files.set(join(cwd, file), JSON.stringify({ adopted: true, paths: Object.keys(tree) }));
         return { ...baseline, adoption: { adopted: true, file } };
       },
-      adoptS1: async (_cwd, file) => ({ ...JSON.parse(get(join(cwd, file))), file }),
+      adoptRoutedS1: async (_cwd, file, baseline, actualSignal) => {
+        assert.equal(actualSignal, signal);
+        tools.assertHumanBoxes(baseline, get(join(cwd, slices.tasks)));
+        return { ...JSON.parse(get(join(cwd, file))), file, observations: s1Coverage(["dynamic-user", "cache-directory", "no-static-user", "loopback-listener"]).observations };
+      },
+      adoptS1: async (_cwd, file) => { assert.equal(tools.sha256(get(join(cwd, slices.tasks))), adoptedTaskHash, "Adoption hashes must be rechecked before any deferred tick reset"); return { ...JSON.parse(get(join(cwd, file))), file }; },
       lockInput: async () => ({ declaration: tree["flake.nix"] ?? "declaration", relocked: true }),
       validateChange: async (_cwd, proposals, actualSignal) => {
         assert.equal(actualSignal, signal);
@@ -143,11 +166,14 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       runStreaming: async () => "",
       generateVars: async () => { if (failTransient) { failTransient = false; throw Error("transient connection failure"); } return { generated: true }; },
       mintAppToken: async (_cwd, evidence, label, appId) => {
+        if (deferInstallation) assert(events.some((event) => event.startsWith("confirm:G6")), "No mint before G6 approval");
+        if (installationMissing) throw Error("Installation not confirmed by GitHub");
         const file = resolve(_cwd, evidence, `${label}-${appId}.token.json`);
         if (tokenDirectory) await writeFile(file, "SECRET-SENTINEL", { mode: 0o600 });
         events.push(`minted:${label}-${appId}`); return { appId, file };
       },
-      observeApp: async (_cwd, _root, reply, token) => { if (postMintFailure) throw Error("post-mint transient failure"); assert.equal(token.appId, reply.id); return { id: 1234, slug: "queue" }; },
+      observeApp: async (_cwd, _root, reply, token) => { if (postMintFailure) throw Error("post-mint transient failure"); if (token !== null) assert.equal(token.appId, reply.id); else assert(deferInstallation); return { id: 1234, slug: "queue" }; },
+      hookWitness: async () => { assert(events.some((event) => event.startsWith("confirm:G6"))); return { kind: "Pass", evidence: "hook.log" }; },
       leakScan: async () => ({ leaked: false }),
       reviewDnsContent: async () => ({ sha256: tools.sha256(tree[dnsPath] ?? "") }),
       verifyDnsSource: async (_cwd, source, reviewed) => {
@@ -173,7 +199,8 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       identityWitness: async (_cwd, appId, _slug, tokens) => { assert.deepEqual(tokens.map((token) => token.appId), [4743700, appId]); return { identities: ["nixbot", "queue"] }; },
       resolveSource: async (_cwd, tip) => ({ source: `git+file:///mock?ref=rollup-landing&rev=${revisions.get(tip)?.sha}`, sha: revisions.get(tip)?.sha }),
       ensureActivated: async () => { live = true; return { reconciled: true }; },
-      runtimeProbe: async () => {
+      runtimeProbe: async (_cwd, _approved, _before, _appId, _signal, deferred = false) => {
+        if (deferInstallation && !events.some((event) => event.startsWith("confirm:G6"))) assert.equal(deferred, true, "S4 must suppress App-JWT hook read");
         assert(live, "Probe must follow activation");
         if (failProbe) { failProbe = false; throw Error("mock post-activation probe failure"); }
         return { deployed: true };
@@ -236,7 +263,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
     const context = {
       cwd,
       models: catalog === undefined ? undefined : { listModels() { return catalog; } },
-      inputs: { change: types.change, splice_after: "ssss", deploy: true, max_repair_attempts: 2, build_timeout_minutes: 1, ...(adoptWorkingCopy ? { adopt_working_copy: true } : {}) },
+      inputs: { change: types.change, splice_after: "ssss", deploy, ...(deferInstallation === undefined ? {} : { defer_installation: deferInstallation }), max_repair_attempts: 2, build_timeout_minutes: 1, ...(adoptWorkingCopy ? { adopt_working_copy: true } : {}), ...(adoptRoutedS1 ? { adopt_routed_s1: true } : {}) },
       tool: (name, args, action, options) => durable(`tool:${name}`, args, async () => {
         callbacks++; events.push(name);
         assert(options.timeoutMs > 0 && ["return", "throw"].includes(options.failureMode));
@@ -319,6 +346,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       }),
       ui: Object.fromEntries(["input", "confirm", "select"].map((method) => [method, (question) => durable(`prompt:${promptIndex++}`, question, async () => {
         prompts++; events.push(`${method}:${question}`);
+        if (question.startsWith("G6") && pauseG6) throw Object.assign(Error("G6 awaiting operator"), { pausedG6: true });
         if (question.startsWith("G3") && g3Recovery) { gateExhausted = false; proposalExhausted = false; }
         if (method === "input") return question.startsWith("G3") ? decline === "G3" ? null : "One more bounded batch" : decline === "G1" ? null : JSON.stringify({ slug: "queue", id: 1234 });
         if (method === "select") return declineG2 || decline === "G2" ? "decline" : "approve with User bypass";
@@ -329,8 +357,15 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
         if (throwExit) throw Object.assign(new Error("Atomic terminal exit"), { exitResult: result }); return result;
       },
     };
-    const run = async () => { try { return await definition.run(context); } catch (error) { if (error.exitResult) return error.exitResult; if (unexpected || ["provider", "abort"].includes(nativeFailure)) return { unexpected: error }; throw error; } };
-    const first = await run();
+    const run = async () => { try { return await definition.run(context); } catch (error) { if (error.pausedG6) return { pausedG6: true }; if (error.exitResult) return error.exitResult; if (unexpected || ["provider", "abort"].includes(nativeFailure)) return { unexpected: error }; throw error; } };
+    let first = await run();
+    if (pauseG6 === "resume") {
+      assert.equal(first.pausedG6, true); pauseG6 = false; promptIndex = 0;
+      first = await run();
+      assert.equal(first.status, "completed-with-caveat");
+      assert.equal(events.filter((event) => event === "probe-deploy-b1-a1").length, 1, "G6 resume must replay deployment, not activate/probe again");
+      assert.equal(events.filter((event) => event === "G6-mint-token").length, 1);
+    }
     if (replay) {
       const counts = { callbacks, stages, prompts };
       promptIndex = 0;
@@ -348,6 +383,52 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
     }
     return { result: first.outputs ?? first, exit: first, events, files, root, cwd, revisions, committedTasks, toolOptions, nativeError };
   }
+  const deferredReason = "installation deferred by operator until after deployment";
+  for (const scenario of [{ pauseG6: true }, { decline: "G6" }, { deploy: false }]) {
+    const run = await execute({ deferInstallation: true, staleDeferred: true, ...scenario });
+    assert(!run.events.some((event) => event.startsWith("minted:")), "Deferred installation must not mint any App token");
+    assert(!run.events.some((event) => /^(V[236]-|write-capable-identities$)/.test(event)), "No live validation or identity enumeration while deferred");
+    for (const [node, task] of [["G1-installation", "1.3"], ["webhook-config", "11.2"], ["write-capable-identities", "8.4"]]) {
+      const receipt = JSON.parse(run.files.get(join(run.cwd, run.root, `${node}-deferred.json`)));
+      assert.deepEqual(receipt, { kind: "NotRun", reason: deferredReason });
+      assert(run.files.get(join(run.cwd, slices.tasks)).includes(`- [ ] ${task} `));
+    }
+    const gate = run.events.findIndex((event) => event.startsWith("confirm:G6"));
+    if (scenario.deploy === false) {
+      assert.equal(gate, -1); assert.equal(run.result.deployed, false);
+      for (const item of ["v2", "v3", "v6"]) assert.equal(run.result.validated[item], "not_run");
+    } else {
+      assert(gate > run.events.indexOf("probe-deploy-b1-a1"));
+      assert(gate > run.events.indexOf("rollback-eval-b1-a1"));
+      const material = run.files.get(join(run.cwd, run.root, "G6.md"));
+      assert.match(material, /Passed/); assert.match(material, /NotRun/); assert.match(material, /V2\/V3\/V6/);
+      assert(run.files.has(join(run.cwd, run.root, "G6-pending.json")), "Prompt must persist before waiting");
+      for (const key of ["implemented", "deployed", "validated", "verify_md_written"]) assert(!(key in run.result));
+      if (scenario.pauseG6) assert.equal(run.result.pausedG6, true);
+      else { assert.equal(run.result.status, "declined"); assert.equal(run.exit.status, "cancelled"); }
+    }
+    for (const task of ["1.2", "1.4"]) assert(run.files.get(join(run.cwd, slices.tasks)).includes(`- [x] ${task} `));
+    const ledger = JSON.parse(run.files.get(join(run.cwd, run.root, scenario.deploy === false ? "gate-ledger.json" : "gate-ledger-G6.json")));
+    assert(!ledgerTools.passedClaims(ledger).some((claim) => ["1.3", "11.2", "8.4"].includes(claim.taskId)), "Deferred evidence must not authorize report passes");
+  }
+  const adoptedDeferred = await execute({ deferInstallation: true, adoptWorkingCopy: true, staleDeferred: true, decline: "G6" });
+  assert.equal(adoptedDeferred.result.status, "declined", "Deferred resets must compose with hash-checked adoption");
+  const installedRun = await execute({ deferInstallation: true, pauseG6: "resume", replay: true });
+  assert.equal(installedRun.result.status, "completed-with-caveat");
+  const approvedG6 = installedRun.events.findIndex((event) => event.startsWith("confirm:G6"));
+  for (const node of ["G6-mint-token", "G6-witnesses", "G6-webhook-config", "G6-write-capable-identities", "V3-b1-a1"]) assert(installedRun.events.indexOf(node) > approvedG6, node);
+  for (const task of ["1.3", "8.4"]) assert(installedRun.files.get(join(installedRun.cwd, slices.tasks)).includes(`- [x] ${task} `));
+  assert.match(installedRun.files.get(join(installedRun.cwd, slices.tasks)), /- \[ \] 11\.2 /, "Hook alone does not prove authenticated redelivery");
+  const missingInstall = await execute({ deferInstallation: true, installationMissing: true });
+  assert(!missingInstall.events.includes("V3-b1-a1"), "Human yes without tool-confirmed installation cannot authorize V3");
+  const repairedDeferred = await execute({ deferInstallation: true, probeFailure: true, repairNix: true, decline: "G6" });
+  assert.equal(repairedDeferred.result.status, "declined");
+  assert(repairedDeferred.events.includes("reprobe-deploy-b1-a2"));
+  assert(!repairedDeferred.events.some((event) => event.startsWith("minted:")), "S4 repairs must retain installation deferral");
+  const legacy = await execute(), explicitFalse = await execute({ deferInstallation: false });
+  assert.deepEqual(explicitFalse.result, legacy.result); assert.deepEqual(explicitFalse.events, legacy.events);
+  assert.equal(types.inputs.defer_installation.default, false);
+  console.log("PASS deferred installation graph: no tokens/identities/JWT before durable post-S4 G6; NotRun unticks; decline has no positives; confirmed install reaches V3; deploy=false skips gate/V-items; false preserves legacy trace and outputs");
   for (const adoptWorkingCopy of [false, true]) for (const forgeFailure of [false, true, "throw"]) {
     const run = await execute({ adoptWorkingCopy, forgeFailure, replay: true });
     assert.equal(run.result.status, "completed-with-caveat", "Post-route evidence failure must not block the run");
@@ -406,6 +487,36 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
   assert(adoptedRepair.events.includes("repair-s1-b1-a2-b1-a1"));
   assert(adoptedRepair.events.includes("route-s1"));
   console.log("PASS adoption graph: no initial implement stage; adopted tool ledger/review diff, gate-only ticks, proposal repair and replay retained");
+  assert.equal(types.inputs.adopt_routed_s1.default, false);
+  const routedRun = await execute({ adoptRoutedS1: true, replay: true });
+  assert.equal(routedRun.result.status, "completed-with-caveat", routedRun.result.summary);
+  assert(routedRun.events.includes("adopt-routed-s1"));
+  for (const skipped of [/^implement-b/, /^gate-s1-/, /^review-s1-/, /^route-s1$/, /^adopt-s1/, /^s1-ledger$/, /^invalidate-tasks-s1-/]) {
+    assert(!routedRun.events.some((event) => skipped.test(event)), `Routed adoption must not run ${skipped}`);
+  }
+  const routedLedgerRows = JSON.parse(routedRun.files.get(join(routedRun.cwd, routedRun.root, "ledger.json")));
+  const routedAdoption = routedLedgerRows.find((row) => row.node === "adopt-routed-s1").result.value.evidence;
+  assert.equal(routedAdoption.adopted, true);
+  assert.equal(routedAdoption.changeId, "lxutrqykwqtkqysmyxtvvooowwtqqvkq");
+  assert.match(routedAdoption.commit, /^[0-9a-f]{40}$/);
+  const routedTasks = routedRun.files.get(join(routedRun.cwd, slices.tasks));
+  assert(routedTasks.includes("[x] 2.1"), "Committed S1 ticks must survive routed adoption unchanged");
+  assert(routedRun.events.indexOf("adopt-routed-s1") < routedRun.events.indexOf("s1-committed-forge-pre"));
+  assert(routedRun.events.indexOf("s1-committed-forge-pre") < routedRun.events.indexOf("G1-material"));
+  assert.match(routedTasks, /- \[x\] 5\.3 /, "The post-route committed comparison still owns task 5.3");
+  const routedGates = JSON.parse(routedRun.files.get(join(routedRun.cwd, routedRun.root, "gate-ledger.json")));
+  const routedForge = routedGates.filter((entry) => entry.taskIds.includes("5.3")).at(-1);
+  assert.equal(routedForge.gate, "s1-committed-forge-pre");
+  assert.equal(routedForge.status.kind, "Passed");
+  assert(!ledgerTools.passedClaims(routedGates).some((claim) => ["2.1", "4.1", "5.1"].includes(claim.taskId)), "Adopted S1 tasks are not re-verified by this run");
+  const routedFirstChange = routedRun.revisions.get("change-0");
+  assert(routedFirstChange, "The app-id patch must land as its own change after splice_after");
+  assert(routedRun.events.indexOf("patch-app-id-b1-a1") < routedRun.events.indexOf("route-post-g1"));
+  const bothAdoptions = await execute({ adoptWorkingCopy: true, adoptRoutedS1: true });
+  assert.equal(bothAdoptions.result.status, "blocked");
+  assert.match(bothAdoptions.result.summary, /mutually exclusive/);
+  assert(!bothAdoptions.events.includes("preflight"), "Contradictory adoption inputs block before preflight observations");
+  console.log("PASS routed adoption graph: verified routed S1 replaces implement/gate/review/route, committed ticks persist, post-route forge comparison still ticks 5.3, contradictory adoption inputs block");
   for (const [g3Recovery, blockedDiagnosis] of [["proposal", false], ["gate", false], ["gate", true]]) {
     const recovered = await execute({ g3Recovery, blockedDiagnosis, replay: true });
     const nextStage = g3Recovery === "proposal" ? "implement-b2-a1" : "repair-s1-b2-a1-b1-a1";

@@ -3,13 +3,13 @@ import { join } from "node:path";
 import process from "node:process";
 import { workflow, type WorkflowSerializableValue, type WorkflowTaskOptions } from "@bastani/atomic/workflows";
 import { Blocked, witness, unreachable, within, type Witness } from "./bump/types.js";
-import { inputs, outputs, HIGH, MEDIUM, MAX, READ_ONLY, StageOutput, VerifyDraft, Diagnosis, Review, RulesetDraft, AppReply, parse, assertCatalog, catalogPort, validateModelPolicy, validateModelAttempts, nextBatch, completedRun, attemptsFor, normalizeToolOutcome, type Batch, type Validation } from "./gitea-mq/types.js";
-import { Validation as ValidationSchema } from "./gitea-mq/types.js";
+import { inputs, outputs, HIGH, MEDIUM, MAX, READ_ONLY, StageOutput, VerifyDraft, Diagnosis, Review, RulesetDraft, AppReply, parse, assertCatalog, catalogPort, validateModelPolicy, validateModelAttempts, nextBatch, completedRun, attemptsFor, normalizeToolOutcome, Validation as ValidationSchema, type Batch, type Validation, type LinearState } from "./gitea-mq/types.js";
+import { recordDeferredInstallation, recordRegistration, observeIdentities, confirmInstallation } from "./gitea-mq/installation.js";
 import { dir, tasks, design, verify, reads, s1, postG1, s2, s4, docs, report, negativeControls, type Slice } from "./gitea-mq/slices.js";
 import * as t from "./gitea-mq/tools.js";
 import * as p from "./gitea-mq/prompts.js";
 import { recordS1, committedForgeStatus, repairEffect, repairPaths, dnsChainLabel, dnsCandidateId, dnsRecovery, type DnsChainState, type RepairEffect, type GateEntry, type GateStatus } from "./gitea-mq/ledger.js";
-import type { LinearState } from "./gitea-mq/types.js";
+import * as a from "./gitea-mq/adoption.js";
 import { GateFailure, Stop, ProposalRejected, proposalValue, proposalLoop, rejectStructuredContract } from "./gitea-mq/control.js";
 export default workflow({
   name: "stand-up-gitea-mq", description: "G1–G5 guarded gitea-mq implementation, pinned deployment, live validation and evidence-driven replanning.",
@@ -21,7 +21,7 @@ export default workflow({
       return t.allocateEvidence(cwd);
     }, { failureMode: "throw", timeoutMs: 120_000 }).catch((error: unknown) => ctx.exit({ status: "failed", resumable: true, reason: `Evidence allocation failed: ${String(error)}` }));
     const ledger: unknown[] = [], linearTransitions: LinearState[] = [], cleanupTokens = t.appTokenCleanup(cwd, root);
-    let retainTokens = false;
+    let retainTokens = false, installationDeferred = input.defer_installation;
     const index: { node: string; ok: boolean; evidence: string }[] = [];
     let lockedDeclaration: string | null = null, humanBaseline = "";
     let dnsState: DnsChainState = { kind: "Absent" };
@@ -144,50 +144,54 @@ export default workflow({
       return runBatch(1);
     };
     try {
+      const adoptionMode = t.adoptionMode(input);
       const initial = await tool("preflight", async (signal) => {
         const models = catalogPort(ctx);
         const catalog = models ? await models.listModels() : null;
         await t.save(cwd, `${root}/model-catalog.json`, catalog ?? { note: "Model catalog port unavailable; native resolution and post-call model/thinking rejection apply. Implicit host fallback risk accepted by operator." });
-        if (catalog !== null) assertCatalog(catalog); return t.preflight(cwd, input.splice_after, signal, input.adopt_working_copy ? { root } : null);
+        if (catalog !== null) assertCatalog(catalog); return t.preflight(cwd, input.splice_after, signal, adoptionMode ? { root, mode: adoptionMode } : null);
       }, timeout);
       chain = initial.value.chain; humanBaseline = initial.value.humanBoxes;
       passed("preflight-task-baseline", initial.value.taskIds, initial.evidence, { kind: "Unverified", reason: "No tool observation yet" });
+      const installationPorts = { tool, persist, passed, confirm: (question: string) => ctx.ui.confirm(question), writeFile, effects: t };
       await persist("contracts", { s1, postG1, s2, s4, docs, report, negativeControls });
-      const adoption = "adoption" in initial.value ? initial.value.adoption : null;
-      if (adoption) { await tool("adopt-s1", (signal) => t.adoptS1(cwd, adoption.file, humanBaseline, signal)); await tool("adopt-s1-reset-tasks", (signal) => t.resetTasks(cwd, s1.taskIds, signal, humanBaseline)); } else await implement("implement", s1);
+      const adoption = "adoption" in initial.value ? initial.value.adoption : null, routedAdoption = "routedAdoption" in initial.value ? initial.value.routedAdoption : null;
+      let s1Partial: a.S1Partial | null = null;
+      if (routedAdoption) s1Partial = await a.adoptRouted(cwd, routedAdoption.file, humanBaseline, installationPorts); else if (adoption) await a.adoptWorkingCopy(cwd, adoption.file, humanBaseline, s1.taskIds, installationPorts); else await implement("implement", s1);
+      if (installationDeferred) validation = { ...validation, ...await recordDeferredInstallation(cwd, root, humanBaseline, installationPorts) };
+      const started = async () => { await tool("first-task-witness", async (signal) => { signal.throwIfAborted(); if (!/^- \[x\] /m.test(await readFile(join(cwd, tasks), "utf8"))) throw new Blocked("No first completed task"); return { started: true }; }); await transition("T2", "In Progress", `Implementation has started for CAM-56. Evidence is recorded in ${root}.`); };
       // Locking and relocking are distinct controller nodes inside the bounded gate.
-      const s1Result = await bounded("s1", s1, async (id) => {
-        const gate = await tool(`gate-${id}`, async (signal) => { await t.resetTasks(cwd, ["5.3"], signal, humanBaseline); return t.s1Gate(cwd, initial.value.lock, initial.value.baseline, signal); }, timeout, true);
-        const diff = await tool(`diff-${id}`, (signal) => t.diffArtifact(cwd, root, id, signal, input.adopt_working_copy ? s1.allowedPaths : undefined));
-        const tree = await tool(`tree-${id}`, (signal) => t.snapshot(cwd, signal));
-        const review = parse(Review, (await stage(`review-s1-${id}`, { ...MAX, ...READ_ONLY, reads: [...reads, diff.value, gate.evidence, `${root}/contracts.json`], schema: Review, prompt: p.reviewPrompt(cwd, root) })).structured);
-        await tool(`stable-${id}`, async (signal) => ({ stable: true, ...t.assertScopedInputs(tree.value, await t.snapshot(cwd, signal), s1) }), 120_000, true);
-        switch (review.verdict) { case "Approve": return gate; case "Reject": await persist(`rejection-${id}`, { findings: review.findings, reviewer: `${root}/review-s1-${id}.md`, diff: diff.value, gate: gate.evidence }); throw new GateFailure(id, `${root}/rejection-${id}.json`, review.findings.join("\n")); default: return unreachable(review); }
-      });
-      recordS1(gateLedger, s1Result.value, s1Result.evidence); await tool("s1-ledger", (signal) => t.tick(cwd, s1Result.value.verifiedTasks, signal, humanBaseline));
-      validation.v9 = { kind: "Pass", evidence: s1Result.evidence };
-      await tool("first-task-witness", async (signal) => { signal.throwIfAborted(); if (!/^- \[x\] /m.test(await readFile(join(cwd, tasks), "utf8"))) throw new Blocked("No first completed task"); return { started: true }; });
-      await transition("T2", "In Progress", `Implementation has started for CAM-56. Evidence is recorded in ${root}.`);
-      await land("route-s1", s1);
-      const committedForge = await observe("s1-committed-forge-pre", (signal) => t.recordCommittedForgePre(cwd, chain!.tip, { observations: s1Result.value.observations, evidence: s1Result.evidence }, signal, humanBaseline), timeout);
+      if (!s1Partial) {
+        const s1Result = await bounded("s1", s1, async (id) => {
+          const gate = await tool(`gate-${id}`, async (signal) => { await t.resetTasks(cwd, ["5.3"], signal, humanBaseline); return t.s1Gate(cwd, initial.value.lock, initial.value.baseline, signal); }, timeout, true);
+          const diff = await tool(`diff-${id}`, (signal) => t.diffArtifact(cwd, root, id, signal, input.adopt_working_copy ? s1.allowedPaths : undefined));
+          const tree = await tool(`tree-${id}`, (signal) => t.snapshot(cwd, signal));
+          const review = parse(Review, (await stage(`review-s1-${id}`, { ...MAX, ...READ_ONLY, reads: [...reads, diff.value, gate.evidence, `${root}/contracts.json`], schema: Review, prompt: p.reviewPrompt(cwd, root) })).structured);
+          await tool(`stable-${id}`, async (signal) => ({ stable: true, ...t.assertScopedInputs(tree.value, await t.snapshot(cwd, signal), s1) }), 120_000, true);
+          switch (review.verdict) { case "Approve": return gate; case "Reject": await persist(`rejection-${id}`, { findings: review.findings, reviewer: `${root}/review-s1-${id}.md`, diff: diff.value, gate: gate.evidence }); throw new GateFailure(id, `${root}/rejection-${id}.json`, review.findings.join("\n")); default: return unreachable(review); }
+        });
+        recordS1(gateLedger, s1Result.value, s1Result.evidence); await tool("s1-ledger", (signal) => t.tick(cwd, s1Result.value.verifiedTasks, signal, humanBaseline)); validation.v9 = { kind: "Pass", evidence: s1Result.evidence };
+        await started(); await land("route-s1", s1); s1Partial = { revision: chain.tip, observations: s1Result.value.observations, evidence: s1Result.evidence };
+      } else await started();
+      const committedForge = await observe("s1-committed-forge-pre", (signal) => t.recordCommittedForgePre(cwd, s1Partial!.revision, { observations: s1Partial!.observations, evidence: s1Partial!.evidence }, signal, humanBaseline), timeout);
       passed("s1-committed-forge-pre", ["5.3"], `${root}/s1-committed-forge-pre.json`, committedForgeStatus(committedForge)); await persist("gate-ledger-committed-forge-pre", gateLedger);
-      await tool("G1-material", async (signal) => { signal.throwIfAborted(); await writeFile(join(cwd, `${root}/G1.md`), p.registration); return { file: `${root}/G1.md` }; });
-      const reply = await ctx.ui.input(`${p.registration}\nMaterial: ${root}/G1.md\nSuggested slug: ${input.app_slug_hint ?? "sciexp-gitea-mq"}`);
+      const registration = input.defer_installation ? p.deferredRegistration : p.registration;
+      await tool("G1-material", async (signal) => { signal.throwIfAborted(); await writeFile(join(cwd, `${root}/G1.md`), registration); return { file: `${root}/G1.md` }; });
+      const reply = await ctx.ui.input(`${registration}\nMaterial: ${root}/G1.md\nSuggested slug: ${input.app_slug_hint ?? "sciexp-gitea-mq"}`);
       if (!reply?.trim()) throw new Stop("declined", "G1 declined");
       const appReply = parse(AppReply, JSON.parse(reply)); await persist("G1", { kind: "operator", reply: appReply });
       humanBaseline = (await tool("G1-operator-task", (signal) => t.tickOperator(cwd, "G1", `${root}/G1.json`, humanBaseline, signal))).value.humanBaseline;
       passed("G1", ["1.1"], `${root}/G1.json`, { kind: "Operator", decision: "approved" });
       const credentials = await tool("generate-vars", (signal) => t.generateVars(cwd, chain!, signal), timeout);
-      const g1Token = await tool("G1-mint-token", (signal) => t.mintAppToken(cwd, root, "G1", appReply.id, signal));
-      const app = await tool("G1-witnesses", (signal) => t.observeApp(cwd, root, appReply, g1Token.value, signal));
+      const g1Token = installationDeferred ? null : await tool("G1-mint-token", (signal) => t.mintAppToken(cwd, root, "G1", appReply.id, signal));
+      const app = await tool("G1-witnesses", (signal) => t.observeApp(cwd, root, appReply, g1Token?.value ?? null, signal));
       const leaks = await tool("positive-controlled-leak-scan", (signal) => t.leakScan(cwd, signal), timeout);
       await implement("patch-app-id", postG1, `Set services.gitea-mq.github.appId to tool-observed ${app.value.id}; remove the placeholder, change no other settings.`);
       const patched = await bounded("post-g1-s1-gate", postG1, (id) => tool(id, async (signal) => {
         const gate = await t.s1Gate(cwd, initial.value.lock, initial.value.baseline, signal, app.value.id);
         if (await t.run(cwd, "nix eval --raw --apply toString .#nixosConfigurations.magnetite.config.services.gitea-mq.github.appId", signal) !== String(app.value.id)) throw new Blocked("App-id patch mismatch"); return gate;
       }, timeout, true));
-      await tool("G1-ledger", (signal) => t.tick(cwd, ["1.2", "1.3", "1.4", "3.2", "3.3"], signal, humanBaseline));
-      passed("G1-registration", ["1.2", "1.3", "1.4"], app.evidence);
+      await recordRegistration(cwd, app.evidence, humanBaseline, installationDeferred, installationPorts);
       passed("G1-credentials", ["3.2"], credentials.evidence); passed("G1-leaks", ["3.3"], leaks.evidence);
       recordS1(gateLedger, patched.value, patched.evidence);
       await tool("post-g1-s1-ledger", (signal) => t.tick(cwd, patched.value.verifiedTasks, signal, humanBaseline));
@@ -237,18 +241,12 @@ export default workflow({
       humanBaseline = (await tool("G2-operator-task", (signal) => t.tickOperator(cwd, "G2", `${root}/G2.json`, humanBaseline, signal))).value.humanBaseline;
       passed("G2", ["8.2"], `${root}/G2.json`, { kind: "Operator", decision: "approved" });
       const rules = await tool("apply-rulesets", (signal) => t.applyRules(cwd, approved, approvedHash, beforeRules.value.file, signal));
-      const identityTokens: t.AppToken[] = [];
-      for (const id of [4743700, app.value.id]) identityTokens.push((await tool(`identity-mint-token-${id}`, (signal) => t.mintAppToken(cwd, root, "identities", id, signal))).value);
-      const identities = await tool("write-capable-identities", (signal) => t.identityWitness(cwd, app.value.id, app.value.slug, identityTokens, signal));
-      await tool("ruleset-ledger", (signal) => t.tick(cwd, ["8.1", "8.3", "8.4"], signal, humanBaseline));
-      passed("rulesets-before", ["8.1"], beforeRules.evidence); passed("rulesets", ["8.3"], rules.evidence); passed("identities", ["8.4"], identities.evidence);
+      const identities = installationDeferred ? null : await observeIdentities(cwd, root, app.value, installationPorts);
+      await tool("ruleset-ledger", (signal) => t.tick(cwd, installationDeferred ? ["8.1", "8.3"] : ["8.1", "8.3", "8.4"], signal, humanBaseline));
+      passed("rulesets-before", ["8.1"], beforeRules.evidence); passed("rulesets", ["8.3"], rules.evidence); if (identities) passed("identities", ["8.4"], identities.evidence);
       await land("route-s3", report);
       const repairDeployment = async (id: string, effect: RepairEffect) => {
-        switch (effect.kind) {
-          case "Noop": return;
-          case "Changed": break;
-          default: return unreachable(effect);
-        }
+        switch (effect.kind) { case "Noop": return; case "Changed": break; default: return unreachable(effect); }
         const nixChanged = effect.paths.some((path) => path.endsWith(".nix") || path === "flake.lock");
         if (nixChanged) {
           const dependent = gateLedger.filter((entry) => ["s1", "s1-committed-forge-pre", "deployment", "rollback", "V2", "V3", "V6"].includes(entry.gate));
@@ -264,7 +262,7 @@ export default workflow({
         if (input.deploy && nixChanged) {
           const source = await tool(`repair-source-${id}`, (signal) => t.resolveSource(cwd, chain!.tip, "rollup-landing", signal));
           await tool(`reactivate-${id}`, (signal) => t.ensureActivated(cwd, source.value, signal), timeout, true);
-          const active = await tool(`reprobe-${id}`, (signal) => t.runtimeProbe(cwd, approved, beforeRules.value.file, app.value.id, signal), 120_000, true);
+          const active = await tool(`reprobe-${id}`, (signal) => t.runtimeProbe(cwd, approved, beforeRules.value.file, app.value.id, signal, installationDeferred), 120_000, true);
           deployed = witness(`reprobe-${id}`, active.outcome, (v) => ({ value: v.evidence.deployed, evidence: active.evidence }));
           await tool(`deployment-ledger-${id}`, (signal) => t.tick(cwd, ["9.1", "11.1", "11.3", "11.4", "11.6"], signal, humanBaseline));
           passed("deployment", ["9.1", "11.1", "11.3", "11.4", "11.6"], active.evidence);
@@ -274,7 +272,7 @@ export default workflow({
         const active = await bounded("deploy", s4, async (id) => {
           const source = await tool(`source-${id}`, (signal) => t.resolveSource(cwd, chain!.tip, "rollup-landing", signal));
           await tool(`update-machine-${id}`, (signal) => t.ensureActivated(cwd, source.value, signal), timeout, true);
-          return tool(`probe-${id}`, (signal) => t.runtimeProbe(cwd, approved, beforeRules.value.file, app.value.id, signal), 120_000, true);
+          return tool(`probe-${id}`, (signal) => t.runtimeProbe(cwd, approved, beforeRules.value.file, app.value.id, signal, installationDeferred), 120_000, true);
         }, repairDeployment);
         deployed = witness("deploy", active.outcome, (v) => ({ value: v.evidence.deployed, evidence: active.evidence }));
         await tool("deployment-ledger", (signal) => t.tick(cwd, ["9.1", "11.1", "11.3", "11.4", "11.6"], signal, humanBaseline));
@@ -286,6 +284,7 @@ export default workflow({
       const rollback = await bounded("rollback-eval", s4, (id) => tool(id, (signal) => t.rollback(cwd, signal), timeout, true), repairDeployment);
       await tool("rollback-ledger", (signal) => t.tick(cwd, ["11.9"], signal, humanBaseline)); passed("rollback", ["11.9"], rollback.evidence);
       if (input.deploy) {
+        if (installationDeferred) { await confirmInstallation(cwd, root, appReply, humanBaseline, gateLedger, validation, installationPorts); installationDeferred = false; }
         const selected = await bounded("V3", s4, (id) => tool(id, (signal) => t.v3Witness(cwd, signal), 120_000, true), repairDeployment);
         validation.v3 = { kind: "Pass", evidence: selected.evidence };
         await tool("V3-ledger", (signal) => t.tick(cwd, ["11.5"], signal, humanBaseline));

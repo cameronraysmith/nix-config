@@ -9,6 +9,7 @@ export const MODEL = "openai-codex/gpt-6-astra";
 export const HIGH = { model: `${MODEL}:high`, fallbackModels: [] };
 export const MEDIUM = { model: `${MODEL}:medium`, fallbackModels: [] };
 export const MAX = { model: `${MODEL}:max`, fallbackModels: [] };
+export const DEFERRED_INSTALLATION_REASON = "installation deferred by operator until after deployment";
 export const inputs = {
   change: Type.Literal(change, { default: change }),
   splice_after: Type.String({
@@ -16,7 +17,9 @@ export const inputs = {
     description: "Current rollup-landing chain tip change id; never @ or the join.",
   }),
   deploy: Type.Boolean({ default: true }),
+  defer_installation: Type.Boolean({ default: false, description: "Observe public App registration only until deployment probes pass and the operator confirms manual installation at G6." }),
   adopt_working_copy: Type.Boolean({ default: false, description: "Adopt pending S1 implementation instead of requesting an initial proposal; all gates still run." }),
+  adopt_routed_s1: Type.Boolean({ default: false, description: "Adopt an S1 implementation already routed onto the chain: preflight verifies the routed change by content instead of requiring an absent aspect, and no S1 implementation, gate, review or route runs. Mutually exclusive with adopt_working_copy." }),
   max_repair_attempts: Type.Union([Type.Literal(1), Type.Literal(2), Type.Literal(3)], {
     default: 3, description: "Attempts per bounded batch, including the first gate execution.",
   }),
@@ -29,6 +32,17 @@ export const AdoptedS1 = Type.Object({
   tree: Type.Record(Type.String(), Type.String()), stat: Type.String(),
 }, { additionalProperties: false });
 export type AdoptedS1 = Static<typeof AdoptedS1>;
+/** Routed adoption is proved by the chain, not by pending working-copy edits. */
+export const RoutedS1 = Type.Object({
+  adopted: Type.Literal(true), mode: Type.Literal("routed"),
+  changeId: Type.String({ pattern: "^[k-z]+$" }), description: Type.String({ minLength: 1 }),
+  commit: Type.String({ pattern: "^[0-9a-f]{40}$" }), parent: Type.String({ pattern: "^[0-9a-f]{40}$" }),
+  source: Type.String({ minLength: 1 }), paths: Type.Array(Type.String()),
+  blobs: Type.Record(Type.String(), Type.String({ pattern: "^[0-9a-f]{40}$" })),
+  sha256: Type.Record(Type.String(), Type.String({ pattern: "^[0-9a-f]{64}$" })),
+  pending: Type.Array(Type.String()),
+}, { additionalProperties: false });
+export type RoutedS1 = Static<typeof RoutedS1>;
 export const Batch = Type.Union([Type.Literal(1), Type.Literal(2)]);
 export type Batch = Static<typeof Batch>;
 export type BatchSchedule = readonly [1, 2];

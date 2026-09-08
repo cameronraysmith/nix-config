@@ -4,25 +4,25 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { Type, type Static } from "typebox";
 import { Blocked, within, unreachable } from "../bump/types.js";
-import { quote, requireSuccess } from "../bump/tools.js";
+import { quote, requireSuccess, lines } from "../bump/tools.js";
 import {
   save,
   squashCommand, classifyScope, type Tree,
 } from "../omnigent/tools.js";
 import { snapshot, assertHealthy, oneId, ids, pathsIn } from "./vcs.js";
 import {
-  resolveSource as sharedResolveSource, resolveRevisionSource, committedSource, type DeploymentSource,
+  resolveSource as sharedResolveSource, resolveRevisionSource, changeSha, committedSource, type DeploymentSource,
 } from "../omnigent/deployment.js";
 import { capture, captureStreaming, readResponse, assertExternalEvidence, canonicalExternalEvidence } from "./process.js";
 export { processCheckpoint, allocateEvidence } from "./process.js";
 export { appTokenCleanup } from "./credentials.js";
 import { s1Coverage, type S1Arm } from "./s1-observations.js";
 import {
-  parse, AdoptedS1, Ruleset, AppReply, type RulesetDraft, type VResult,
+  parse, AdoptedS1, RoutedS1, Ruleset, AppReply, DEFERRED_INSTALLATION_REASON, type RulesetDraft, type VResult,
   type LinearState, type LinearOutcome, type VerifyCommentary,
 } from "./types.js";
 import {
-  api, rulesetApi, aspect, dir, tasks, proposal, verify, domain, repository,
+  api, rulesetApi, aspect, machine, dir, tasks, proposal, verify, domain, repository,
   varsAllowed, negativeControls, rollbackExpr, runtimeEnvironment, s1, postG1, s2, s4, docs, report, type Slice,
 } from "./slices.js";
 import { passedClaims, type GateEntry } from "./ledger.js";
@@ -87,7 +87,8 @@ export async function topology(cwd: string, chain: Chain, signal: AbortSignal): 
 }
 const ForgePre = Type.Object({ pre: Type.Union([Type.String(), Type.Array(Type.String()), Type.Null()]) });
 const forgeProjection = 'c: { pre = c.systemd.services.gitea.serviceConfig.ExecStartPre or null; }';
-const forgeCommand = (source: string) => `nix eval --no-write-lock-file --json ${quote(`${source}#nixosConfigurations.magnetite.config`)} --apply ${quote(forgeProjection)}`;
+const configCommand = (source: string, projection: string) => `nix eval --no-write-lock-file --json ${quote(`${source}#nixosConfigurations.magnetite.config`)} --apply ${quote(projection)}`;
+const forgeCommand = (source: string) => configCommand(source, forgeProjection);
 const ForgeProvenance = Type.Union([
   Type.Object({ kind: Type.Literal("CommittedPreS1"), source: Type.String(), sha: Type.String({ pattern: "^[a-f0-9]{40}$" }) }),
   Type.Object({ kind: Type.Literal("PreflightWorkingCopy"), source: Type.Literal("."), sha: Type.Null() }),
@@ -103,14 +104,15 @@ async function evaluateForgePre(cwd: string, source: string, signal: AbortSignal
   return { command, receipt: result.logPath.replace(/\.log$/, ".json"), value };
 }
 /** Adoption must never bless the already-implemented candidate as pre-S1. */
-export async function forgeBaseline(cwd: string, adopted: boolean, signal: AbortSignal) {
+export async function forgeBaseline(cwd: string, adopted: boolean, signal: AbortSignal, preS1Rev: string | null = null) {
   let provenance: { kind: "CommittedPreS1"; source: string; sha: string } | { kind: "PreflightWorkingCopy"; source: "."; sha: null } | null = null;
   try {
-    if (adopted) {
+    if (preS1Rev !== null) provenance = { kind: "CommittedPreS1", ...committedSource(cwd, preS1Rev, "rollup-landing") };
+    else if (adopted) {
       const source = await resolveSource(cwd, "rollup-landing", "rollup-landing", signal);
       provenance = { kind: "CommittedPreS1", ...source };
-      if (await run(cwd, `git ls-tree ${quote(source.sha)} -- ${quote(aspect)}`, signal)) throw new Blocked("rollup-landing source already contains S1 aspect");
     } else provenance = { kind: "PreflightWorkingCopy", source: ".", sha: null };
+    if (provenance.sha !== null && await run(cwd, `git ls-tree ${quote(provenance.sha)} -- ${quote(aspect)}`, signal)) throw new Blocked("Pre-S1 source already contains S1 aspect");
     return { kind: "Evaluated" as const, adopted, provenance, evaluation: await evaluateForgePre(cwd, provenance.source, signal) };
   } catch (error) {
     signal.throwIfAborted();
@@ -172,25 +174,94 @@ export async function validateChange(cwd: string, proposals: string[], signal: A
   const result = await capture(cwd, command, signal); requireSuccess(result);
   return { valid: true, proposals, command, receipt: result.logPath.replace(/\.log$/, ".json") };
 }
-export async function preflight(cwd: string, splice: string, signal: AbortSignal, adoption: { root: string } | null = null) {
+export type AdoptionMode = "working-copy" | "routed";
+/** Exactly one adoption story may be told about a given S1 implementation. */
+export function adoptionMode(input: { adopt_working_copy: boolean; adopt_routed_s1: boolean }): AdoptionMode | null {
+  if (input.adopt_working_copy && input.adopt_routed_s1) {
+    throw new Blocked("adopt_working_copy and adopt_routed_s1 are mutually exclusive: adopt_working_copy adopts pending S1 edits in the working copy, adopt_routed_s1 adopts an S1 already routed onto the chain; pass at most one");
+  }
+  if (input.adopt_routed_s1) return "routed";
+  return input.adopt_working_copy ? "working-copy" : null;
+}
+export const routedDescription = "feat(gitea-mq): s1";
+const routedPaths = ["flake.nix", "flake.lock", aspect, machine] as const;
+/** Chain adoption must recognize the routed change by its description, not by a supplied id. */
+async function describedIds(cwd: string, revset: string, signal: AbortSignal): Promise<{ id: string; description: string }[]> {
+  const template = 'change_id ++ " " ++ description.first_line() ++ "\\n"';
+  return lines(await run(cwd, `jj --ignore-working-copy log --no-graph -r ${quote(revset)} -T ${quote(template)}`, signal)).map((row) => {
+    const match = /^([k-z]+)(?: (.*))?$/.exec(row.trimEnd());
+    if (!match) throw new Blocked(`Unparsable change description row: ${row}`);
+    return { id: match[1]!, description: match[2] ?? "" };
+  });
+}
+/** The aspect on disk is only acceptable when the chain itself, not this run, produced it. */
+async function routedS1Evidence(cwd: string, pending: readonly string[], signal: AbortSignal): Promise<RoutedS1> {
+  const described = await describedIds(cwd, "::rollup-landing & mutable()", signal);
+  const matches = described.filter((row) => row.description.startsWith(routedDescription));
+  if (matches.length !== 1) throw new Blocked(`adopt_routed_s1 requires exactly one chain change described '${routedDescription}...'; found ${matches.length}`);
+  const change = matches[0]!;
+  if ((await ids(cwd, `${change.id} & ::rollup-landing`, signal)).length !== 1) throw new Blocked(`Routed S1 change ${change.id} is not an ancestor of rollup-landing`);
+  const { source, sha } = await resolveRevisionSource(cwd, change.id, "rollup-landing", signal, capture);
+  const parents = (await run(cwd, `git rev-list --parents -n 1 ${quote(sha)}`, signal)).split(/\s+/);
+  if (parents.length !== 2 || parents[0] !== sha || !/^[a-f0-9]{40}$/.test(parents[1]!)) throw new Blocked("Routed S1 revision must have exactly one committed parent");
+  const parent = parents[1]!;
+  const blobs: Record<string, string> = {};
+  for (const row of lines(await run(cwd, `git ls-tree ${quote(sha)} -- ${routedPaths.map(quote).join(" ")}`, signal))) {
+    const entry = /^\d{6} blob ([0-9a-f]{40})\t(.+)$/.exec(row);
+    if (!entry) throw new Blocked(`Unparsable routed tree entry: ${row}`);
+    blobs[entry[2]!] = entry[1]!;
+  }
+  const absent = routedPaths.filter((path) => !(path in blobs));
+  if (absent.length) throw new Blocked(`Routed S1 revision ${sha} does not contain: ${absent.join(", ")}`);
+  if (lines(await run(cwd, `git ls-tree ${quote(parent)} -- ${quote(aspect)}`, signal)).length) throw new Blocked(`Routed S1 parent ${parent} already contains ${aspect}; the aspect does not come from ${change.id}`);
+  const disk = lines(await run(cwd, `git hash-object -- ${routedPaths.map(quote).join(" ")}`, signal));
+  if (disk.length !== routedPaths.length) throw new Blocked("Could not hash every adopted path in the working copy");
+  routedPaths.forEach((path, index) => {
+    if (disk[index] !== blobs[path]) throw new Blocked(`Working copy ${path} differs from routed S1 revision ${sha}; adoption requires the routed content`);
+  });
+  const sha256Map: Record<string, string> = {};
+  for (const path of [aspect, "flake.nix"]) {
+    signal.throwIfAborted();
+    sha256Map[path] = sha256(await run(cwd, `git show ${quote(`${sha}:${path}`)}`, signal));
+  }
+  const flake = await run(cwd, `git show ${quote(`${sha}:flake.nix`)}`, signal);
+  if (!/^\s*gitea-mq\.url\s*=/m.test(flake)) throw new Blocked(`Routed S1 revision ${sha} does not declare the gitea-mq flake input`);
+  return { adopted: true, mode: "routed", changeId: change.id, description: change.description, commit: sha, parent, source, paths: [...routedPaths], blobs, sha256: sha256Map, pending: [...pending] };
+}
+export async function preflight(cwd: string, splice: string, signal: AbortSignal, adoption: { root: string; mode?: AdoptionMode } | null = null) {
+  const mode: AdoptionMode | null = adoption ? adoption.mode ?? "working-copy" : null;
   if (resolve(cwd) !== "/Users/crs58/projects/vanixiets") throw new Blocked("Wrong repository cwd");
   await run(cwd, `openspec validate ${quote(dir.split("/").at(-1)!)} --strict`, signal);
   await run(cwd, "jj debug snapshot", signal);
   const allowed = [...new Set([s1, postG1, s2, s4, docs, report].flatMap((slice) => slice.allowedPaths))];
   const workingPaths = await pathsIn(cwd, "@", signal);
   const owned = workingPaths.filter((path) => allowed.some((prefix) => within(path, prefix)));
-  if (adoption) {
-    const outside = owned.filter((path) => !s1.allowedPaths.some((prefix) => within(path, prefix)));
-    if (outside.length) throw new Blocked(`Adoption has pending workflow paths outside S1: ${outside.join(", ")}`);
-  } else if (owned.length) throw new Blocked(`Preexisting workflow changes require ownership reconciliation: ${owned.join(", ")}`);
+  switch (mode) {
+    case "working-copy": {
+      const outside = owned.filter((path) => !s1.allowedPaths.some((prefix) => within(path, prefix)));
+      if (outside.length) throw new Blocked(`Adoption has pending workflow paths outside S1: ${outside.join(", ")}`);
+      break;
+    }
+    // A routed S1 owns its implementation; only change-directory bookkeeping may still be pending.
+    case "routed": {
+      const outside = owned.filter((path) => !within(path, dir));
+      if (outside.length) throw new Blocked(`Routed adoption has pending implementation paths outside ${dir}: ${outside.join(", ")}`);
+      break;
+    }
+    case null:
+      if (owned.length) throw new Blocked(`Preexisting workflow changes require ownership reconciliation: ${owned.join(", ")}`);
+      break;
+    default: return unreachable(mode);
+  }
   // Retain unrelated edits in the working tree and subsequent full-tree stage baselines.
   const foreign = workingPaths.filter((path) => !allowed.some((prefix) => within(path, prefix)));
-  if (!adoption) try {
-    await lstat(join(cwd, aspect));
-    throw new Blocked("gitea-mq aspect already exists");
-  } catch (error) {
+  let aspectPresent = true;
+  try { await lstat(join(cwd, aspect)); } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    aspectPresent = false;
   }
+  if (mode === null && aspectPresent) throw new Blocked("gitea-mq aspect already exists");
+  if (mode === "routed" && !aspectPresent) throw new Blocked(`adopt_routed_s1 requires the routed ${aspect} in the working copy`);
   const workingCopy = await oneId(cwd, "@", signal);
   const joinId = await oneId(cwd, "@-", signal);
   const seed = await oneId(cwd, splice, signal);
@@ -199,20 +270,25 @@ export async function preflight(cwd: string, splice: string, signal: AbortSignal
   await topology(cwd, chain, signal);
   await run(cwd, "gh auth status\nclan vars --help", signal);
   await run(cwd, ssh("true"), signal);
+  const routed = mode === "routed" ? await routedS1Evidence(cwd, owned, signal) : null;
   const nodes = parse(Type.Object({ nodes: Type.Record(Type.String(), Type.Unknown()) }),
-    JSON.parse(adoption ? await run(cwd, "jj --ignore-working-copy file show -r @- flake.lock", signal) : await readFile(join(cwd, "flake.lock"), "utf8"))).nodes;
+    JSON.parse(mode === "working-copy" ? await run(cwd, "jj --ignore-working-copy file show -r @- flake.lock", signal) : await readFile(join(cwd, "flake.lock"), "utf8"))).nodes;
   const lock = JSON.stringify({ nodes: { nixbot: nodes.nixbot, "buildbot-nix": nodes["buildbot-nix"] } });
-  const baseline = await forgeBaseline(cwd, !!adoption, signal);
+  const baseline = await forgeBaseline(cwd, !!adoption, signal, routed?.parent ?? null);
   const taskText = await readFile(join(cwd, tasks), "utf8");
   const baselineResult = { chain, lock, baseline, foreign, taskIds: [...taskLedger(taskText).keys()], humanBoxes: humanBoxes(taskText) };
-  if (!adoption) return baselineResult;
+  if (mode === null) return baselineResult;
   assertHumanBoxes(baselineResult.humanBoxes, taskText);
+  if (routed) {
+    const file = `${adoption!.root}/routed-s1.json`; await save(cwd, file, routed);
+    return { ...baselineResult, routedAdoption: { adopted: true as const, file } };
+  }
   const tree = scopedS1Tree(await snapshot(cwd, signal));
   const evidence: AdoptedS1 = { adopted: true, paths: owned, tree,
     sha256: Object.fromEntries(owned.map((path) => [path, tree[path]?.replace(/^\d{6}:/, "") ?? null])),
     stat: owned.length ? await run(cwd, `jj --ignore-working-copy diff -r @ --stat -- ${owned.map(quote).join(" ")}`, signal) : "",
   };
-  const file = `${adoption.root}/adopted-s1.json`; await save(cwd, file, evidence);
+  const file = `${adoption!.root}/adopted-s1.json`; await save(cwd, file, evidence);
   return { ...baselineResult, adoption: { adopted: true as const, file } };
 }
 const scopedS1Tree = (tree: Tree): Tree => Object.fromEntries(Object.entries(tree).filter(([path]) => s1.allowedPaths.some((prefix) => within(path, prefix))));
@@ -221,6 +297,46 @@ export async function adoptS1(cwd: string, file: string, humanBaseline: string, 
   assertScopedInputs(evidence.tree, scopedS1Tree(await snapshot(cwd, signal)), s1);
   assertHumanBoxes(humanBaseline, await readFile(join(cwd, tasks), "utf8"));
   return { adopted: true as const, file, paths: evidence.paths };
+}
+const S1Resources = Type.Object({
+  dynamicUser: Type.Union([Type.Boolean(), Type.Null()]),
+  cacheDirectory: Type.Union([Type.String(), Type.Null()]),
+  staticUser: Type.Boolean(),
+  listenAddr: Type.Union([Type.String(), Type.Null()]),
+}, { additionalProperties: false });
+const resourceProjection = `c: { dynamicUser = c.systemd.services.gitea-mq.serviceConfig.DynamicUser or null;
+  cacheDirectory = c.systemd.services.gitea-mq.serviceConfig.CacheDirectory or null;
+  staticUser = c.users.users ? gitea-mq;
+  listenAddr = c.services.gitea-mq.listenAddr or null; }`;
+/** Task 5.3's non-forge arms must come from the adopted immutable revision, never from prose. */
+async function routedResources(cwd: string, source: string, signal: AbortSignal) {
+  const command = configCommand(source, resourceProjection);
+  try {
+    const result = await capture(cwd, command, signal);
+    const value = parse(S1Resources, JSON.parse(requireSuccess(result)));
+    const arms: S1Arm[] = [];
+    if (value.dynamicUser === true) arms.push("dynamic-user");
+    if (value.cacheDirectory === "gitea-mq") arms.push("cache-directory");
+    if (!value.staticUser) arms.push("no-static-user");
+    if (value.listenAddr === "127.0.0.1:8092") arms.push("loopback-listener");
+    return { kind: "Evaluated" as const, command, receipt: result.logPath.replace(/\.log$/, ".json"), value, arms };
+  } catch (error) {
+    signal.throwIfAborted();
+    return { kind: "NotRun" as const, command, receipt: null, reason: String(error), arms: [] as S1Arm[] };
+  }
+}
+/** Re-verify the routed identity and content immediately before the run depends on it. */
+export async function adoptRoutedS1(cwd: string, file: string, humanBaseline: string, signal: AbortSignal) {
+  const evidence = parse(RoutedS1, JSON.parse(await readFile(join(cwd, file), "utf8")));
+  if (await changeSha(cwd, evidence.changeId, signal, capture) !== evidence.commit) throw new Blocked(`Routed S1 change ${evidence.changeId} no longer resolves to ${evidence.commit}`);
+  if ((await ids(cwd, `${evidence.changeId} & ::rollup-landing`, signal)).length !== 1) throw new Blocked(`Routed S1 change ${evidence.changeId} left the rollup-landing ancestry`);
+  const disk = lines(await run(cwd, `git hash-object -- ${evidence.paths.map(quote).join(" ")}`, signal));
+  evidence.paths.forEach((path, index) => {
+    if (disk[index] !== evidence.blobs[path]) throw new Blocked(`Working copy ${path} drifted from routed S1 revision ${evidence.commit} after preflight`);
+  });
+  assertHumanBoxes(humanBaseline, await readFile(join(cwd, tasks), "utf8"));
+  const resources = await routedResources(cwd, evidence.source, signal);
+  return { adopted: true as const, file, changeId: evidence.changeId, commit: evidence.commit, parent: evidence.parent, source: evidence.source, paths: evidence.paths, blobs: evidence.blobs, sha256: evidence.sha256, resources, ...s1Coverage(resources.arms) };
 }
 export function resetTaskText(text: string, ids: readonly string[]): string {
   return text.split("\n").map((line) =>
@@ -443,14 +559,14 @@ export async function mintAppToken(cwd: string, root: string, label: string, app
 export async function readInstallation(cwd: string, token: AppToken, signal: AbortSignal) {
   return parse(AppInstallation, await json(cwd, `python3 -c ${quote(installationScript)} ${quote(token.file)} ${token.appId}`, signal));
 }
-export async function observeApp(cwd: string, root: string, reply: AppReply, token: AppToken, signal: AbortSignal) {
+export async function observeApp(cwd: string, root: string, reply: AppReply, token: AppToken | null, signal: AbortSignal) {
   const app = parse(App, await json(cwd, `gh api ${quote(`/apps/${reply.slug}`)}`, signal));
   const nixbot = parse(App, await json(cwd, "gh api /apps/sciexp-nixbot", signal));
   const permissions = { administration: "write", checks: "write", contents: "write", metadata: "read", pull_requests: "write", statuses: "read" };
   if (app.id !== reply.id || app.id === 4743700 || app.slug !== reply.slug || !isDeepStrictEqual(app.permissions, permissions) || !isDeepStrictEqual([...app.events].sort(), ["pull_request", "check_run", "status", "installation", "installation_repositories"].sort())) throw new Blocked("Queue App differs from G1 contract");
   if (nixbot.id !== 4743700 || !isDeepStrictEqual(nixbot.permissions, { checks: "write", contents: "read", members: "read", metadata: "read", pull_requests: "read" }) || !isDeepStrictEqual([...nixbot.events].sort(), ["check_run", "check_suite", "pull_request", "push"].sort())) throw new Blocked("sciexp-nixbot registration changed");
-  if (token.appId !== reply.id) throw new Blocked("G1 token identity differs");
-  const installation = await readInstallation(cwd, token, signal);
+  if (token !== null && token.appId !== reply.id) throw new Blocked("G1 token identity differs");
+  const installation = token === null ? { kind: "NotRun" as const, reason: DEFERRED_INSTALLATION_REASON } : await readInstallation(cwd, token, signal);
   await save(cwd, `${root}/app.json`, { app, nixbot, installation });
   return { id: app.id, slug: app.slug, owner: app.owner.login, installation, evidence: `${root}/app.json` };
 }
@@ -687,7 +803,14 @@ export async function rulesWitness(cwd: string, approved: string, beforeFile: st
   if (await run(cwd, `gh api ${api} --jq .allow_auto_merge`, signal) !== "true") throw new Blocked("allow_auto_merge is not true");
   return { ruleset: actual, classic: { exitCode: classic.exitCode, body: classic.stdout }, collaborators, allow_auto_merge: true };
 }
-export async function runtimeProbe(cwd: string, approved: string, beforeFile: string, appId: number, signal: AbortSignal) {
+export async function hookWitness(cwd: string, appId: number, signal: AbortSignal): Promise<VResult> {
+  const hook = await capture(cwd, `python3 -c ${quote(appScript)} ${appId} hook`, signal);
+  if (hook.exitCode !== 0) return { kind: "NotRun", reason: "App-JWT hook-config read unavailable; operator settings-page/redelivery evidence still needed" };
+  const observed = parse(Type.Object({ url: Type.String() }), JSON.parse(hook.stdout));
+  if (observed.url !== `https://${domain}/webhook/github`) throw new Blocked("App hook URL mismatch");
+  return { kind: "Pass", evidence: hook.logPath };
+}
+export async function runtimeProbe(cwd: string, approved: string, beforeFile: string, appId: number, signal: AbortSignal, deferInstallation = false) {
   if (await run(cwd, ssh("systemctl is-active gitea-mq.service"), signal) !== "active") throw new Blocked("gitea-mq inactive");
   for (const hostname of [domain, "nixbot.scientistexperience.net"]) {
     const status = await run(cwd, `curl --max-time 30 -sS -o /dev/null -w '%{http_code} ssl_verify=%{ssl_verify_result}' ${quote(`https://${hostname}/`)}`, signal);
@@ -708,13 +831,7 @@ export async function runtimeProbe(cwd: string, approved: string, beforeFile: st
   assertAcmeSuccess(acme);
   const unsigned = await run(cwd, `curl --max-time 30 -sS -o /dev/null -w '%{http_code}' -X POST https://${domain}/webhook/github -d '{}'`, signal);
   if (!["401", "403"].includes(unsigned)) throw new Blocked("Unsigned webhook was not rejected");
-  const hook = await capture(cwd, `python3 -c ${quote(appScript)} ${appId} hook`, signal);
-  let hookResult: VResult = { kind: "NotRun", reason: "App-JWT hook-config read unavailable; operator settings-page/redelivery evidence still needed" };
-  if (hook.exitCode === 0) {
-    const observed = parse(Type.Object({ url: Type.String() }), JSON.parse(hook.stdout));
-    if (observed.url !== `https://${domain}/webhook/github`) throw new Blocked("App hook URL mismatch");
-    hookResult = { kind: "Pass", evidence: hook.logPath };
-  }
+  const hookResult: VResult = deferInstallation ? { kind: "NotRun", reason: DEFERRED_INSTALLATION_REASON } : await hookWitness(cwd, appId, signal);
   await rulesWitness(cwd, approved, beforeFile, signal);
   return { deployed: true, settings: runtimeEnvironment, tables, acme, hook: hookResult, redelivery: { kind: "NotRun" as const, reason: "Operator App-settings redelivery and matched journal evidence not performed by workflow" }, unsigned, database: db };
 }

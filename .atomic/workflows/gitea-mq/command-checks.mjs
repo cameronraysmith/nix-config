@@ -72,6 +72,26 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   });
   code = code.replace('from "typebox"', `from "${typeboxUrl}"`);
   const actual = await import(dataUrl(code));
+  {
+    const queue = { id: 4875422, slug: "sciexp-gitea-mq", owner: { login: "sciexp" }, permissions: { administration: "write", checks: "write", contents: "write", metadata: "read", pull_requests: "write", statuses: "read" }, events: ["pull_request", "check_run", "status", "installation", "installation_repositories"] };
+    const nixbot = { id: 4743700, slug: "sciexp-nixbot", owner: { login: "sciexp" }, permissions: { checks: "write", contents: "read", members: "read", metadata: "read", pull_requests: "read" }, events: ["check_run", "check_suite", "pull_request", "push"] };
+    handler = (command) => {
+      if (command === "gh api '/apps/sciexp-gitea-mq'") return observed(queue);
+      if (command === "gh api /apps/sciexp-nixbot") return observed(nixbot);
+      throw Error(`Deferred registration attempted forbidden command: ${command}`);
+    };
+    const start = commands.length;
+    const registration = await actual.observeApp("/mock", "../root", { id: queue.id, slug: queue.slug }, null, signal);
+    assert.deepEqual(commands.slice(start), ["gh api '/apps/sciexp-gitea-mq'", "gh api /apps/sciexp-nixbot"]);
+    assert.deepEqual(registration.installation, { kind: "NotRun", reason: "installation deferred by operator until after deployment" });
+    const artifact = JSON.parse(get("/root/app.json"));
+    assert.deepEqual(artifact.app, queue); assert.deepEqual(artifact.nixbot, nixbot); assert.equal(registration.owner, "sciexp");
+    queue.permissions.contents = "read";
+    await assert.rejects(() => actual.observeApp("/mock", "../root", { id: queue.id, slug: queue.slug }, null, signal), /Queue App differs/);
+    queue.permissions.contents = "write"; nixbot.events.push("status");
+    await assert.rejects(() => actual.observeApp("/mock", "../root", { id: queue.id, slug: queue.slug }, null, signal), /sciexp-nixbot registration changed/);
+    console.log("PASS deferred App commands: exactly two JWT-free public App GETs; complete registration retained; installation NotRun; queue/nixbot contracts still enforced");
+  }
   // Shared @ may contain unrelated edits; all commands below remain mocked.
   {
     const repo = "/Users/crs58/projects/vanixiets", mock = globalThis.__mqCommandMock;
@@ -144,6 +164,79 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
     await assert.rejects(() => actual.adoptS1(repo, adopted.adoption.file, tools.humanBoxes(taskText), signal), /Scoped inputs changed/);
     files.delete(join(repo, slices.aspect));
     console.log("PASS adoption preflight: existing S1 accepted with scoped sha256/stat evidence; default and non-S1 scope reject; adoption drift blocks");
+    // Routed adoption: the aspect on disk is only acceptable when the chain produced it.
+    assert.equal(actual.adoptionMode({ adopt_working_copy: false, adopt_routed_s1: false }), null);
+    assert.equal(actual.adoptionMode({ adopt_working_copy: true, adopt_routed_s1: false }), "working-copy");
+    assert.equal(actual.adoptionMode({ adopt_working_copy: false, adopt_routed_s1: true }), "routed");
+    assert.throws(() => actual.adoptionMode({ adopt_working_copy: true, adopt_routed_s1: true }), /mutually exclusive/);
+    const routedId = "lxutrqykwqtkqysmyxtvvooowwtqqvkq", routedSha = "a0".repeat(20), parentSha = "b1".repeat(20);
+    const routedFiles = { "flake.nix": 'gitea-mq.url = "github:Mic92/gitea-mq";', "flake.lock": JSON.stringify({ nodes: { nixbot: { locked: "routed" }, "buildbot-nix": {} } }), [slices.aspect]: "routed aspect", [slices.machine]: "routed host" };
+    const routedBlobs = Object.fromEntries(Object.keys(routedFiles).map((path, index) => [path, `${index}`.repeat(40).slice(0, 40)]));
+    const routedOrder = ["flake.nix", "flake.lock", slices.aspect, slices.machine];
+    let description = "feat(gitea-mq): s1", treeOmits = "", diskDrift = "", parentAspect = false;
+    for (const [path, content] of Object.entries(routedFiles)) files.set(join(repo, path), content);
+    mock.ids = async (_cwd, revset) => revset.includes("::rollup-landing") && !revset.startsWith("j") ? [routedId] : ["ssss", "kkkk"];
+    pending = [...foreign, slices.tasks];
+    let resources = { dynamicUser: true, cacheDirectory: "gitea-mq", staticUser: false, listenAddr: "127.0.0.1:8092" };
+    const routedHandler = (command) => {
+      if (command.includes("dynamicUser")) return observed(resources);
+      if (command.includes("description.first_line()")) return observed(`${routedId} ${description}\nxxxxxxxx feat(gitea-mq): add magnetite credentials`);
+      if (command.includes("-T commit_id")) return observed(routedSha);
+      if (command.startsWith("git cat-file -e")) return observed();
+      if (command.startsWith("git rev-list --parents")) return observed(`${routedSha} ${parentSha}`);
+      if (command.startsWith(`git ls-tree '${routedSha}'`)) return observed(routedOrder.filter((path) => path !== treeOmits).map((path) => `100644 blob ${routedBlobs[path]}\t${path}`).join("\n"));
+      if (command.startsWith(`git ls-tree '${parentSha}'`)) return observed(parentAspect ? `100644 blob ${routedBlobs[slices.aspect]}\t${slices.aspect}` : "");
+      if (command.startsWith("git hash-object")) return observed(routedOrder.map((path) => path === diskDrift ? "f".repeat(40) : routedBlobs[path]).join("\n"));
+      if (command.startsWith("git show ")) { const path = /:(.+)'$/.exec(command)[1]; return observed(routedFiles[path]); }
+      return preflightHandler(command);
+    };
+    handler = routedHandler;
+    const routed = await actual.preflight(repo, "ssss", signal, { root: evidenceRoot, mode: "routed" });
+    const routedReceipt = JSON.parse(files.get(join(repo, evidenceRoot, "routed-s1.json")));
+    assert.equal(routed.routedAdoption.adopted, true);
+    assert.equal(routedReceipt.changeId, routedId); assert.equal(routedReceipt.commit, routedSha); assert.equal(routedReceipt.parent, parentSha);
+    assert.deepEqual(routedReceipt.blobs, routedBlobs);
+    assert.equal(routedReceipt.sha256[slices.aspect], tools.sha256(routedFiles[slices.aspect]));
+    assert.match(routedReceipt.source, new RegExp(`rev=${routedSha}$`));
+    assert.equal(routed.baseline.provenance.kind, "CommittedPreS1");
+    assert.equal(routed.baseline.provenance.sha, parentSha, "Routed adoption evaluates the routed change's own parent as pre-S1");
+    assert.equal(JSON.parse(routed.lock).nodes.nixbot.locked, "routed");
+    const routedAdopted = await actual.adoptRoutedS1(repo, `${evidenceRoot}/routed-s1.json`, tools.humanBoxes(files.get(join(repo, slices.tasks))), signal);
+    assert.equal(routedAdopted.resources.kind, "Evaluated");
+    assert(routedAdopted.resources.command.includes(`?ref=rollup-landing&rev=${routedSha}#nixosConfigurations.magnetite.config`), "5.3 resource arms must come from the immutable routed revision");
+    assert.deepEqual(routedAdopted.observations.find((row) => row.taskId === "5.3").missing, ["forge-pre-unchanged"], "Only the post-route comparison may remain missing");
+    assert.deepEqual(routedAdopted.verifiedTasks, [], "Routed adoption verifies no task by itself");
+    resources = { ...resources, listenAddr: "0.0.0.0:8092" };
+    const exposed = await actual.adoptRoutedS1(repo, `${evidenceRoot}/routed-s1.json`, tools.humanBoxes(files.get(join(repo, slices.tasks))), signal);
+    assert.deepEqual(exposed.observations.find((row) => row.taskId === "5.3").missing, ["loopback-listener", "forge-pre-unchanged"]);
+    resources = { dynamicUser: true, cacheDirectory: "gitea-mq", staticUser: false, listenAddr: "127.0.0.1:8092" };
+    diskDrift = slices.aspect;
+    await assert.rejects(() => actual.adoptRoutedS1(repo, `${evidenceRoot}/routed-s1.json`, tools.humanBoxes(files.get(join(repo, slices.tasks))), signal), /drifted from routed S1 revision/);
+    await assert.rejects(() => actual.preflight(repo, "ssss", signal, { root: evidenceRoot, mode: "routed" }), /differs from routed S1 revision/);
+    diskDrift = "";
+    description = "feat(gitea-mq): hostname";
+    await assert.rejects(() => actual.preflight(repo, "ssss", signal, { root: evidenceRoot, mode: "routed" }), /exactly one chain change described/);
+    description = "feat(gitea-mq): s1";
+    treeOmits = slices.aspect;
+    await assert.rejects(() => actual.preflight(repo, "ssss", signal, { root: evidenceRoot, mode: "routed" }), /does not contain/);
+    treeOmits = "";
+    parentAspect = true;
+    await assert.rejects(() => actual.preflight(repo, "ssss", signal, { root: evidenceRoot, mode: "routed" }), /already contains/);
+    parentAspect = false;
+    const savedFlake = routedFiles["flake.nix"]; routedFiles["flake.nix"] = "{ inputs = { }; }";
+    await assert.rejects(() => actual.preflight(repo, "ssss", signal, { root: evidenceRoot, mode: "routed" }), /does not declare the gitea-mq flake input/);
+    routedFiles["flake.nix"] = savedFlake;
+    pending = [...foreign, slices.aspect];
+    await assert.rejects(() => actual.preflight(repo, "ssss", signal, { root: evidenceRoot, mode: "routed" }), /pending implementation paths/);
+    pending = [...foreign, slices.tasks];
+    files.delete(join(repo, slices.aspect));
+    await assert.rejects(() => actual.preflight(repo, "ssss", signal, { root: evidenceRoot, mode: "routed" }), /requires the routed/);
+    files.set(join(repo, slices.aspect), routedFiles[slices.aspect]);
+    pending = [...foreign];
+    await assert.rejects(() => actual.preflight(repo, "ssss", signal), /gitea-mq aspect already exists/);
+    for (const path of Object.keys(routedFiles)) files.delete(join(repo, path));
+    files.set(join(repo, "flake.lock"), JSON.stringify({ nodes: {} }));
+    console.log("PASS routed adoption preflight: described chain ancestor, single parent, committed blobs and flake input verified against disk; description/content/parent/drift/scope failures block; mutual exclusion is pure");
     Object.assign(mock, original);
     console.log("PASS preflight shared @: foreign paths recorded and baseline-preserved; preexisting workflow scope blocks; relock allows foreign drift as evidence but rejects other S1 input drift");
   }
@@ -512,6 +605,17 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   const runtime = await actual.runtimeProbe(cwd, "approved.json", "before.json", 1234, signal);
   assert.equal(runtime.deployed, true);
   assert.equal(runtime.redelivery.kind, "NotRun");
+  const runtimeStart = commands.length;
+  const deferredRuntime = await actual.runtimeProbe(cwd, "approved.json", "before.json", 1234, signal, true);
+  assert.deepEqual(deferredRuntime.hook, { kind: "NotRun", reason: "installation deferred by operator until after deployment" });
+  const deferredCommands = commands.slice(runtimeStart);
+  assert(!deferredCommands.some((command) => command.startsWith("python3") || command.includes("/installation")), "Deferred runtime must not obtain JWT or call installation endpoints");
+  assert.equal(deferredRuntime.deployed, true); assert.equal(deferredRuntime.unsigned, "401");
+  const explicitFalseStart = commands.length;
+  assert.deepEqual(await actual.runtimeProbe(cwd, "approved.json", "before.json", 1234, signal, false), runtime);
+  assert.deepEqual(commands.slice(explicitFalseStart).filter((command) => !command.startsWith("python3")), deferredCommands);
+  assert.equal(commands.slice(explicitFalseStart).filter((command) => command.startsWith("python3")).length, 1);
+  console.log("PASS deferred runtime commands: all S4 probes retained except App-JWT hook read; hook NotRun with operator reason; false restores identical observations");
   tables = "public|queue|table|postgres";
   await assert.rejects(() => actual.runtimeProbe(cwd, "approved.json", "before.json", 1234, signal), /No migrated tables/);
   tables = "public|queue|table|gitea-mq";
