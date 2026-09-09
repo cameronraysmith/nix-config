@@ -69,7 +69,7 @@ export const DnsPlan = Type.Object({
   })),
 });
 export const DnsRecord = Type.Object({
-  name: Type.Literal("mq.scientistexperience.net"),
+  name: Type.Union([Type.Literal("mq"), Type.Literal("mq.scientistexperience.net")]),
   type: Type.Literal("CNAME"),
   content: Type.Literal("magnetite.scientistexperience.net"),
   proxied: Type.Literal(false),

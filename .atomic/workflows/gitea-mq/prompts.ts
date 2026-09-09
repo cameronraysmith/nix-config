@@ -7,6 +7,7 @@ Never move or describe @, mutate git/jj, push main, delete refs, apply merge-que
 Only the controller executes processes, external effects and G1/G2/G3/G4/G5 gates. A stage report is not a tool witness. Do not weaken any hard constraint or turn not_run into pass.
 All stages use openai-codex/gpt-6-astra only: implement/repair/replan/diagnose high, render/docs/verify-writer medium, reviewers max; no fallback substitution.
 Use the supplied compact ledger-index.json and read only the relevant linked receipts; never bulk-read ledger.json into stage context.
+OpenTofu .tfplan and .tfplan.json files are private state, never readable stage evidence: do not open, glob, quote, summarize, attach, or send them (including via intercom). Read only the redacted projection in the linked terraform-plan receipt; never follow its saved-plan path or bulk-read the evidence directory.
 </keepContext>`;
 export const implementPrompt = (cwd: string, root: string, slice: Slice, instructions: string) => `${keep("Scoped implementation writer", cwd, root, slice.allowedPaths)}
 ${slice.objective}

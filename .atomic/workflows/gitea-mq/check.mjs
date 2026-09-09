@@ -11,6 +11,8 @@ import { runProcessChecks } from "./process-checks.mjs";
 import { runBoundaryChecks } from "./boundary-checks.mjs";
 import { runRevisionChecks } from "./revision-checks.mjs";
 import { runCredentialChecks } from "./credential-checks.mjs";
+import { runDnsChecks } from "./dns-checks.mjs";
+import { runPlanSecurityChecks } from "./plan-security-checks.mjs";
 
 const require = createRequire(import.meta.url);
 const executable = realpathSync(execFileSync("bash", ["-c", "command -v atomic"], { encoding: "utf8" }).trim());
@@ -82,6 +84,10 @@ const tools = await import(moduleUrl(files[2]));
 const slices = await import(moduleUrl(files[4]));
 if (process.argv.includes("--process-only")) { await runProcessChecks({ ts, moduleUrl }); process.exit(0); }
 if (process.argv.includes("--credentials-only")) { runCredentialChecks(tools); process.exit(0); }
+if (process.argv.includes("--plans-only")) { try { await runPlanSecurityChecks({ ts, moduleUrl, tools }); } catch (error) { console.error(String(error)); process.exit(1); } process.exit(0); }
+runDnsChecks(tools);
+if (process.argv.includes("--dns-only")) process.exit(0);
+const planSecurity = await runPlanSecurityChecks({ ts, moduleUrl, tools });
 if (process.argv.includes("--commands-only") || process.argv.includes("--vars-only") || process.argv.includes("--vcs-only")) {
   try { await runCommandChecks({ ts, source: readFileSync(files[2], "utf8"), moduleUrl, tools, slices, typeboxUrl: pathToFileURL(join(atomic, "node_modules/typebox/build/index.mjs")).href }); }
   catch (error) { console.error(String(error)); process.exit(1); }
@@ -173,7 +179,7 @@ for (const expression of [...slices.negativeControls.map((control) => control.ex
 for (const script of [tools.appScript, tools.leakScript]) execFileSync("python3", ["-c", "import ast,sys; ast.parse(sys.stdin.read())"], { input: script });
 console.log("PASS schemas, model policy, task ownership, DNS identity/reconciliation, C6 classic checks, ledger binding, repair effects, Linear outcomes, exhaustive switches, finite tools, Nix/Python parsing");
 const { assertCompactCheckpoint } = await import(moduleUrl(".atomic/workflows/bump/tools.ts"));
-await runExecutionChecks({ ts, main: readFileSync(entry, "utf8"), moduleUrl, tools, types, slices, ledgerTools, assertCompactCheckpoint });
+await runExecutionChecks({ ts, main: readFileSync(entry, "utf8"), moduleUrl, tools, types, slices, ledgerTools, assertCompactCheckpoint, planSecurity });
 if (process.argv.includes("--graph-only")) process.exit(0);
 runCredentialChecks(tools);
 await runProcessChecks({ ts, moduleUrl });

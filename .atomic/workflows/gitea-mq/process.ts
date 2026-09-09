@@ -115,7 +115,7 @@ async function execute(cwd: string, command: string, signal: AbortSignal, stream
   return observation;
 }
 export const capture = (cwd: string, command: string, signal: AbortSignal, redact?: OutputRedactor) => execute(cwd, command, signal, false, redact);
-export const captureStreaming = (cwd: string, command: string, signal: AbortSignal) => execute(cwd, command, signal, true);
+export const captureStreaming = (cwd: string, command: string, signal: AbortSignal, redact?: OutputRedactor) => execute(cwd, command, signal, true, redact);
 export async function readResponse(path: string): Promise<string> {
   const file = await open(path, "r");
   try {

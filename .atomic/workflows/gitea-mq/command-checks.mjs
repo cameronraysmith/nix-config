@@ -41,6 +41,11 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
     lstat: async (path) => { get(path); return { isSymbolicLink: () => false }; },
     unlink: async (path) => { get(path); files.delete(path); },
     readResponse: async (path) => get(path),
+    preparePlan: async (_cwd, root, name) => resolve(_cwd, root, `${name}.tfplan`),
+    deletePlans: async (_cwd, root) => {
+      const deleted = [...files.keys()].filter((path) => path.startsWith(resolve(_cwd, root) + "/") && /\.tfplan(?:\.json)?$/.test(path));
+      deleted.forEach((path) => files.delete(path)); return { deleted, failed: [] };
+    },
     pathsIn: async () => [],
     assertHealthy: async () => {},
     oneId: async (_cwd, revset) => revset === "@-" || revset.includes("+ & ") ? "rrrr" : "ssss",
@@ -66,6 +71,7 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   const sharedModule = dataUrl(`export * from "${moduleUrl(".atomic/workflows/omnigent/tools.ts")}";\n` + ["capture", "save", "snapshot", "pathsIn"].map(port).join("\n"));
   const deployModule = dataUrl(`export * from "${moduleUrl(".atomic/workflows/omnigent/deployment.ts")}";\n` + ["applyDns", "updateMachine"].map(port).join("\n"));
   const processModule = dataUrl(`export * from "${moduleUrl(".atomic/workflows/gitea-mq/process.ts")}";\n` + ["capture", "captureStreaming", "readResponse"].map(port).join("\n"));
+  const planModule = dataUrl(["preparePlan", "deletePlans"].map(port).join("\n") + `\nexport { planCleanup, finalizeArtifacts } from "${moduleUrl(".atomic/workflows/gitea-mq/plan-security.ts")}";`);
   let vcsCode = ts.transpileModule(readFileSync(".atomic/workflows/gitea-mq/vcs.ts", "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText;
   vcsCode = vcsCode.replace(/from "([^"]+)"/g, (whole, name) => name === "./process.js" ? `from "${processModule}"` : name.startsWith(".") ? `from "${moduleUrl(resolve(".atomic/workflows/gitea-mq", name.replace(/\.js$/, ".ts")))}"` : whole);
   const vcsModule = dataUrl(`export * from "${dataUrl(vcsCode)}";\n` + ["snapshot", "pathsIn", "assertHealthy", "oneId", "ids"].map(port).join("\n"));
@@ -75,6 +81,7 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
     if (name === "../omnigent/tools.js") return `from "${sharedModule}"`;
     if (name === "../omnigent/deployment.js") return `from "${deployModule}"`;
     if (name === "./process.js") return `from "${processModule}"`;
+    if (name === "./plan-security.js") return `from "${planModule}"`;
     if (name === "./vcs.js") return `from "${vcsModule}"`;
     if (name === "typebox") return whole;
     if (name.startsWith(".")) return `from "${moduleUrl(resolve(".atomic/workflows/gitea-mq", name.replace(/\.js$/, ".ts")))}"`;
@@ -87,6 +94,17 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   if (process.argv.includes("--vars-only")) {
     await runVarsChecks({ actual, mock: globalThis.__mqCommandMock, files, cwd: "/mock", signal, setHandler: (next) => { handler = next; }, varsAllowed: slices.varsAllowed });
     return;
+  }
+  {
+    const start = commands.length;
+    handler = (command) => {
+      if (command === "dig +short CNAME mq.scientistexperience.net") return observed("magnetite.scientistexperience.net.\n");
+      if (command === "dig +short A magnetite.scientistexperience.net") return observed("49.12.12.74\n");
+      throw Error("Unexpected DNS witness command");
+    };
+    await actual.dnsWitness("/mock", signal);
+    assert.deepEqual(commands.slice(start), ["dig +short CNAME mq.scientistexperience.net", "dig +short A magnetite.scientistexperience.net"]);
+    console.log("PASS DNS witness queries the normalized FQDN (mocked dig)");
   }
   {
     const sha = "ab".repeat(20), dnsPath = "/mock/modules/terranix/cloudflare.nix";
@@ -459,6 +477,8 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   files.set("/root/saved.apply-intent.json", JSON.stringify({ plan: "/foreign", sha256: savedPlan.sha256 }));
   await assert.rejects(() => actual.applyDns(cwd, "../root", "saved", savedPlan, signal), /intent differs/);
   files.set("/root/saved.apply-intent.json", JSON.stringify({ plan: savedPlan.plan, sha256: savedPlan.sha256 }));
+  files.set(savedPlan.plan, "saved plan");
+  files.set("/root/saved-reconcile.tfplan", "refreshed plan");
   files.set("/root/saved-reconcile.tfplan.json", "{}");
   await assert.rejects(() => actual.applyDns(cwd, "../root", "saved", savedPlan, signal), /Malformed empty/);
   files.set("/root/saved-reconcile.tfplan.json", JSON.stringify({ resource_changes: [{

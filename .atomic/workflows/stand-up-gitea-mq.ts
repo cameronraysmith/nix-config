@@ -20,7 +20,7 @@ export default workflow({
       signal.throwIfAborted();
       return t.allocateEvidence(cwd);
     }, { failureMode: "throw", timeoutMs: 120_000 }).catch((error: unknown) => ctx.exit({ status: "failed", resumable: true, reason: `Evidence allocation failed: ${String(error)}` }));
-    const ledger: unknown[] = [], linearTransitions: LinearState[] = [], cleanupTokens = t.appTokenCleanup(cwd, root);
+    const ledger: unknown[] = [], linearTransitions: LinearState[] = [], cleanupTokens = t.appTokenCleanup(cwd, root), cleanupPlans = t.planCleanup(cwd, root);
     let retainTokens = false, installationDeferred = input.defer_installation, adoptedTaskIds: string[] = [];
     const index: { node: string; ok: boolean; evidence: string }[] = [];
     let lockedDeclaration: string | null = null, humanBaseline = "";
@@ -51,7 +51,7 @@ export default workflow({
       return { value: result.value.evidence, outcome: result, evidence: `${root}/${name}.json` };
     };
     const stage = async (name: string, options: WorkflowTaskOptions) => {
-      validateModelPolicy(options);
+      validateModelPolicy(options); if (options.reads && options.reads.some((path) => /\.tfplan(?:\.json)?(?:$|:)/.test(path))) throw new Blocked("Private plan artifacts cannot enter stage reads");
       const result = await ctx.task(name, { ...options, reads: [...new Set([...(options.reads || []), `${root}/ledger-index.json`])], context: "fresh", output: `${root}/${name}.md`, outputMode: "file-only", mcp: { allow: [] } }).catch(rejectStructuredContract);
       const actual = result.modelAttempts?.filter((attempt) => attempt.success).at(-1);
       ledger.push({ node: name, kind: "stage", model: actual?.model ?? result.model ?? null, thinking: actual?.reasoningLevel ?? null, attempts: result.modelAttempts ?? [] });
@@ -212,7 +212,7 @@ export default workflow({
         await tool(`dns-content-${id}`, (signal) => t.verifyDnsSource(cwd, source.value, reviewed.value, signal), 120_000, true);
         const planned = await tool(`terraform-plan-${id}`, (signal) => t.planDns(cwd, root, id, source.value, signal, dnsApplyAttempted), timeout, true);
         switch (planned.value.decision.kind) {
-          case "Reconciled": break;
+          case "Reconciled": await t.planCleanup(cwd, root)(); break;
           case "NeedsApply":
             if (!(await ctx.ui.confirm(`Apply exactly this fresh saved DNS plan? ${JSON.stringify(planned.value.decision.summary)}; sha256=${planned.value.sha256}`))) throw new Stop("declined", "DNS apply declined");
             dnsApplyAttempted = true;
@@ -344,6 +344,6 @@ export default workflow({
       const exit = error instanceof Stop ? { status: error.status === "declined" ? "cancelled" as const : "blocked" as const } : { status: "failed" as const, resumable: true };
       if ("resumable" in exit && exit.resumable) retainTokens = true; else await cleanupTokens();
       return ctx.exit({ ...exit, reason: summary, outputs: { status, summary, evidence_root: root } });
-    } finally { if (!retainTokens) await cleanupTokens(); }
+    } finally { await t.finalizeArtifacts([cleanupPlans, ...(!retainTokens ? [cleanupTokens] : [])]); }
   },
 });

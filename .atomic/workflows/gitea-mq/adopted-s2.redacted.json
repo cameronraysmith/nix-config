@@ -1,0 +1,30 @@
+{
+  "resource_changes": [
+    {"mode":"managed","type":"cloudflare_dns_record","address":"cloudflare_dns_record.accounts","change":{"actions":["no-op"],"after":null}},
+    {"mode":"managed","type":"cloudflare_dns_record","address":"cloudflare_dns_record.auth","change":{"actions":["no-op"],"after":null}},
+    {"mode":"managed","type":"cloudflare_dns_record","address":"cloudflare_dns_record.buildbot","change":{"actions":["no-op"],"after":null}},
+    {"mode":"managed","type":"cloudflare_dns_record","address":"cloudflare_dns_record.cinnabar","change":{"actions":["no-op"],"after":null}},
+    {"mode":"managed","type":"cloudflare_dns_record","address":"cloudflare_dns_record.git","change":{"actions":["no-op"],"after":null}},
+    {"mode":"managed","type":"cloudflare_dns_record","address":"cloudflare_dns_record.kb","change":{"actions":["no-op"],"after":null}},
+    {"mode":"managed","type":"cloudflare_dns_record","address":"cloudflare_dns_record.magnetite","change":{"actions":["no-op"],"after":null}},
+    {"mode":"managed","type":"cloudflare_dns_record","address":"cloudflare_dns_record.matrix","change":{"actions":["no-op"],"after":null}},
+    {"mode":"managed","type":"cloudflare_dns_record","address":"cloudflare_dns_record.mq","change":{"actions":["create"],"after":{"name":"mq","type":"CNAME","content":"magnetite.scientistexperience.net","proxied":false}}},
+    {"mode":"managed","type":"cloudflare_dns_record","address":"cloudflare_dns_record.niks3","change":{"actions":["no-op"],"after":null}},
+    {"mode":"managed","type":"cloudflare_dns_record","address":"cloudflare_dns_record.nixbot","change":{"actions":["no-op"],"after":null}},
+    {"mode":"managed","type":"cloudflare_dns_record","address":"cloudflare_dns_record.omni","change":{"actions":["no-op"],"after":null}},
+    {"mode":"managed","type":"cloudflare_r2_bucket","address":"cloudflare_r2_bucket.sciexp-nix-cache","change":{"actions":["no-op"],"after":null}},
+    {"mode":"managed","type":"cloudflare_r2_custom_domain","address":"cloudflare_r2_custom_domain.nix-cache","change":{"actions":["no-op"],"after":null}},
+    {"mode":"managed","type":"cloudflare_ruleset","address":"cloudflare_ruleset.nix-cache-settings","change":{"actions":["no-op"],"after":null}},
+    {"mode":"managed","type":"google_compute_firewall","address":"google_compute_firewall.allow_ssh","change":{"actions":["no-op"],"after":null}},
+    {"mode":"managed","type":"google_compute_firewall","address":"google_compute_firewall.allow_zerotier","change":{"actions":["no-op"],"after":null}},
+    {"mode":"managed","type":"hcloud_server","address":"hcloud_server.cinnabar","change":{"actions":["no-op"],"after":null}},
+    {"mode":"managed","type":"hcloud_server","address":"hcloud_server.magnetite","change":{"actions":["no-op"],"after":null}},
+    {"mode":"managed","type":"hcloud_ssh_key","address":"hcloud_ssh_key.terraform","change":{"actions":["no-op"],"after":null}},
+    {"mode":"managed","type":"local_sensitive_file","address":"local_sensitive_file.gcp_deploy_key","change":{"actions":["no-op"],"after":null}},
+    {"mode":"managed","type":"local_sensitive_file","address":"local_sensitive_file.ssh_deploy_key","change":{"actions":["no-op"],"after":null}},
+    {"mode":"managed","type":"null_resource","address":"null_resource.install-cinnabar","change":{"actions":["no-op"],"after":null}},
+    {"mode":"managed","type":"null_resource","address":"null_resource.install-magnetite","change":{"actions":["no-op"],"after":null}},
+    {"mode":"managed","type":"tls_private_key","address":"tls_private_key.gcp_deploy_key","change":{"actions":["no-op"],"after":null}},
+    {"mode":"managed","type":"tls_private_key","address":"tls_private_key.ssh_deploy_key","change":{"actions":["no-op"],"after":null}}
+  ]
+}

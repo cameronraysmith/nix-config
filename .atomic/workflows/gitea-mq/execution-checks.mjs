@@ -8,7 +8,7 @@ import { assertRetryableCallbacks } from "./credential-checks.mjs";
 const dataUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`;
 
 /** Execute the authored run function, not a second graph, with all effects in memory. */
-export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, slices, ledgerTools, assertCompactCheckpoint }) {
+export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, slices, ledgerTools, assertCompactCheckpoint, planSecurity }) {
   const { s1Coverage } = await import(moduleUrl(".atomic/workflows/gitea-mq/s1-observations.ts"));
   const report = await import(moduleUrl(".atomic/workflows/gitea-mq/verify-report.ts"));
   async function execute({ adoptRouted = [], adoptionMissing = "", terraformInputs = {}, deferInstallation, deploy = true, pauseG6 = false, installationMissing = false, staleDeferred = false, changeProposal = false, proposalValidateFailure = false, adoptWorkingCopy = false, adoptRoutedS1 = false, forgeFailure = false, g3Recovery = "", blockedDiagnosis = false, declineG2 = false, decline = "", rejectS1 = false, revisePlan = false, createFailure = false, cleanupFailure = false, exhaust = false, replay = false, probeFailure = false, repairNix = false, v3Failure = false, repairEvalFailure = false, dnsReject = false, dnsRejectOnce = false, rejectRoborev = false, throwExit = false, noHostnameEdit = false, proposalFailure = "", extraClaims = false, transientFailure = false, resumeFailure = false, unexpected = "", wrongRules = "", drift = "", structuralFailure = "", nativeFailure = "", nativeMessage = "", tokenDirectory = "", terminalRecordFailure = false, postMintFailure = false, catalog, proposalDrift = "" } = {}) {
@@ -63,6 +63,8 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
     };
     const mocked = {
       allocateEvidence: async () => tokenDirectory ? relative(cwd, tokenDirectory) : "../evidence/run",
+      planCleanup: (_cwd, evidence) => tokenDirectory ? tools.planCleanup(_cwd, evidence) : async () => ({}),
+      finalizeArtifacts: tools.finalizeArtifacts,
       appTokenCleanup: (_cwd, evidence) => {
         const cleanup = tokenDirectory ? tools.appTokenCleanup(_cwd, evidence) : async () => {};
         return () => { events.push("delete-app-tokens"); return cleanup(); };
@@ -197,7 +199,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       planDns: async (_cwd, _root, _id, source) => {
         assert([...revisions.values()].find((rev) => rev.sha === source.sha)?.tree[dnsPath]?.startsWith(dnsContent), "DNS plan pinned a stale source");
         if (dnsReject || failDns) { failDns = false; throw Error("Rejected DNS delta"); }
-        return { plan: "mock.tfplan", sha256: "plan-hash", decision: { kind: "NeedsApply", summary: { name: slices.domain } } };
+        return structuredClone(planSecurity.planned.evidence);
       },
       applyDns: async () => ({ applied: true }),
       dnsWitness: async () => ({ cname: "magnetite.scientistexperience.net." }),
@@ -399,6 +401,9 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       assert.equal(events.filter((event) => event === "generate-vars").length, 2);
       assert.equal(events.filter((event) => event === "route-s1").length, 1);
     }
+    // Actual controller-serialized model prompts/reads, checkpoint values, ledger,
+    // compact index, verify.md and outputs, fed by the real planDns boundary test.
+    assert(!JSON.stringify({ cache: [...cache], files: [...files], output: first, events }).includes(planSecurity.secret), "Raw private plan crossed a controller boundary");
     return { result: first.outputs ?? first, exit: first, events, files, root, cwd, revisions, committedTasks, toolOptions, nativeError };
   }
   const deferredReason = "installation deferred by operator until after deployment";
@@ -656,10 +661,14 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       const tokenDirectory = await mkdtemp(join(tmpdir(), "gitea-mq-lifecycle-"));
       try {
         await writeFile(join(tokenDirectory, "receipt.json"), "keep");
+        await writeFile(join(tokenDirectory, "adopted-s2.tfplan"), "SYNTHETIC-PRIVATE-PLAN");
+        await writeFile(join(tokenDirectory, "dns-b1-a1.tfplan.json"), "SYNTHETIC-PRIVATE-PLAN");
         let result;
         try { result = await execute({ ...options, tokenDirectory }); }
         catch (error) { if (!options.terminalRecordFailure) throw error; assert(error instanceof AggregateError); assert(error.errors.some((cause) => /terminal record failed/.test(String(cause)))); }
         const artifacts = (await readdir(tokenDirectory)).filter((name) => name.endsWith(".token.json"));
+        assert.deepEqual((await readdir(tokenDirectory)).filter((name) => /\.tfplan(?:\.json)?$/.test(name)), []);
+        assert.equal(JSON.parse(await readFile(join(tokenDirectory, "plan-artifact-deletion.json"), "utf8")).kind, "PlanArtifactDeletion");
         if (options.postMintFailure) {
           assert.equal(result.exit.resumable, true); assert.deepEqual(artifacts, ["G1-1234.token.json"]);
           assert(!result.events.includes("delete-app-tokens"));
@@ -678,7 +687,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
     try {
       await mkdir(join(tokenDirectory, "bad.token.json"));
       await assert.rejects(() => execute({ tokenDirectory }), /App token deletion failed/);
-      assert.deepEqual(await readdir(tokenDirectory), ["bad.token.json"], "Every deletable artifact must be removed even when another deletion fails");
+      assert.deepEqual((await readdir(tokenDirectory)).filter((name) => name !== "plan-artifact-deletion.json"), ["bad.token.json"], "Every deletable artifact must be removed even when another deletion fails");
     } finally { await rm(tokenDirectory, { recursive: true, force: true }); }
     const local = await mkdtemp(join(tmpdir(), "gitea-mq-finalizer-"));
     try {
@@ -699,6 +708,14 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       assert((await readdir(local)).includes("not-retried.token.json"), "A rejected cleanup must not start a second deletion pass");
       await assert.rejects(tools.appTokenCleanup(local, "keep.json")(), /App token deletion failed: cannot enumerate/);
     } finally { await rm(local, { recursive: true, force: true }); }
+    const planFailureDirectory = await mkdtemp(join(tmpdir(), "gitea-mq-plan-deletion-error-"));
+    try {
+      await mkdir(join(planFailureDirectory, "bad.tfplan"));
+      await writeFile(join(planFailureDirectory, "adopted-s2.tfplan.json"), "SYNTHETIC-PRIVATE-PLAN");
+      await assert.rejects(() => execute({ tokenDirectory: planFailureDirectory, decline: "G2", throwExit: true }), /Plan artifact deletion failed: bad.tfplan/);
+      assert.deepEqual((await readdir(planFailureDirectory)).filter((name) => /\.tfplan(?:\.json)?$/.test(name)), ["bad.tfplan"]);
+    } finally { await rm(planFailureDirectory, { recursive: true, force: true }); }
+    console.log("PASS private plan graph: actual serialized stage/ledger/index/report/output boundaries; real plan deletion on completed/replay/blocked/declined/needs_rework/abort/record-failure; terminal deletion failure escapes");
     console.log("PASS R1 finalizer: incomplete sentinels and leaf symlinks removed without following targets; idempotence, shared success/rejection promise, no retry after deletion error, enumeration errors loud");
     console.log("PASS R1 token lifecycle: real files absent after completion/replay, declined/blocked/needs_rework, abort and terminal-record failure; only explicit resumable failure retains; deletion errors fail loudly after attempting all artifacts");
   }

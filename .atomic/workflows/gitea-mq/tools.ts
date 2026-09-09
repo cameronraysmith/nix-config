@@ -16,6 +16,8 @@ import {
 import { capture, captureStreaming, readResponse, assertExternalEvidence, canonicalExternalEvidence } from "./process.js";
 export { processCheckpoint, allocateEvidence } from "./process.js";
 export { appTokenCleanup } from "./credentials.js";
+import { preparePlan, deletePlans } from "./plan-security.js";
+export { planCleanup, finalizeArtifacts } from "./plan-security.js";
 import { s1Coverage, type S1Arm } from "./s1-observations.js";
 import {
   parse, AdoptedS1, RoutedS1, Ruleset, AppReply, DEFERRED_INSTALLATION_REASON, type RulesetDraft, type VResult,
@@ -40,6 +42,10 @@ const deploymentCapture = (cwd: string, command: string, signal: AbortSignal) =>
 const resolveRevisionSource = async (cwd: string, revision: string, name: string, signal: AbortSignal) => sharedRevisionSource(cwd, await changeSha(cwd, revision, signal), name, signal, deploymentCapture);
 export const resolveSource = async (cwd: string, tip: string, name: string, signal: AbortSignal) => sharedResolveSource(cwd, await changeSha(cwd, tip, signal), name, signal, deploymentCapture);
 export const runStreaming = async (cwd: string, command: string, signal: AbortSignal) => requireSuccess(await captureStreaming(cwd, command, signal));
+// OpenTofu diagnostics can include unmarked state values. Withhold both streams
+// before any log, receipt, error tail, ledger, or agent boundary.
+const runPlanCommand = async (cwd: string, command: string, signal: AbortSignal) =>
+  requireSuccess(await captureStreaming(cwd, command, signal, () => "[OpenTofu output withheld]"));
 /** Only inputs owned by this slice (plus shared change/vars inputs) invalidate a proposal. */
 export function assertScopedInputs(before: Tree, after: Tree, slice: Slice): { foreignDrift: string[] } {
   const allowed = [...slice.allowedPaths, dir, ...varsAllowed];
@@ -837,12 +843,13 @@ export function dnsSummary(value: unknown) {
       resource.type !== "cloudflare_dns_record" || !isDeepStrictEqual(resource.change.actions, ["create"])) {
     throw new Blocked("DNS plan must add exactly one record, no other changes");
   }
-  const record = parse(DnsRecord, after);
+  parse(DnsRecord, after);
   return {
     address: resource.address,
     action: "create" as const,
     type: "cloudflare_dns_record" as const,
-    name: record.name,
+    // Cloudflare accepts either spelling; evidence and dnsWitness use the FQDN.
+    name: domain,
   };
 }
 export function dnsDecision(value: unknown, reconciling: boolean) {
@@ -865,6 +872,17 @@ export function dnsDecision(value: unknown, reconciling: boolean) {
   return { kind: "NeedsApply" as const, summary: dnsSummary(value) };
 }
 
+/** Explicit allowlist: never spread a parsed plan or any resource after object. */
+export function dnsProjection(value: unknown) {
+  const plan = parse(Type.Object({ resource_changes: Type.Optional(Type.Array(Type.Object({
+    address: Type.String(), change: Type.Object({ actions: Type.Array(Type.String()), after: Type.Optional(Type.Unknown()) }),
+  }))) }), value);
+  return { resource_changes: (plan.resource_changes ?? []).map((resource) => {
+    const after = resource.address === "cloudflare_dns_record.mq" && resource.change.after ? parse(DnsRecord, resource.change.after) : null;
+    return { address: resource.address, actions: [...resource.change.actions],
+      ...(after ? { after: { name: after.name, type: after.type, content: after.content, proxied: after.proxied } } : {}) };
+  }) };
+}
 export function assertDnsIntent(value: unknown, plan: { plan: string; sha256: string }): void {
   const intent = parse(Type.Object({ plan: Type.String(), sha256: Type.String() }, { additionalProperties: false }), value);
   if (intent.plan !== plan.plan || intent.sha256 !== plan.sha256) {
@@ -874,9 +892,9 @@ export function assertDnsIntent(value: unknown, plan: { plan: string; sha256: st
 export async function planDns(cwd: string, root: string, name: string, source: DeploymentSource, signal: AbortSignal, reconciling = false) {
   assertExternalEvidence(cwd, root);
   if (!source.source.startsWith("git+file:") || !/^[a-f0-9]{40}$/.test(source.sha) || !source.source.endsWith(`&rev=${source.sha}`)) throw new Blocked("DNS requires the committed git+file source from resolveSource");
-  const plan = resolve(cwd, root, `${name}.tfplan`), file = `${plan}.json`;
+  const plan = await preparePlan(cwd, root, name), file = `${plan}.json`;
   const tree = await snapshot(cwd, signal);
-  await runStreaming(cwd, `umask 077
+  await runPlanCommand(cwd, `umask 077
 config=$(nix build --no-link --print-out-paths ${quote(`${source.source}#terraform.config`)})
 mkdir -p terraform
 ln -sf "$config" terraform/config.tf.json
@@ -885,9 +903,14 @@ nix run ${quote(`${source.source}#terraform.terraform`)} -- plan -input=false -o
 nix run ${quote(`${source.source}#terraform.terraform`)} -- show -json ${quote(plan)} > ${quote(file)}
 chmod 600 ${quote(plan)} ${quote(file)}`, signal);
   const { foreignDrift } = assertScopedInputs(tree, await snapshot(cwd, signal), s2);
+  let value: unknown;
+  try { value = JSON.parse(await readResponse(file)); }
+  catch { throw new Blocked("Cannot parse private OpenTofu plan JSON (content withheld)"); }
+  const decision = dnsDecision(value, reconciling);
   return {
     ...source, tree, plan, foreignDrift,
-    sha256: sha256(await readFile(plan)), decision: dnsDecision(JSON.parse(await readResponse(file)), reconciling),
+    sha256: sha256(await readFile(plan)), decision,
+    projection: dnsProjection(value),
     execution: "Saved OpenTofu plan from committed git+file source; external evidence, terraform.terraform wrapper, shared state and secrets environment",
   };
 }
@@ -906,12 +929,14 @@ export async function applyDns(cwd: string, root: string, name: string, plan: Aw
   if (interrupted) {
     const fresh = await planDns(cwd, root, `${name}-reconcile`, plan, signal, true);
     if (fresh.decision.kind !== "Reconciled") throw new Blocked("Interrupted apply still has changes: invalidate approval, repair and obtain a fresh saved-plan confirmation");
-    return { applied: true, reconciled: true, plan: fresh.plan, sha256: fresh.sha256, foreignDrift: [...new Set([...foreignDrift, ...fresh.foreignDrift])].sort() };
+    const deletion = await deletePlans(cwd, root);
+    return { applied: true, reconciled: true, plan: fresh.plan, sha256: fresh.sha256, deletion, foreignDrift: [...new Set([...foreignDrift, ...fresh.foreignDrift])].sort() };
   }
   await writeFile(intent, JSON.stringify({ plan: plan.plan, sha256: plan.sha256 }), { flag: "wx", mode: 0o600 });
   if (sha256(await readFile(plan.plan)) !== plan.sha256) throw new Blocked("Saved Terraform plan changed after review");
-  await runStreaming(cwd, `nix run ${quote(`${plan.source}#terraform.terraform`)} -- apply -input=false ${quote(plan.plan)}`, signal);
-  return { applied: true, reconciled: false, plan: plan.plan, sha256: plan.sha256, foreignDrift };
+  await runPlanCommand(cwd, `nix run ${quote(`${plan.source}#terraform.terraform`)} -- apply -input=false ${quote(plan.plan)}`, signal);
+  const deletion = await deletePlans(cwd, root);
+  return { applied: true, reconciled: false, plan: plan.plan, sha256: plan.sha256, foreignDrift, deletion };
 }
 export async function dnsWitness(cwd: string, signal: AbortSignal) {
   const cname = await run(cwd, `dig +short CNAME ${domain}`, signal);
