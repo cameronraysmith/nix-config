@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { resolve, join, relative } from "node:path";
+import { resolve, join } from "node:path";
 import { readFileSync, readdirSync } from "node:fs";
 import { mkdtemp, writeFile, readdir, rm, mkdir, readFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -62,7 +62,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       return { ...tree, [slices.tasks]: tools.sha256(get(join(cwd, slices.tasks))), ...(files.has(join(cwd, slices.verify)) ? { [slices.verify]: tools.sha256(get(join(cwd, slices.verify))) } : {}) };
     };
     const mocked = {
-      allocateEvidence: async () => tokenDirectory ? relative(cwd, tokenDirectory) : "../evidence/run",
+      allocateEvidence: async () => tokenDirectory || "../evidence/run",
       planCleanup: (_cwd, evidence) => tokenDirectory ? tools.planCleanup(_cwd, evidence) : async () => ({}),
       finalizeArtifacts: tools.finalizeArtifacts,
       appTokenCleanup: (_cwd, evidence) => {
@@ -212,8 +212,9 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       },
       applyRules: async () => ({ applied: true }),
       resolveTerraformSource: async (_cwd, _tip, selection) => {
-        revisions.set("integrated", { sha: selection.rev, tree: { ...tree } });
-        return { source: `git+file:///mock?ref=${selection.ref}&rev=${selection.rev}`, sha: selection.rev };
+        const sha = selection.rev ?? "d4".repeat(20);
+        revisions.set("integrated", { sha, tree: { ...tree } });
+        return { source: `git+file:///mock?ref=${selection.ref}&rev=${sha}`, sha };
       },
       identityWitness: async (_cwd, appId, _slug, tokens) => { assert.deepEqual(tokens.map((token) => token.appId), [4743700, appId]); return { identities: ["nixbot", "queue"] }; },
       resolveSource: async (_cwd, tip) => ({ source: `git+file:///mock?ref=rollup-landing&rev=${revisions.get(tip)?.sha}`, sha: revisions.get(tip)?.sha }),
@@ -537,6 +538,8 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
   assert.match(bothAdoptions.result.summary, /mutually exclusive/);
   assert(!bothAdoptions.events.includes("preflight"), "Contradictory adoption inputs block before preflight observations");
   console.log("PASS routed adoption graph: verified routed S1 replaces implement/gate/review/route, task states persist without re-ticking 5.3, contradictory adoption inputs block");
+  const refOnly = await execute({ adoptRouted: ["s1", "post-g1", "s2"], terraformInputs: { terraform_source_ref: "HEAD" } });
+  assert.equal(refOnly.result.status, "completed-with-caveat", refOnly.result.summary);
   const integratedInputs = { terraform_source_ref: "HEAD", terraform_source_rev: "d4".repeat(20) };
   const allAdopted = await execute({ adoptRouted: ["s1", "post-g1", "s2"], terraformInputs: integratedInputs, replay: true });
   assert.equal(allAdopted.result.status, "completed-with-caveat", allAdopted.result.summary);
@@ -553,11 +556,11 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
     assert.equal(missing.result.status, "blocked"); assert.match(missing.result.summary, /Expected routed.*found missing/);
     assert(!missing.events.includes("G1-material"));
   }
-  for (const terraformInputs of [{ terraform_source_ref: "HEAD" }, { terraform_source_rev: integratedInputs.terraform_source_rev }]) {
+  for (const terraformInputs of [{ terraform_source_rev: integratedInputs.terraform_source_rev }]) {
     const missing = await execute({ terraformInputs });
-    assert.equal(missing.result.status, "blocked"); assert.match(missing.result.summary, /together/); assert(!missing.events.includes("preflight"));
+    assert.equal(missing.result.status, "blocked"); assert.match(missing.result.summary, /requires terraform_source_ref/); assert(!missing.events.includes("preflight"));
   }
-  console.log("PASS generalized adoption graph: s1/post-g1/s2 skip slice stages and task writes, record fresh identities, reject missing content; integrated source is supplied rev; half-pairs block before preflight");
+  console.log("PASS generalized adoption graph: s1/post-g1/s2 skip slice stages and task writes, record fresh identities, reject missing content; ref-only and exact-pin sources accepted; rev without ref blocks before preflight");
   for (const [g3Recovery, blockedDiagnosis] of [["proposal", false], ["gate", false], ["gate", true]]) {
     const recovered = await execute({ g3Recovery, blockedDiagnosis, replay: true });
     const nextStage = g3Recovery === "proposal" ? "implement-b2-a1" : "repair-s1-b2-a1-b1-a1";

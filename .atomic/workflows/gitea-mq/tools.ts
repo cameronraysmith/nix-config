@@ -452,22 +452,31 @@ export async function snapshotWorkingCopy(cwd: string, signal: AbortSignal) {
   return { snapshotted: true };
 }
 const dnsPath = "modules/terranix/cloudflare.nix";
-export type TerraformSelection = { ref: string; rev: string } | null;
+export type TerraformSelection = { ref: string; rev?: string } | null;
+export type TerraformSource = DeploymentSource & { terraformRef?: { ref: string; commit: string } };
 export function terraformSourceInputs(input: { terraform_source_ref?: string; terraform_source_rev?: string }): TerraformSelection {
   const ref = input.terraform_source_ref, rev = input.terraform_source_rev;
   if (ref === undefined && rev === undefined) return null;
-  if (!ref?.trim() || !rev?.trim()) throw new Blocked("terraform_source_ref and terraform_source_rev must be supplied together");
-  if (!/^[a-f0-9]{40}$/.test(rev)) throw new Blocked("terraform_source_rev must be a full immutable Git commit id");
+  if (!ref?.trim()) throw new Blocked("Terraform source selection requires terraform_source_ref");
+  if (rev !== undefined && !/^[a-f0-9]{40}$/.test(rev)) throw new Blocked("terraform_source_rev must be a full immutable Git commit id");
   return { ref, rev };
 }
 /** The integrated source need not be the routed chain tip. Never move/export its ref. */
-export async function resolveTerraformSource(cwd: string, tip: string, selection: TerraformSelection, signal: AbortSignal): Promise<DeploymentSource> {
+export async function resolveTerraformSource(cwd: string, tip: string, selection: TerraformSelection, signal: AbortSignal): Promise<TerraformSource> {
   if (selection === null) return resolveSource(cwd, tip, "rollup-landing", signal);
-  await run(cwd, `git cat-file -e ${quote(`${selection.rev}^{commit}`)}`, signal);
   const refCommit = await run(cwd, `git rev-parse --verify --end-of-options ${quote(`${selection.ref}^{commit}`)}`, signal);
   if (!/^[a-f0-9]{40}$/.test(refCommit)) throw new Blocked("Terraform source ref did not resolve to one commit");
-  await run(cwd, `git merge-base --is-ancestor ${quote(selection.rev)} ${quote(refCommit)}`, signal);
-  return committedSource(cwd, selection.rev, encodeURIComponent(selection.ref));
+  if (selection.rev !== undefined) {
+    await run(cwd, `git cat-file -e ${quote(`${selection.rev}^{commit}`)}`, signal);
+    await run(cwd, `git merge-base --is-ancestor ${quote(selection.rev)} ${quote(refCommit)}`, signal);
+  }
+  return { ...committedSource(cwd, selection.rev ?? refCommit, encodeURIComponent(selection.ref)), terraformRef: { ref: selection.ref, commit: refCommit } };
+}
+/** Compare only: never replace the immutable source associated with the saved plan. */
+export async function verifyTerraformRef(cwd: string, source: TerraformSource, signal: AbortSignal): Promise<void> {
+  if (!source.terraformRef) return;
+  const current = await run(cwd, `git rev-parse --verify --end-of-options ${quote(`${source.terraformRef.ref}^{commit}`)}`, signal);
+  if (current !== source.terraformRef.commit) throw new Blocked(`Terraform source ref moved after resolution: expected ${source.terraformRef.commit}; found ${current}; discard the saved plan and obtain fresh approval`);
 }
 /** Conservative literal declaration inventory; unsupported/dynamic declarations fail closed. */
 export function dnsRecords(content: string): string[] {
@@ -889,7 +898,7 @@ export function assertDnsIntent(value: unknown, plan: { plan: string; sha256: st
     throw new Blocked("DNS apply intent differs from the approved saved-plan identity");
   }
 }
-export async function planDns(cwd: string, root: string, name: string, source: DeploymentSource, signal: AbortSignal, reconciling = false) {
+export async function planDns(cwd: string, root: string, name: string, source: TerraformSource, signal: AbortSignal, reconciling = false) {
   assertExternalEvidence(cwd, root);
   if (!source.source.startsWith("git+file:") || !/^[a-f0-9]{40}$/.test(source.sha) || !source.source.endsWith(`&rev=${source.sha}`)) throw new Blocked("DNS requires the committed git+file source from resolveSource");
   const plan = await preparePlan(cwd, root, name), file = `${plan}.json`;
@@ -917,7 +926,7 @@ chmod 600 ${quote(plan)} ${quote(file)}`, signal);
 export async function applyDns(cwd: string, root: string, name: string, plan: Awaited<ReturnType<typeof planDns>>, signal: AbortSignal) {
   const { foreignDrift } = assertScopedInputs(plan.tree, await snapshot(cwd, signal), s2);
   if (plan.decision.kind !== "NeedsApply") throw new Blocked("No resource creation approved");
-  const intent = join(cwd, root, `${name}.apply-intent.json`);
+  const intent = resolve(cwd, root, `${name}.apply-intent.json`);
   let interrupted = false;
   try {
     const saved = JSON.parse(await readFile(intent, "utf8"));
@@ -927,6 +936,7 @@ export async function applyDns(cwd: string, root: string, name: string, plan: Aw
   }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   if (interrupted) {
+    await verifyTerraformRef(cwd, plan, signal);
     const fresh = await planDns(cwd, root, `${name}-reconcile`, plan, signal, true);
     if (fresh.decision.kind !== "Reconciled") throw new Blocked("Interrupted apply still has changes: invalidate approval, repair and obtain a fresh saved-plan confirmation");
     const deletion = await deletePlans(cwd, root);
@@ -934,6 +944,7 @@ export async function applyDns(cwd: string, root: string, name: string, plan: Aw
   }
   await writeFile(intent, JSON.stringify({ plan: plan.plan, sha256: plan.sha256 }), { flag: "wx", mode: 0o600 });
   if (sha256(await readFile(plan.plan)) !== plan.sha256) throw new Blocked("Saved Terraform plan changed after review");
+  await verifyTerraformRef(cwd, plan, signal);
   await runPlanCommand(cwd, `nix run ${quote(`${plan.source}#terraform.terraform`)} -- apply -input=false ${quote(plan.plan)}`, signal);
   const deletion = await deletePlans(cwd, root);
   return { applied: true, reconciled: false, plan: plan.plan, sha256: plan.sha256, foreignDrift, deletion };

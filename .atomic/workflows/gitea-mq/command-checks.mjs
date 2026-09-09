@@ -111,8 +111,9 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
     const mq = 'resource.cloudflare_dns_record.mq = { name = "mq"; type = "CNAME"; content = "magnetite.scientistexperience.net"; proxied = false; };';
     const omni = 'resource.cloudflare_dns_record.omni = { name = "omni"; };';
     files.set(dnsPath, `${mq}\n${omni}\n`);
-    assert.throws(() => actual.terraformSourceInputs({ terraform_source_ref: "HEAD" }), /together/);
-    assert.throws(() => actual.terraformSourceInputs({ terraform_source_rev: sha }), /together/);
+    const floating = actual.terraformSourceInputs({ terraform_source_ref: "HEAD" });
+    assert.deepEqual(floating, { ref: "HEAD", rev: undefined });
+    assert.throws(() => actual.terraformSourceInputs({ terraform_source_rev: sha }), /requires terraform_source_ref/);
     assert.equal(actual.terraformSourceInputs({}), null);
     const selection = actual.terraformSourceInputs({ terraform_source_ref: "HEAD", terraform_source_rev: sha });
     handler = (command) => {
@@ -128,9 +129,21 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
     const verified = await actual.verifyDnsSource("/mock", selected, reviewed, signal);
     assert.deepEqual(verified.workingCopyRecords, ["cloudflare_dns_record.mq", "cloudflare_dns_record.omni"]);
     assert.deepEqual(verified.sourceRecords, verified.workingCopyRecords);
+    const floatingSource = await actual.resolveTerraformSource("/mock", "ssss", floating, signal);
+    assert.equal(floatingSource.sha, sha);
+    assert.deepEqual(floatingSource.terraformRef, { ref: "HEAD", commit: sha });
+    handler = (command) => command.startsWith("git rev-parse") ? observed("cd".repeat(20)) : observed();
+    const ancestorSource = await actual.resolveTerraformSource("/mock", "ssss", selection, signal);
+    assert.equal(ancestorSource.sha, sha, "An explicit ancestor pin is not replaced by the current ref head");
+    await actual.verifyTerraformRef("/mock", ancestorSource, signal);
+    handler = (command) => command.startsWith("git merge-base") ? observed("", 1, "not ancestor") : observed("cd".repeat(20));
+    await assert.rejects(actual.resolveTerraformSource("/mock", "ssss", selection, signal));
+    await assert.rejects(actual.verifyTerraformRef("/mock", floatingSource, signal), /Terraform source ref moved/);
+    const current = await actual.resolveTerraformSource("/mock", "ssss", floating, signal);
+    assert.equal(current.sha, "cd".repeat(20), "Resolve at use time, not input parsing time");
     handler = (command) => command.startsWith("git show") ? observed(`${mq}\n`) : observed();
     await assert.rejects(actual.verifyDnsSource("/mock", selected, reviewed, signal), /missing.*cloudflare_dns_record.omni/i);
-    console.log("PASS integrated Terraform source: paired inputs, supplied immutable rev, exact content and working-copy record coverage");
+    console.log("PASS integrated Terraform source: ref-only resolves at use time; matching pins and non-ancestor rejection; moved ref blocks; working-copy record coverage");
   }
   {
     const sha = "ab".repeat(20), parent = "cd".repeat(20);
