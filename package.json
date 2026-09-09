@@ -11,7 +11,7 @@
   "workspaces": [
     "packages/*"
   ],
-  "packageManager": "bun@1.3.4",
+  "packageManager": "bun@1.4.2",
   "scripts": {
     "reinstall": "rm -rf node_modules packages/docs/node_modules && bun install",
     "test-release": "semantic-release --dry-run --no-ci",
