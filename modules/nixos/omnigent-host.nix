@@ -17,7 +17,6 @@
         (user.isNormalUser or false) && lib.elem "wheel" (user.extraGroups or [ ])
       ) (lib.attrNames (config.home-manager.users or { }));
       userHome = config.users.users.${cfg.user}.home;
-      system = pkgs.stdenv.hostPlatform.system;
       hostEnvironment = cfg.environment // {
         HOME = userHome;
       };
@@ -63,21 +62,7 @@
           wantedBy = [ "multi-user.target" ];
           after = [ "network-online.target" ];
           wants = [ "network-online.target" ];
-          path = [
-            inputs.self.packages.${system}.claude-code
-            inputs.self.packages.${system}.atomic
-            inputs.llm-agents.packages.${system}.codex
-            inputs.llm-agents.packages.${system}.pi
-            inputs.llm-agents.packages.${system}.omp
-            pkgs.bun
-            pkgs.nodejs_22
-            pkgs.python3
-            pkgs.tmux
-            pkgs.git
-            pkgs.uv
-            pkgs.bubblewrap
-          ]
-          ++ cfg.extraPackages;
+          path = inputs.self.lib.omnigentRuntimePackages pkgs ++ cfg.extraPackages;
           environment = hostEnvironment;
           serviceConfig = {
             Type = "simple";

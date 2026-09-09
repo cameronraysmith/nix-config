@@ -200,7 +200,11 @@ The CLI-to-daemon environment filter drops `PI_*` values before the host-to-runn
 Use the explicit `--server` option rather than relying on positional shorthand; systemd owns the foreground process and its lifecycle.
 The `cameron` account receives the Home Manager `ai` aggregate, including Atomic, so the runner can use the same `~/.claude`, `~/.codex`, `~/.pi/agent`, and `~/.atomic/agent` state as the operator (`modules/home/users/aliases.nix:17-22`; `modules/home/users/crs58/meta.nix:15-32`; `modules/home/ai/atomic/default.nix:33-70,116`).
 The declarative form is a system service rather than a Home Manager user service because the clan `host` role emits a `nixosModule`, because a system unit needs neither `loginctl enable-linger` nor a user session to start at boot, and because vanixiets already runs an agent under a named user this way: the hermes-agent clan service defaults `serviceUser` to `cameron`, derives the home from `config.users.users.${serviceUser}.home`, and sets `User = settings.serviceUser` on a system unit (`github:cameronraysmith/vanixiets@590f75195cc7acbb3926d39397bf860c2c6efc65:modules/clan/services/hermes-agent/flake-module.nix:22-24`; `github:cameronraysmith/vanixiets@590f75195cc7acbb3926d39397bf860c2c6efc65:modules/clan/services/hermes-agent/flake-module.nix:141`; `github:cameronraysmith/vanixiets@590f75195cc7acbb3926d39397bf860c2c6efc65:modules/clan/services/hermes-agent/flake-module.nix:449`); upstream's own `omnigent host enable` writes only a per-user unit, so a system unit is vanixiets-authored (`github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:omnigent/host/service.py:42-68`), and the Home Manager alternative is Q1.
-Set `HOME` from `config.users.users.${cfg.user}.home` and set the unit's required `path` explicitly to repository `claude-code` and `atomic`, `llm-agents` `codex`, `pi`, and `omp`, plus `bun`, `nodejs_22`, bare `pkgs.python3`, `tmux`, `git`, `uv`, and `bubblewrap`, before appending `cfg.extraPackages`.
+Set `HOME` from `config.users.users.${cfg.user}.home`; both runner modules consume the shared, reviewed runtime package set `flake.lib.omnigentRuntimePackages pkgs` from `modules/home/ai/omnigent/runtime-packages.nix` before appending `cfg.extraPackages`.
+The common set retains repository `claude-code` and `atomic`, `llm-agents` `codex`, `pi`, and `omp`, plus `bun`, `nodejs_22`, bare `pkgs.python3`, `tmux`, `git`, and `uv`; S10 adds `pkgs.bash`, `pkgs.which`, `pkgs.direnv`, and `pkgs.nix` unconditionally.
+Only Linux adds `bubblewrap`, through `lib.optionals pkgs.stdenv.hostPlatform.isLinux`; Darwin retains its `:/usr/bin:/bin:/usr/sbin:/sbin` suffix.
+This named contract closes the repeated python3, omp, sh, which omission class without copying the project devshell's package list into either runner module.
+curl and openssh remain reviewed exclusions, as do other audit omissions outside this bounded runtime set.
 Home Manager installation alone does not populate a system service's PATH; `bunx`, `atomic`, and the native CLIs must be resolvable from the host's inherited PATH (`/Users/crs58/ghq/github.com/omnigent-ai/omnigent@ea89e38cb2488c003cec06ae123640be0c97eb5d:omnigent/host/connect.py:431-491`; `omnigent/inner/agent_env.py:36-108` at the same pin).
 
 Harness-visible environment is declared once at the service boundary, in the unit or a shared `flake.lib.omnigentACP`-style value, never inside an individual agent's own settings file.
@@ -233,10 +237,31 @@ At the same local Omnigent pin, see `omnigent/runner/environment_filesystem.py:5
 Add bare `pkgs.python3` to the runner module's required runtime list, not a host-only `extraPackages` entry or a `withPackages` environment.
 This corrects the missing executable in D7's 2026-09-07 PATH list and is separate from D2's Omnigent-containing interpreter for isolated hooks.
 
-Direnv remains an operator-deferred hazard, not a behavior change in S5.
-`modules/home/ai/agent-settings.nix:67-81` enables the direnv extension for Pi and Atomic; the S5 investigation found that the deployed extension copies every `direnv export json` key into `process.env` without a protected-root filter.
-A project `.envrc` exporting `TMPDIR`, `HOME`, or an XDG root can reproduce this class of ACP session failure, and Atomic is now a live Omnigent harness.
-The candidate remedies are filtering protected variables or scoping the extension; the decision is explicitly deferred to the operator, and neither is implemented here.
+S10 enables the existing direnv mechanism under ACP, superseding S5's deferral of activation while accepting the unfiltered-export hazard.
+The authoritative diagnosis is `/Users/crs58/.atomic/agent/sessions/--Users-crs58-projects-vanixiets--/subagent-artifacts/omnigent-direnv-acp-divergence.md:17-30,38-43,53-69`, recorded on 2026-09-09.
+Its recommendation to require protected-output filtering first is superseded by the operator's explicit S10 risk acceptance, not by evidence that the hazard disappeared.
+
+ACP inherits a shell-free enumerated PATH with no shell/profile loader; Atomic PATH-resolves `sh` and shells out to `which`.
+NixOS has `/bin/sh`, but the unit PATH omits `/bin`, so Node's absolute-shell execution can work while Atomic's bare `sh` lookup fails.
+Native tmux launches are not login shells: tmux runs the supplied command through `$SHELL -c`, and `/etc/zshenv` recovers profile PATH rather than a project devshell.
+The observed terminal Atomic session already inherited the project devshell from its interactive parent, before its extension could load anything.
+These are three distinct environment shapes, not evidence that all native sessions load the devshell (`omnigent-direnv-acp-divergence.md:21-26,59-67` at the artifact path above).
+
+The pi-family direnv extension needs both direnv and nix on ACP's PATH to load the flake devshell (`modules/home/ai/agent-settings.nix:67-81`; `modules/home/terminal/direnv.nix:15-22`).
+Supplying those executables alone leaves fresh worktrees blocked because `direnv allow` is path-specific local state.
+Home Manager therefore renders `direnv/direnv.toml` with `[whitelist].prefix` exactly `[ "<selected-home>/projects" ]`, using `programs.direnv.config.whitelist.prefix` in the shared Omnigent HM module.
+Apply it only when `osConfig.services.omnigent-host.enable` is true and its selected user equals `config.home.username`; derive the prefix from `config.home.homeDirectory`, which the runner gates require to match the configured OS home.
+Do not define `home-manager.users.${cfg.user}` in the NixOS runner module: its default user enumerates that same attrset, and the 2026-09-09 evaluation recorded in the S10 contract failed with infinite recursion.
+There are no per-worktree approval side effects and no `DIRENV_CONFIG` carrier; Omnigent's ACP filter drops `DIRENV_*` variables, while HOME selects the existing user configuration.
+Bash and which remain unconditional for workspaces without .envrc, as well as blocked or cold-loading workspaces; Bash must provide both `bin/sh` and `bin/bash`.
+The extension starts export asynchronously without a readiness barrier, and pi-acp does not display its failure status; evaluation cannot prove a first tool call gets a cold devshell (`omnigent-direnv-acp-divergence.md:38-43`).
+OMP uses its own direnv tool preflight, not the pi-family extension; keeping its shell functional alone does not establish project-toolchain availability (`omnigent-direnv-acp-divergence.md:56-58`).
+
+Accepted risk: every `.envrc` under whitelisted `~/projects` executes arbitrary code as the unsandboxed runner user, with that user's filesystem and credential access.
+The extension applies arbitrary exported keys directly to `process.env` with no protected-variable filter, including PATH, TMPDIR and credential variables.
+Exports may replace or delete those values after Omnigent's filtering, including mandatory PATH roots; S10 does not guarantee that S5's shared-temp-root fix survives project exports.
+Hardening is a named follow-up after the mechanism is proven: review project trust and protected-variable ingestion, mandatory PATH retention, startup readiness and visible ACP failures.
+No filter or extension change belongs to S10; the existing dedicated-user and sandbox hardening order remains separate.
 
 Expose `services.omnigent-host.environment` as an `attrsOf str` option, default `{ }`, and merge it into `systemd.services.omnigent-host.environment` alongside HOME.
 For magnetite, configure these three values, deriving the home-dependent path from the selected user's home rather than shell expansion:
@@ -324,7 +349,7 @@ The clan host interface accepts `roles.host.machines.<machine>.settings.user`, a
 NixOS derives its default from the unique normal `wheel` user with a Home Manager configuration; zero or multiple candidates require an explicit user.
 This selects `cameron` on magnetite and pyrite today; stibnite retains `crs58` through Darwin's primary-user default.
 The aliases map reuses HM content under another username rather than renaming a Unix account (`modules/home/users/aliases.nix:7-21`).
-The unit's `User`, HOME, working directory and shared inventory's `PI_CODING_AGENT_DIR` all follow the selected account; the twelve required NixOS PATH packages remain unconditional even with empty extras.
+The unit's `User`, HOME, working directory and shared inventory's `PI_CODING_AGENT_DIR` all follow the selected account; the shared required NixOS PATH packages remain unconditional even with empty extras.
 
 Pyrite's surviving foreground host handles outbound tunnel reconnection itself; `network-online.target` only orders initial startup, and systemd retries nonzero exits rather than watching resume events.
 The S8 research records the remote reconnect loop and suspend watcher at `/Users/crs58/ghq/github.com/omnigent-ai/omnigent@ea89e38cb2488c003cec06ae123640be0c97eb5d:omnigent/host/connect.py:3280-3461,3511-3527`.
@@ -341,7 +366,7 @@ No magnetite server-side or package change is needed: registration accepts anoth
 The agent uses the configured package's foreground `host --server` argv in the user domain, waits for `/nix/store`, and keeps the same package in `programs.omnigent`.
 It has `RunAtLoad=true`, `KeepAlive.SuccessfulExit=false`, `ThrottleInterval=5`, and `ProcessType=Standard`; it never invokes `host enable`, `--background` or `service_entry`, and no second plist owns the process.
 Its environment is `cfg.environment // { HOME = userHome; PATH = explicitPath; }`.
-The required store PATH contains repository `claude-code` and `atomic`, llm-agents `codex`, `pi` and `omp`, and nixpkgs `bun`, `nodejs_22`, `python3`, `tmux`, `git` and `uv`, unconditionally before extras and `/usr/bin:/bin:/usr/sbin:/sbin`.
+The required store PATH comes from the same `flake.lib.omnigentRuntimePackages pkgs` as NixOS, including the S10 Bash/which/direnv/nix floor, unconditionally before extras and `/usr/bin:/bin:/usr/sbin:/sbin`.
 It includes no bubblewrap and relies on no profile, login shell or `launchctl setenv`.
 Both log streams use `<selected-home>/.omnigent/logs/host/service.log`; HM creates the private directory with mode `0700` after `writeBoundary` and `omnigentMergeConfig`, before `setupLaunchAgents`.
 The same two shared ACP rows remain unchanged, with omp's `env_passthrough` exactly empty to exclude Atomic state.
@@ -429,6 +454,7 @@ Files to add or modify, without implementation commands.
 - Add `pkgs/by-name/omnigent/package.nix`: `buildPythonPackage` from the `v0.13.0` wheel with `python3Packages.psycopg` and `pythonRelaxDeps`, then expose the two commands using the interpreter of a Python environment containing that library and its dependencies (D2); retain `flake.packages.<system>.omnigent` and `checks.<system>.package-omnigent`.
 - Add `modules/nixos/omnigent.nix` as `flake.modules.nixos.omnigent`: options `services.omnigent.enable`, `package` (`mkPackageOption`), `domain`, `port`, `environmentFiles`, `cookieSecretGenerator` (default `omnigent-cookie-secret`), and `oidc.{issuer,clientId,allowedDomains}` with allowed domains unset by default; effects are the static account, additive PostgreSQL database/ownership declarations, a single-worker server unit ordered after and requiring `postgresql.target`, `StateDirectory = "omnigent"`, secret environment files, the D4 admin roster and `OMNIGENT_ADMIN_LIST_PATH`, memory limits, the named cookie generator, and the D6 nginx vhost.
 - Add `modules/home/ai/omnigent/{acp.nix,default.nix,merge-config.sh}` for the shared ACP value, `programs.omnigent` options, package installation, and writable runner configuration merge; the server module consumes the same value through its store-backed `OMNIGENT_CONFIG_HOME` (D7).
+- Add `modules/home/ai/omnigent/runtime-packages.nix` for `flake.lib.omnigentRuntimePackages pkgs`, consumed by both runner modules; add the selected-runner-only direnv whitelist to the shared HM `default.nix` (S10, D7).
 - Add `modules/nixos/omnigent-host.nix` as `flake.modules.nixos.omnigent-host`: options `services.omnigent-host.enable`, `package`, `serverUrl`, `user`, `hostName`, `extraPackages`, and `environment` (`attrsOf str`, default `{ }`); emit the D7 foreground unit, `User = cfg.user`, HOME derived from that user, required PATH including Atomic, Bun, and bare `pkgs.python3` before `cfg.extraPackages`, merged environment, `NoNewPrivileges = true`, and memory limits without namespace-restricting hardening.
 - Modify `modules/home/ai/claude-code/default.nix` by deleting `settings.env.TMPDIR` and `TMPPREFIX`; GLM and Cerebras inherit the deletion through the unchanged wrapper settings merge (D7).
 - Add `modules/clan/services/omnigent/flake-module.nix` and its `README.md`, following only the existing services' directory and manifest layout: `_class = "clan.service"`, `manifest.name = "omnigent"`, server interface `domain`/`port`, host interface `user`/`extraPackages`/`environment`; `perMachine.nixosModule` imports both plain modules once, and the server role enables its module and sets `cookieSecretGenerator = "omnigent-cookie-secret-${instanceName}"`.
@@ -506,6 +532,21 @@ The independent artifact gate inspects the selected user's actual HM activation 
 The controller builds `checks.x86_64-linux.nixos-pyrite` once via `NixBuildRemote` on magnetite, never pyrite; no second machine build is needed for artifact inspection.
 The D7 human checklist alone establishes pyrite UI online state, a completed turn and automatic suspend/resume return.
 
+S10's current immutable contract is `.atomic/workflows/runs/deploy-omnigent/omnigent-magnetite/8af34f82-2163-47d0-9a7a-ff10610dd0a8/slice-10.json`.
+It supersedes run `c047a554-2b00-4819-a626-87a74fdbc852` by binding the executable checks directly to each host's configured Bash output on its empty-extras PATH; the acceptance list and runtime implementation remain unchanged.
+Evaluate all three effective runner PATHs with empty extras and compare each rendered HM `direnv.toml` whitelist against the configured home plus `/projects`, including changed-home fixtures.
+The shared-source check must retain exactly the reviewed common packages, Linux-only bubblewrap and the Darwin system suffix; all S7/S8 account, foreground, PI carrier, ACP and lifecycle regressions remain required.
+Controller-owned gate nodes then realize Bash and check both `bin/sh` and `bin/bash`, inspect rendered artifacts, and build the machine closures; the writer performs no deployment or remote operation.
+The executable checks must cover each host's configured `pkgs.bash`; a check of `inputs.nixpkgs.legacyPackages.<system>.bash` counts only with output-path equality established at the same reviewed SHA.
+Human attestations must separately establish an `acp:atomic` tool call such as `ls` on magnetite, the same on pyrite, a working `acp:oh-my-pi` turn, and a fresh-worktree session where `just --version` succeeds.
+Record each as passed, failed or not tested; no package-membership or whitelist evaluation discharges live ACP/toolchain acceptance.
+
+For reviewed S10 SHA `f5ad94172cc38ac5df3fb1ede5323d2be0e8423b`, the 2026-09-09 repair evaluation established that equality for magnetite, pyrite and stibnite, both in the base configuration and with empty extras.
+The empty-extras evaluation also confirmed each configured Bash output's `bin` directory on its effective runner PATH.
+Magnetite and pyrite resolve to `/nix/store/bwry105g7v5jspr41bx9x3fcfqsmfkq2-bash-interactive-5.3p15`; stibnite resolves to `/nix/store/4zsssszm1mddjgjszlc84kicvw8f775q-bash-interactive-5.3p15`.
+This binds the configured outputs to the controller's historical successful `test -x` checks for both `bin/sh` and `bin/bash` in `gate-sandbox-10-1.json:110-123` under previous S10 run `c047a554-2b00-4819-a626-87a74fdbc852`.
+Record output-path equality again for a later reviewed SHA before reusing those executable receipts; PATH membership alone does not prove executable presence.
+
 - Machine: evaluate the composed toplevel `drvPath`, then the controller runs the single remote build gate for `.#checks.x86_64-linux.nixos-magnetite`; do not repeat an unchanged-input closure build in the writer.
 - Post-deployment, read-only: `GET https://accounts.scientistexperience.net/oauth2/openid/omnigent/.well-known/openid-configuration` returns `issuer` equal to the D4 string; `kanidm person get <name>` on `magnetite` shows a `mail` line for the operator; one browser login reaches the Omnigent UI; one session streams events end to end with `proxy_buffering off;` in place; the `magnetite` host appears online in the UI within 90 seconds of `omnigent-host.service` starting.
 - Operator acceptance: record laptop passkey login, the `/ui/apps` tile, Android app login, and one `acp:atomic` session individually as passed, failed, or not tested; keep these human attestations distinct from tool observations.
@@ -518,10 +559,11 @@ TOK=$(curl -sS -u "omnigent:${SECRET}" -d grant_type=authorization_code -d "code
 printf '%s' "$TOK" | python3 -c 'import sys,json,base64; t=json.load(sys.stdin); p=t["id_token"].split(".")[1]; print(json.dumps(json.loads(base64.urlsafe_b64decode(p+"="*(-len(p)%4))),indent=2))'
 ```
 
-### S7 exact Darwin gates
+### S7 Darwin regression checks after S10
 
 The immutable run contract is `.atomic/workflows/runs/deploy-omnigent/omnigent-magnetite/80f36dda-338d-469b-ae83-dd94df58e7bc/slice-7.json`.
-Its literal acceptance list and deterministic gates remain authoritative; the commands here collect the same predicates for operator inspection.
+Its literal acceptance list and deterministic gates remain the historical S7 contract; the inspection commands below retain its regressions with S8's three-host roster and S10's expanded required PATH.
+The current S10 contract above owns those amended expectations; no historical gate artifact is edited.
 Set `OMNIGENT_SOURCE` to the controller's pinned implementation source, not an unchanged branch tip or an untracked working-tree approximation.
 Every positive evaluation must return `true`.
 
@@ -542,7 +584,7 @@ let
   r = f.packages.x86_64-linux;
   tools = f.inputs.llm-agents.packages.x86_64-linux;
 in
-assert builtins.attrNames f.clan.inventory.instances.omnigent.roles.host.machines == [ "magnetite" "stibnite" ];
+assert builtins.attrNames f.clan.inventory.instances.omnigent.roles.host.machines == [ "magnetite" "pyrite" "stibnite" ];
 assert builtins.attrNames f.clan.inventory.instances.omnigent.roles.server.machines == [ "magnetite" ];
 assert c.services.omnigent-host.enable && u == c.system.primaryUser;
 assert c.services.omnigent-host.serverUrl == "https://omni.scientistexperience.net" && c.services.omnigent-host.hostName == "stibnite";
@@ -601,7 +643,7 @@ let
   d = g.darwinConfigurations.stibnite; c = d.config; p = d.pkgs;
   r = f.packages.aarch64-darwin; h = f.inputs.llm-agents.packages.aarch64-darwin;
   a = c.home-manager.users.${c.services.omnigent-host.user}.launchd.agents.omnigent-host.config;
-  expected = p.lib.makeBinPath [ r.claude-code r.atomic h.codex h.pi h.omp p.bun p.nodejs_22 p.python3 p.tmux p.git p.uv ] + ":/usr/bin:/bin:/usr/sbin:/sbin";
+  expected = p.lib.makeBinPath [ r.claude-code r.atomic h.codex h.pi h.omp p.bun p.nodejs_22 p.python3 p.tmux p.git p.uv p.bash p.which p.direnv p.nix ] + ":/usr/bin:/bin:/usr/sbin:/sbin";
 in c.services.omnigent-host.extraPackages == [] && a.EnvironmentVariables.PATH == expected && builtins.head a.ProgramArguments == p.lib.getExe c.services.omnigent-host.package
 NIX
 )"
@@ -629,10 +671,10 @@ Only the controller proceeds from evaluation to these local builds, in order; se
 ```bash
 nix eval --raw "$OMNIGENT_SOURCE#packages.aarch64-darwin.omnigent.drvPath"
 nix build --no-link "$OMNIGENT_SOURCE#checks.aarch64-darwin.package-omnigent"
-python3 "$OMNIGENT_PRIMARY/.atomic/workflows/omnigent/darwin-artifacts.py" "$OMNIGENT_SANDBOX" "$OMNIGENT_SOURCE#checks.aarch64-darwin.darwin-stibnite"
+python3 "$OMNIGENT_PRIMARY/.atomic/workflows/omnigent/darwin-artifacts.py" --runtime-environment "$OMNIGENT_SANDBOX" "$OMNIGENT_SOURCE#checks.aarch64-darwin.darwin-stibnite"
 ```
 
-The Python command is the contract's exact gate 30.
+The Python command is the current S10 Darwin rendered-artifact gate, with `--runtime-environment` as required by `slice-10.json`; its earlier execution is recorded in `gate-sandbox-10-1-43.log` under previous S10 run `c047a554-2b00-4819-a626-87a74fdbc852`.
 It builds the stibnite closure once, selects the unique Home Manager generation containing the agent from that closure, and checks its rendered plist, user-domain file and activation order.
 It emits the pinned source, built system and per-check observations, and fails if any inspection fails.
 The preceding run's closure-only command is insufficient for this contract; successful evaluation or a historical generation receipt cannot replace the current gate.
@@ -645,7 +687,7 @@ The previous inspection-completion claim, added in that commit on 2026-09-08, in
 That run's review finding F1 was left open pending a rendered-artifact inspection receipt associated with the reviewed SHA; the successful deterministic gates did not discharge it.
 This corrects the evidence claim, not D7's Home Manager ownership decision or any acceptance requirement.
 
-The following read-only commands inspect that historical generation without another build or activation; they do not discharge the current run's gate 30.
+The following read-only commands inspect that historical S7 generation without another build or activation; they do not discharge the current S10 Darwin rendered-artifact gate.
 Keep any historical inspection output beside that run's reviewed SHA and `gate-sandbox-7-23.log`.
 For the current reviewed SHA, use the controller command above rather than reusing this derivation or assuming a fresh evaluation produces the same generation.
 
@@ -675,7 +717,7 @@ These inspections establish rendered configuration only; log-directory ownership
   Monitoring and observability also remain deferred.
 - Migration of the runner to a dedicated `omnigent-host` user after Home Manager aspect PRs #2957, #2980, and #2982 merge.
 - `enforce_sandbox` policy for native sessions after the dedicated-user migration, including the `PrivateUsers` and namespace-hardening review that enforcement requires.
-- Direnv protected-root handling for Pi and Atomic: operator decision between filtering protected variables and scoping the extension, with behavior unchanged in S5 (D7).
+- Direnv hardening after the S10 mechanism is proven: project trust, protected-variable ingestion, mandatory PATH retention, startup readiness and visible ACP failures; unfiltered execution under whitelisted `~/projects` is accepted for S10 (D7).
 - Activation of any API-key fallback provider only after OAuth login for each harness is verified in a session.
 - Separate Omnigent identities per runner or per person, if the single-owner model proves limiting.
 - Routine use of `omnigent host reset-id`: shipped in `v0.13.0`, but reserved for deliberate identity recovery rather than normal deployment.

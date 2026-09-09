@@ -15,6 +15,7 @@ in
       cfg = config.programs.omnigent;
       yamlFormat = pkgs.formats.yaml { };
       hostName = if osConfig == null then null else osConfig.networking.hostName;
+      runner = if osConfig == null then { } else osConfig.services.omnigent-host or { };
       mergeConfig = pkgs.writeShellApplication {
         name = "omnigent-merge-config";
         runtimeInputs = [ pkgs.yq-go ];
@@ -49,6 +50,10 @@ in
             host.name = lib.mkDefault hostName;
           };
         };
+
+        programs.direnv.config.whitelist.prefix = lib.mkIf (
+          (runner.enable or false) && runner.user == config.home.username
+        ) [ "${config.home.homeDirectory}/projects" ];
 
         home.packages = lib.mkIf cfg.enable [ cfg.package ];
         home.activation.omnigentMergeConfig = lib.mkIf (cfg.enable && cfg.settings != { }) (

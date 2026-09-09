@@ -10,25 +10,9 @@
     let
       cfg = config.services.omnigent-host;
       userHome = config.users.users.${cfg.user}.home;
-      system = pkgs.stdenv.hostPlatform.system;
       logDirectory = "${userHome}/.omnigent/logs/host";
       explicitPath =
-        lib.makeBinPath (
-          [
-            inputs.self.packages.${system}.claude-code
-            inputs.self.packages.${system}.atomic
-            inputs.llm-agents.packages.${system}.codex
-            inputs.llm-agents.packages.${system}.pi
-            inputs.llm-agents.packages.${system}.omp
-            pkgs.bun
-            pkgs.nodejs_22
-            pkgs.python3
-            pkgs.tmux
-            pkgs.git
-            pkgs.uv
-          ]
-          ++ cfg.extraPackages
-        )
+        lib.makeBinPath (inputs.self.lib.omnigentRuntimePackages pkgs ++ cfg.extraPackages)
         + ":/usr/bin:/bin:/usr/sbin:/sbin";
     in
     {
