@@ -42,10 +42,23 @@ const deploymentCapture = (cwd: string, command: string, signal: AbortSignal) =>
 const resolveRevisionSource = async (cwd: string, revision: string, name: string, signal: AbortSignal) => sharedRevisionSource(cwd, await changeSha(cwd, revision, signal), name, signal, deploymentCapture);
 export const resolveSource = async (cwd: string, tip: string, name: string, signal: AbortSignal) => sharedResolveSource(cwd, await changeSha(cwd, tip, signal), name, signal, deploymentCapture);
 export const runStreaming = async (cwd: string, command: string, signal: AbortSignal) => requireSuccess(await captureStreaming(cwd, command, signal));
-// OpenTofu diagnostics can include unmarked state values. Withhold both streams
-// before any log, receipt, error tail, ledger, or agent boundary.
-const runPlanCommand = async (cwd: string, command: string, signal: AbortSignal) =>
-  requireSuccess(await captureStreaming(cwd, command, signal, () => "[OpenTofu output withheld]"));
+/** State-bearing stdout never enters evidence; stderr is diagnostic, with only
+ * conservative sensitive-looking lines withheld (also applied across chunks). */
+export function redactPlanOutput(stream: "stdout" | "stderr", output: string): string {
+  if (stream === "stdout") return "[OpenTofu stdout withheld]";
+  return output.split("\n").map((line) => /[A-Za-z0-9+/_=-]{80,}|BEGIN[^\r\n]*PRIVATE KEY|ENC\[|encrypted_data/i.test(line)
+    ? "[sensitive OpenTofu diagnostic line withheld]" : line).join("\n");
+}
+type TerraformStep = { name: string; command: string };
+async function runPlanSteps(repository: string, steps: TerraformStep[], signal: AbortSignal): Promise<void> {
+  for (const [index, step] of steps.entries()) {
+    const label = `Terraform step ${index + 1}/${steps.length}: ${step.name}`;
+    // One durable receipt per step. ERR prints only status/line, never expanded
+    // commands or variables. Each new shell needs its own private umask.
+    const command = `# ${label}\numask 077\ntrap 'status=$?; printf "${label}, line %s: exit %s\\n" "$LINENO" "$status" >&2' ERR\n${step.command}`;
+    requireSuccess(await captureStreaming(resolve(repository), command, signal, redactPlanOutput));
+  }
+}
 /** Only inputs owned by this slice (plus shared change/vars inputs) invalidate a proposal. */
 export function assertScopedInputs(before: Tree, after: Tree, slice: Slice): { foreignDrift: string[] } {
   const allowed = [...slice.allowedPaths, dir, ...varsAllowed];
@@ -899,18 +912,19 @@ export function assertDnsIntent(value: unknown, plan: { plan: string; sha256: st
   }
 }
 export async function planDns(cwd: string, root: string, name: string, source: TerraformSource, signal: AbortSignal, reconciling = false) {
+  cwd = resolve(cwd); // Explicit repository cwd, never the external evidence directory.
   assertExternalEvidence(cwd, root);
   if (!source.source.startsWith("git+file:") || !/^[a-f0-9]{40}$/.test(source.sha) || !source.source.endsWith(`&rev=${source.sha}`)) throw new Blocked("DNS requires the committed git+file source from resolveSource");
   const plan = await preparePlan(cwd, root, name), file = `${plan}.json`;
   const tree = await snapshot(cwd, signal);
-  await runPlanCommand(cwd, `umask 077
-config=$(nix build --no-link --print-out-paths ${quote(`${source.source}#terraform.config`)})
-mkdir -p terraform
-ln -sf "$config" terraform/config.tf.json
-nix run ${quote(`${source.source}#terraform.terraform`)} -- init -input=false
-nix run ${quote(`${source.source}#terraform.terraform`)} -- plan -input=false -out=${quote(plan)}
-nix run ${quote(`${source.source}#terraform.terraform`)} -- show -json ${quote(plan)} > ${quote(file)}
-chmod 600 ${quote(plan)} ${quote(file)}`, signal);
+  await runPlanSteps(cwd, [
+    { name: "prepare directory", command: `mkdir -p ${quote(resolve(cwd, "terraform"))}` },
+    { name: "build and link config", command: `config=$(nix build --no-link --print-out-paths ${quote(`${source.source}#terraform.config`)})\nln -sf "$config" ${quote(resolve(cwd, "terraform/config.tf.json"))}` },
+    { name: "init", command: `nix run ${quote(`${source.source}#terraform.terraform`)} -- init -input=false` },
+    { name: "plan", command: `nix run ${quote(`${source.source}#terraform.terraform`)} -- plan -input=false -out=${quote(plan)}` },
+    { name: "show", command: `nix run ${quote(`${source.source}#terraform.terraform`)} -- show -json ${quote(plan)} > ${quote(file)}` },
+    { name: "secure artifacts", command: `chmod 600 ${quote(plan)} ${quote(file)}` },
+  ], signal);
   const { foreignDrift } = assertScopedInputs(tree, await snapshot(cwd, signal), s2);
   let value: unknown;
   try { value = JSON.parse(await readResponse(file)); }
@@ -924,6 +938,7 @@ chmod 600 ${quote(plan)} ${quote(file)}`, signal);
   };
 }
 export async function applyDns(cwd: string, root: string, name: string, plan: Awaited<ReturnType<typeof planDns>>, signal: AbortSignal) {
+  cwd = resolve(cwd);
   const { foreignDrift } = assertScopedInputs(plan.tree, await snapshot(cwd, signal), s2);
   if (plan.decision.kind !== "NeedsApply") throw new Blocked("No resource creation approved");
   const intent = resolve(cwd, root, `${name}.apply-intent.json`);
@@ -945,7 +960,7 @@ export async function applyDns(cwd: string, root: string, name: string, plan: Aw
   await writeFile(intent, JSON.stringify({ plan: plan.plan, sha256: plan.sha256 }), { flag: "wx", mode: 0o600 });
   if (sha256(await readFile(plan.plan)) !== plan.sha256) throw new Blocked("Saved Terraform plan changed after review");
   await verifyTerraformRef(cwd, plan, signal);
-  await runPlanCommand(cwd, `nix run ${quote(`${plan.source}#terraform.terraform`)} -- apply -input=false ${quote(plan.plan)}`, signal);
+  await runPlanSteps(cwd, [{ name: "apply", command: `nix run ${quote(`${plan.source}#terraform.terraform`)} -- apply -input=false ${quote(plan.plan)}` }], signal);
   const deletion = await deletePlans(cwd, root);
   return { applied: true, reconciled: false, plan: plan.plan, sha256: plan.sha256, foreignDrift, deletion };
 }

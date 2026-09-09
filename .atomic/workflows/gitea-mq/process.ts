@@ -9,7 +9,7 @@ import { assertCompactCheckpoint, processReceipt, save, type Observation, type P
 
 export const responseLimit = 1024 * 1024;
 export const tailLimit = 8192;
-type Context = { root: string; node: string; next: number; receipts: ProcessReceipt[] };
+type Context = { root: string; node: string; next: number; receipts: (ProcessReceipt & { cwd: string })[] };
 const context = new AsyncLocalStorage<Context>();
 
 export function assertExternalEvidence(cwd: string, root: string): void {
@@ -55,6 +55,27 @@ export class OutputBuffer {
   }
 }
 type OutputRedactor = (stream: "stdout" | "stderr", output: string) => string;
+/** Redact complete lines before disk/tail capture, including split chunks. Keep
+ * only a bounded pending line; an oversized line is withheld, not truncated. */
+export class RedactedLines {
+  private pending = "";
+  private oversized = false;
+  constructor(private readonly redact: (line: string) => string, private readonly emit: (text: string) => void) {}
+  append(data: string): void {
+    const parts = data.split("\n");
+    for (const [index, part] of parts.entries()) {
+      if (!this.oversized) {
+        if (Buffer.byteLength(this.pending) + Buffer.byteLength(part) > tailLimit) { this.pending = ""; this.oversized = true; }
+        else this.pending += part;
+      }
+      if (index < parts.length - 1) this.flush(true);
+    }
+  }
+  flush(newline = false): void {
+    if (newline || this.pending || this.oversized) this.emit((this.oversized ? "[overlong output line withheld]" : this.redact(this.pending)) + (newline ? "\n" : ""));
+    this.pending = ""; this.oversized = false;
+  }
+}
 async function execute(cwd: string, command: string, signal: AbortSignal, streaming: boolean, redact?: OutputRedactor): Promise<Observation> {
   signal.throwIfAborted();
   const state = context.getStore();
@@ -63,9 +84,17 @@ async function execute(cwd: string, command: string, signal: AbortSignal, stream
   const logPath = receiptPath.replace(/\.json$/, ".log");
   const buffer = new OutputBuffer(streaming);
   const observation: Observation = { command, stdout: "", stderr: "", tail: "", exitCode: -1, state: "running", terminationSignal: null, logPath };
-  await save(cwd, receiptPath, processReceipt(observation));
+  // Shared save uses join(), which does not preserve an absolute second path.
+  // Resolve the artifact separately; never change subprocess cwd to compensate.
+  await save(cwd, relative(cwd, resolve(cwd, receiptPath)), { ...processReceipt(observation), cwd: resolve(cwd) });
   await writeFile(resolve(cwd, logPath), "", { mode: 0o600 });
   let failure: Error | undefined;
+  const streamingRedactors = streaming && redact ? Object.fromEntries((["stdout", "stderr"] as const).map((stream) => [stream,
+    new RedactedLines((line) => redact(stream, line), (text) => {
+      appendFileSync(resolve(cwd, logPath), text);
+      buffer.append(stream, text);
+    }),
+  ])) as Record<"stdout" | "stderr", RedactedLines> : undefined;
   await new Promise<void>((done) => {
     // CLAN_NO_COMMIT also reaches clan calls nested in Python and Terraform wrappers.
     const child = spawn("bash", ["-c", `set -euo pipefail\n${command}`], {
@@ -79,10 +108,12 @@ async function execute(cwd: string, command: string, signal: AbortSignal, stream
     if (signal.aborted) terminate();
     for (const stream of ["stdout", "stderr"] as const) child[stream].setEncoding("utf8").on("data", (data: string) => {
       try {
-        // Sensitive responses stay bounded in memory until projection. No raw
-        // chunk (including stderr or a split row) may reach any artifact.
-        if (!redact) appendFileSync(resolve(cwd, logPath), data);
-        if (!failure) buffer.append(stream, data);
+        if (streamingRedactors) streamingRedactors[stream].append(data);
+        else {
+          // Parsed sensitive responses remain bounded in memory until projection.
+          if (!redact) appendFileSync(resolve(cwd, logPath), data);
+          if (!failure) buffer.append(stream, data);
+        }
       } catch (error) { failure ??= error as Error; terminate(); }
     });
     child.on("error", (error) => { failure ??= error; terminate(); });
@@ -93,7 +124,10 @@ async function execute(cwd: string, command: string, signal: AbortSignal, stream
       done();
     });
   });
-  if (redact) {
+  if (streamingRedactors) {
+    try { for (const redactor of Object.values(streamingRedactors)) redactor.flush(); }
+    catch (error) { failure ??= error as Error; }
+  } else if (redact) {
     // On interruption/overflow discard partial rows rather than minting a
     // populated status from a truncated value. Also never retain a raw tail.
     const stdout = failure || signal.aborted ? "" : redact("stdout", buffer.stdout);
@@ -104,9 +138,9 @@ async function execute(cwd: string, command: string, signal: AbortSignal, stream
   }
   Object.assign(observation, { stdout: buffer.stdout, stderr: buffer.stderr, tail: buffer.tail });
   observation.state = signal.aborted ? "interrupted" : failure ? "failed" : "exited";
-  const receipt = processReceipt(observation);
+  const receipt = { ...processReceipt(observation), cwd: resolve(cwd) };
   state.receipts.push(receipt);
-  await save(cwd, receiptPath, receipt);
+  await save(cwd, relative(cwd, resolve(cwd, receiptPath)), receipt);
   if (signal.aborted || failure) {
     const error = failure ?? new Error("Process interrupted");
     error.message += `\n${logPath}\n${buffer.tail}`;

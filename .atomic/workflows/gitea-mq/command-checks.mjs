@@ -472,8 +472,9 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   files.set("/root/saved-reconcile.tfplan.json", JSON.stringify({ resource_changes: [] }));
   files.set("/mock/modules/terranix/cloudflare.nix", "dns");
   handler = (command) => {
-    assert(command.includes("-- plan -input=false"));
-    assert(!command.includes("path:/mock")); assert(command.includes(savedPlan.source));
+    assert.match(command, /^# Terraform step [1-6]\/6:/);
+    assert(!command.includes("path:/mock"));
+    if (command.includes("nix ")) assert(command.includes(savedPlan.source));
     return observed();
   };
   const dnsSnapshot = globalThis.__mqCommandMock.snapshot;
