@@ -199,7 +199,7 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
       planDns: async (_cwd, _root, _id, source) => {
         assert([...revisions.values()].find((rev) => rev.sha === source.sha)?.tree[dnsPath]?.startsWith(dnsContent), "DNS plan pinned a stale source");
         if (dnsReject || failDns) { failDns = false; throw Error("Rejected DNS delta"); }
-        return structuredClone(planSecurity.planned.evidence);
+        return structuredClone(terraformInputs.dnsAlreadyApplied ? planSecurity.already.evidence : planSecurity.planned.evidence);
       },
       applyDns: async () => ({ applied: true }),
       dnsWitness: async () => ({ cname: "magnetite.scientistexperience.net." }),
@@ -551,6 +551,17 @@ export async function runExecutionChecks({ ts, main, moduleUrl, tools, types, sl
   }
   assert.equal(adoptedLedger.find((row) => row.node === "dns-source-adopted-s2").result.value.evidence.sha, integratedInputs.terraform_source_rev);
   assert(allAdopted.events.includes("terraform-plan-adopted-s2"), "Adoption cannot claim a prior blocked plan as applied");
+  assert(allAdopted.events.includes("terraform-apply-adopted-s2"), "Single mq create must invoke apply");
+  const alreadyAdopted = await execute({ adoptRouted: ["s1", "post-g1", "s2"], terraformInputs: { ...integratedInputs, dnsAlreadyApplied: true }, replay: true });
+  assert.equal(alreadyAdopted.result.status, "completed-with-caveat", alreadyAdopted.result.summary);
+  assert(!alreadyAdopted.events.some((event) => event.startsWith("terraform-apply-")), "Already-applied adoption and replay must skip apply entirely");
+  assert(!alreadyAdopted.events.some((event) => /^(dns-ledger|dns-unverified-)/.test(event)), "Adoption cannot re-tick or reset DNS tasks");
+  const alreadyLedger = JSON.parse(alreadyAdopted.files.get(join(alreadyAdopted.cwd, alreadyAdopted.root, "ledger.json")));
+  const alreadyEvidence = alreadyLedger.find((row) => row.node === "terraform-plan-adopted-s2").result.value.evidence;
+  assert.equal(alreadyEvidence.decision.outcome, "already-applied");
+  assert.equal(alreadyEvidence.decision.record.content, "magnetite.scientistexperience.net");
+  assert.equal(alreadyEvidence.existingWitness.quorum, 2);
+  console.log("PASS adopted S2 re-entry: already-applied evidence retained; no apply or DNS task writes on adoption/replay; single create still applies");
   for (const slice of ["post-g1", "s2"]) {
     const missing = await execute({ adoptRouted: ["s1", "post-g1", "s2"], adoptionMissing: slice });
     assert.equal(missing.result.status, "blocked"); assert.match(missing.result.summary, /Expected routed.*found missing/);

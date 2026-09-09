@@ -862,7 +862,7 @@ export function dnsSummary(value: unknown) {
   const resource = changes[0];
   const after = resource?.change.after;
   if (changes.length !== 1 || !resource || resource.mode !== "managed" ||
-      resource.type !== "cloudflare_dns_record" || !isDeepStrictEqual(resource.change.actions, ["create"])) {
+      resource.address !== "cloudflare_dns_record.mq" || resource.type !== "cloudflare_dns_record" || !isDeepStrictEqual(resource.change.actions, ["create"])) {
     throw new Blocked("DNS plan must add exactly one record, no other changes");
   }
   parse(DnsRecord, after);
@@ -874,7 +874,25 @@ export function dnsSummary(value: unknown) {
     name: domain,
   };
 }
-export function dnsDecision(value: unknown, reconciling: boolean) {
+/** Read only the exact root resource; never copy arbitrary private state into evidence. */
+export function existingDnsRecord(value: unknown) {
+  const state = Type.Object({ root_module: Type.Optional(Type.Object({ resources: Type.Optional(Type.Array(Type.Object({
+    address: Type.String(), mode: Type.String(), type: Type.String(), values: Type.Optional(Type.Unknown()),
+  }))) })) });
+  const plan = parse(Type.Object({ planned_values: Type.Optional(state), prior_state: Type.Optional(Type.Object({ values: state })) }), value);
+  const states = [plan.planned_values, plan.prior_state?.values].filter((s) => s !== undefined);
+  if (!states.length) throw new Blocked("Empty DNS plan has no verifiable existing mq record");
+  for (const values of states) {
+    const records = (values.root_module?.resources ?? []).filter((r) => r.address === "cloudflare_dns_record.mq");
+    if (records.length !== 1 || records[0].mode !== "managed" || records[0].type !== "cloudflare_dns_record") {
+      throw new Blocked("Empty DNS plan must contain the existing mq record in every supplied state");
+    }
+    parse(DnsRecord, records[0].values);
+  }
+  return { address: "cloudflare_dns_record.mq" as const, name: domain, type: "CNAME" as const,
+    content: "magnetite.scientistexperience.net" as const, proxied: false as const };
+}
+export function dnsDecision(value: unknown, _reconciling = false) {
   const action = Type.Object({ actions: Type.Array(Type.String()) });
   const plan = parse(Type.Object({
     resource_changes: Type.Optional(Type.Array(Type.Object({ change: action }))),
@@ -890,7 +908,8 @@ export function dnsDecision(value: unknown, reconciling: boolean) {
   if (outputChanged) throw new Blocked("DNS plan includes output changes");
   const zero = (plan.resource_changes ?? [])
     .every((resource) => isDeepStrictEqual(resource.change.actions, ["no-op"]));
-  if (zero && reconciling) return { kind: "Reconciled" as const, changes: 0 as const };
+  // Keep the stage's existing non-apply branch, but distinguish observed desired state.
+  if (zero) return { kind: "Reconciled" as const, changes: 0 as const, outcome: "already-applied" as const, record: existingDnsRecord(value) };
   return { kind: "NeedsApply" as const, summary: dnsSummary(value) };
 }
 
@@ -930,9 +949,14 @@ export async function planDns(cwd: string, root: string, name: string, source: T
   try { value = JSON.parse(await readResponse(file)); }
   catch { throw new Blocked("Cannot parse private OpenTofu plan JSON (content withheld)"); }
   const decision = dnsDecision(value, reconciling);
+  // State alone cannot establish public DNS reality. A failed witness blocks this plan.
+  const witnessed = decision.kind === "Reconciled" ? await dnsWitness(cwd, signal) : null;
+  const existingWitness = witnessed && { ...witnessed, resolvers: witnessed.resolvers.map(({ queries, ...resolver }) => ({
+    ...resolver, queries: queries.map(({ command, state, exitCode, logPath }) => ({ command, state, exitCode, logPath })),
+  })) };
   return {
     ...source, tree, plan, foreignDrift,
-    sha256: sha256(await readFile(plan)), decision,
+    sha256: sha256(await readFile(plan)), decision, ...(existingWitness ? { existingWitness } : {}),
     projection: dnsProjection(value),
     execution: "Saved OpenTofu plan from committed git+file source; external evidence, terraform.terraform wrapper, shared state and secrets environment",
   };
@@ -955,14 +979,14 @@ export async function applyDns(cwd: string, root: string, name: string, plan: Aw
     const fresh = await planDns(cwd, root, `${name}-reconcile`, plan, signal, true);
     if (fresh.decision.kind !== "Reconciled") throw new Blocked("Interrupted apply still has changes: invalidate approval, repair and obtain a fresh saved-plan confirmation");
     const deletion = await deletePlans(cwd, root);
-    return { applied: true, reconciled: true, plan: fresh.plan, sha256: fresh.sha256, deletion, foreignDrift: [...new Set([...foreignDrift, ...fresh.foreignDrift])].sort() };
+    return { applied: true, outcome: "already-applied" as const, record: fresh.decision.record, existingWitness: fresh.existingWitness, reconciled: true, plan: fresh.plan, sha256: fresh.sha256, deletion, foreignDrift: [...new Set([...foreignDrift, ...fresh.foreignDrift])].sort() };
   }
   await writeFile(intent, JSON.stringify({ plan: plan.plan, sha256: plan.sha256 }), { flag: "wx", mode: 0o600 });
   if (sha256(await readFile(plan.plan)) !== plan.sha256) throw new Blocked("Saved Terraform plan changed after review");
   await verifyTerraformRef(cwd, plan, signal);
   await runPlanSteps(cwd, [{ name: "apply", command: `nix run ${quote(`${plan.source}#terraform.terraform`)} -- apply -input=false ${quote(plan.plan)}` }], signal);
   const deletion = await deletePlans(cwd, root);
-  return { applied: true, reconciled: false, plan: plan.plan, sha256: plan.sha256, foreignDrift, deletion };
+  return { applied: true, outcome: "applied" as const, reconciled: false, plan: plan.plan, sha256: plan.sha256, foreignDrift, deletion };
 }
 export async function dnsWitness(cwd: string, signal: AbortSignal, hostname: typeof domain | "nixbot.scientistexperience.net" = domain) {
   const target = "magnetite.scientistexperience.net";

@@ -58,13 +58,14 @@ elif verb=='apply':
     assert pathlib.Path(args[-1]).read_text()=='${secret}'
     print('${secret}')
 `, { mode: 0o700 });
-  let planPath, refCommit = "a".repeat(40), applyCount = 0;
+  let planPath, refCommit = "a".repeat(40), applyCount = 0, publicPresent = true;
   const commands = [];
   globalThis.__mqPrivatePlan = {
     snapshot: async () => ({}),
     capture: async (actualCwd, command) => {
       assert.equal(actualCwd, cwd);
       commands.push(command);
+      if (command.startsWith("dig @")) return { stdout: publicPresent ? (command.includes("CNAME") ? "magnetite.scientistexperience.net." : "203.0.113.1") : "", stderr: "", exitCode: 0, state: "exited" };
       assert(command.startsWith("git rev-parse"));
       return { stdout: refCommit, stderr: "", exitCode: 0, state: "exited", terminationSignal: null };
     },
@@ -127,6 +128,27 @@ elif verb=='apply':
     await assert.rejects(actual.applyDns(cwd, root, "moving", stale, signal), /Terraform source ref moved/);
     assert.equal(applyCount, 1, "Moving refs block apply and replay");
     await security.deletePlans(cwd, root);
+    refCommit = "a".repeat(40);
+    const existing = { resource_changes: [], planned_values: { root_module: { resources: [{
+      address: "cloudflare_dns_record.mq", mode: "managed", type: "cloudflare_dns_record", values: raw.resource_changes[1].change.after,
+    }] } } };
+    await writeFile(join(sandbox, "raw.json"), JSON.stringify(existing));
+    const already = await processPort.processCheckpoint(root, "already-plan", () => actual.planDns(cwd, root, "already", deployment, signal));
+    assert.equal(already.evidence.decision.outcome, "already-applied");
+    assert.equal(already.evidence.existingWitness.quorum, 2);
+    assert.equal(already.evidence.decision.record.proxied, false);
+    assert(!JSON.stringify(already).includes(secret));
+    await assert.rejects(actual.applyDns(cwd, root, "already", already.evidence, signal), /No resource creation approved/);
+    assert.equal(applyCount, 1, "Already-applied plans must never invoke apply");
+    publicPresent = false;
+    await assert.rejects(processPort.processCheckpoint(root, "absent-public", () => actual.planDns(cwd, root, "absent-public", deployment, signal)), /Public DNS quorum/);
+    publicPresent = true;
+    await writeFile(join(sandbox, "raw.json"), JSON.stringify({ resource_changes: [] }));
+    await assert.rejects(processPort.processCheckpoint(root, "absent-state", () => actual.planDns(cwd, root, "absent-state", deployment, signal)), /record/);
+    assert.equal(applyCount, 1);
+    await security.deletePlans(cwd, root);
+    await writeFile(join(sandbox, "raw.json"), JSON.stringify(raw));
+    console.log("PASS DNS idempotency: empty plan + state/public witness already-applied; absent state/public DNS blocked; apply never invoked for empty plan");
     console.log("PASS Terraform ref-only saved plan: resolved commit recorded; plan/apply share immutable source; ref movement blocks apply and replay");
     for (const mode of ["build-failure", "failure", "malformed"]) {
       const failing = mode !== "malformed", verb = mode === "build-failure" ? "build" : "plan";
@@ -166,6 +188,6 @@ elif verb=='apply':
     await security.preparePlan(cwd, root, "legacy");
     for (const name of ["legacy.tfplan", "legacy.tfplan.json"]) assert.equal((await stat(join(root, name))).mode & 0o777, 0o600);
     console.log("PASS private plans: actual serialized checkpoints/logs/prompts/reads/ledger/index/output/report are redacted; files 0600; saved binary survives until apply, then both deleted; malformed/failing output withheld; deletion failures observed and surfaced");
-    return { planned, applied, secret };
+    return { planned, applied, already, secret };
   } finally { delete globalThis.__mqPrivatePlan; await rm(sandbox, { recursive: true, force: true }); }
 }

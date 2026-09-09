@@ -502,9 +502,13 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   files.set(savedPlan.plan, "saved plan");
   files.set("/root/saved.apply-intent.json", JSON.stringify({ plan: savedPlan.plan, sha256: savedPlan.sha256 }));
   files.set("/root/saved-reconcile.tfplan", "refreshed plan");
-  files.set("/root/saved-reconcile.tfplan.json", JSON.stringify({ resource_changes: [] }));
+  files.set("/root/saved-reconcile.tfplan.json", JSON.stringify({ resource_changes: [], planned_values: { root_module: { resources: [{
+    address: "cloudflare_dns_record.mq", mode: "managed", type: "cloudflare_dns_record",
+    values: { name: "mq", type: "CNAME", content: "magnetite.scientistexperience.net", proxied: false },
+  }] } } }));
   files.set("/mock/modules/terranix/cloudflare.nix", "dns");
   handler = (command) => {
+    if (command.startsWith("dig @")) return observed(command.includes("CNAME") ? "magnetite.scientistexperience.net." : "203.0.113.1");
     assert.match(command, /^# Terraform step [1-6]\/6:/);
     assert(!command.includes("path:/mock"));
     if (command.includes("nix ")) assert(command.includes(savedPlan.source));

@@ -139,7 +139,7 @@ assert.equal(tools.resetTaskText("- [x] 2.1 input\n- [x] 8.4 apps", slices.s1.ta
 assert.deepEqual(tools.linearOutcome(true, true, false), { kind: "TransitionObserved", comment: "Failed" });
 assert.deepEqual(tools.linearOutcome(true, false, true), { kind: "ReadbackFailed", comment: "Posted" });
 assert.deepEqual(tools.linearOutcome(false, true, true), { kind: "TransitionFailed" });
-assert.equal(tools.dnsDecision({ resource_changes: [] }, true).kind, "Reconciled");
+assert.throws(() => tools.dnsDecision({ resource_changes: [] }, true), /record/);
 assert.throws(() => tools.dnsDecision({ resource_changes: [] }, false));
 assert.equal(tools.dnsDecision(plan, true).kind, "NeedsApply");
 assert.throws(() => tools.dnsDecision({}, true));

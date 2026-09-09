@@ -63,6 +63,32 @@ export function runDnsChecks(tools) {
       replaced.resource_changes[index].change.actions = actions;
       blocked(replaced);
     }
+    const wrongAddress = structuredClone(plan);
+    wrongAddress.resource_changes[index].address = "cloudflare_dns_record.other";
+    blocked(wrongAddress);
+    const record = { address: expected.address, mode: "managed", type: expected.type,
+      values: { ...plan.resource_changes[index].change.after } };
+    const empty = { resource_changes: [], planned_values: { root_module: { resources: [record] } } };
+    for (const reconciling of [false, true]) {
+      const decision = tools.dnsDecision(empty, reconciling);
+      assert.equal(decision.kind, "Reconciled"); // Existing stage skips apply for this branch.
+      assert.equal(decision.outcome, "already-applied");
+      assert.equal(decision.record.content, "magnetite.scientistexperience.net");
+      assert.equal(tools.dnsDecision({ prior_state: { values: empty.planned_values }, resource_changes: [] }, reconciling).outcome, "already-applied");
+      assert.equal(tools.dnsDecision({ format_version: "1.2", planned_values: empty.planned_values }, reconciling).outcome, "already-applied");
+      assert.equal(tools.dnsDecision({ ...empty, resource_changes: plan.resource_changes.map((r) => ({ ...r, change: { actions: ["no-op"] } })) }, reconciling).outcome, "already-applied");
+      for (const absent of [{ resource_changes: [] }, { resource_changes: [], planned_values: { root_module: {} } }]) {
+        assert.throws(() => tools.dnsDecision(absent, reconciling), /record/);
+      }
+      for (const patch of [{ proxied: true }, { content: "elsewhere" }, { type: "A" }, { name: "other" }]) {
+        const bad = structuredClone(empty);
+        Object.assign(bad.planned_values.root_module.resources[0].values, patch);
+        assert.throws(() => tools.dnsDecision(bad, reconciling));
+      }
+      const conflict = structuredClone(empty);
+      conflict.prior_state = { values: { root_module: { resources: [] } } };
+      assert.throws(() => tools.dnsDecision(conflict, reconciling), /record/);
+    }
     const output = structuredClone(plan);
     output.output_changes = { unexpected: { actions: ["update"] } };
     for (const reconciling of [false, true]) assert.throws(() => tools.dnsDecision(output, reconciling), /output changes/);
