@@ -9,6 +9,13 @@
     }:
     let
       cfg = config.services.omnigent-host;
+      adminUsers = lib.filter (
+        name:
+        let
+          user = config.users.users.${name} or { };
+        in
+        (user.isNormalUser or false) && lib.elem "wheel" (user.extraGroups or [ ])
+      ) (lib.attrNames (config.home-manager.users or { }));
       userHome = config.users.users.${cfg.user}.home;
       system = pkgs.stdenv.hostPlatform.system;
       hostEnvironment = cfg.environment // {
@@ -25,8 +32,13 @@
         };
         user = lib.mkOption {
           type = lib.types.str;
-          default = "cameron";
-          description = "Existing Unix account holding runner and vendor credentials.";
+          default =
+            if lib.length adminUsers == 1 then
+              lib.head adminUsers
+            else
+              throw "Set services.omnigent-host.user explicitly: Omnigent requires a unique normal wheel user with a Home Manager configuration for automatic selection";
+          defaultText = lib.literalMD "The unique normal wheel user with a Home Manager configuration.";
+          description = "Existing Unix account holding runner and vendor credentials; set explicitly when automatic selection is ambiguous.";
         };
         hostName = lib.mkOption {
           type = lib.types.str;

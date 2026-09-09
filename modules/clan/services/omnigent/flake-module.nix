@@ -61,6 +61,11 @@ in
         description = "Connects a runner to the instance's single server";
         interface = {
           options = {
+            user = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = "Existing runner account; null uses the platform default. May be set per machine.";
+            };
             extraPackages = lib.mkOption {
               type = lib.types.listOf lib.types.str;
               default = [ ];
@@ -90,7 +95,7 @@ in
                 services.omnigent-host = {
                   enable = true;
                   serverUrl = "https://${(lib.head (lib.attrValues roles.server.machines)).settings.domain}";
-                  user = "cameron";
+                  user = lib.mkIf (settings.user != null) settings.user;
                   hostName = machine.name;
                   extraPackages = map (
                     name: lib.getAttrFromPath (lib.splitString "." name) pkgs
@@ -105,6 +110,7 @@ in
                 services.omnigent-host = {
                   enable = true;
                   serverUrl = "https://${(lib.head (lib.attrValues roles.server.machines)).settings.domain}";
+                  user = lib.mkIf (settings.user != null) settings.user;
                   hostName = machine.name;
                   extraPackages = map (
                     name: lib.getAttrFromPath (lib.splitString "." name) pkgs

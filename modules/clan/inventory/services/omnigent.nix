@@ -10,6 +10,10 @@
         PI_ACP_PI_COMMAND = "atomic";
         OMNIGENT_RUNNER_ENV_PASSTHROUGH = "PI_ACP_PI_COMMAND,PI_CODING_AGENT_DIR";
       };
+      machines.pyrite.settings.environment = {
+        PI_ACP_PI_COMMAND = "atomic";
+        OMNIGENT_RUNNER_ENV_PASSTHROUGH = "PI_ACP_PI_COMMAND,PI_CODING_AGENT_DIR";
+      };
       machines.stibnite.settings.environment = {
         PI_ACP_PI_COMMAND = "atomic";
         OMNIGENT_RUNNER_ENV_PASSTHROUGH = "PI_ACP_PI_COMMAND,PI_CODING_AGENT_DIR";
