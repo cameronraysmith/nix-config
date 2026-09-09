@@ -26,6 +26,11 @@
     home-manager.url = "github:nix-community/home-manager";
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
 
+    # Typed configuration only; pyrite runs and validates with nixpkgs' niri.
+    niri-flake.url = "github:epireyn/niri-flake";
+    niri-flake.inputs.nixpkgs.follows = "nixpkgs";
+    niri-flake.inputs.nixpkgs-stable.follows = "nixpkgs";
+
     sops-nix.url = "github:Mic92/sops-nix";
     sops-nix.inputs.nixpkgs.follows = "nixpkgs";
 

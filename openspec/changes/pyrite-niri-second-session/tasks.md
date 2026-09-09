@@ -1,8 +1,10 @@
 # tasks — niri as a second selectable session on pyrite (slice A)
 
-Nothing here has been implemented. A human reviews this plan first; `openspec/changes/pyrite-niri-second-session/` currently contains artifacts only.
+Phase 1 started on 2026-09-09 but stopped for implementation questions before the machine/home module edits. Only the flake input declaration has been authored; no task is complete. See `logs/niri-slice-a-apply-phase1.md` for the concurrent lock observation, the additional upstream `nixpkgs-stable` input, and the actual home-manager config-file attribute name.
 
 Two standing rules from `openspec/config.yaml:24-30` apply to every verify line below: nix-managed outputs are not verified by reading source — verify by evaluating (`nix eval`), building (`nix build`), or inspecting the delivered path after activation, and say which. And any command over roughly 30 seconds or 10 lines of output is run as `<cmd> 2>&1 | tee logs/<lower-kebab>-$(date +%Y%m%d-%H%M%S).log`, with filters after the `tee`.
+
+Phase boundary: every task requiring git-backed `.#` evaluation/build remains unchecked and is deferred to phase 2, after the orchestrator makes the new module visible. No such evaluation/build has run in phase 1. Deployment and all live-machine checks remain unchecked and require separate authorization. Resume phase 1 after the reported questions are answered; the new home module and pyrite edits are not yet written.
 
 ## 1. The flake input
 
