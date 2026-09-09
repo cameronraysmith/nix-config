@@ -20,7 +20,7 @@ buildPythonPackage {
     python = "py3";
     dist = "py3";
     platform = "any";
-    hash = "sha256-n9sxlaIIC/hMtSCFfJjKehbaPfsTnNZdnD86KQYxapk=";
+    hash = "sha256-rsAyaQqiY6yVTeBNAhzLjtGE8ErDkL1BNX94B3wikF8=";
   };
 
   dependencies = [

@@ -15,7 +15,8 @@ The plan is a working note for a later implementation session and executes nothi
 
 | Reference | Revision | How it was read |
 |---|---|---|
-| `github:omnigent-ai/omnigent` | `381bf638fb31e6a51990d9dab54ea9ef4b933711` (`main`, `pyproject.toml` version `0.13.0.dev0`) | Full, unshallowed clone; the tag `v0.12.0` is present in the clone and resolves to `f04b0354fb5344c1ea8b92795ceb6760a9ad7595`, 285 commits behind the pin (`github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:pyproject.toml:8`) |
+| `github:omnigent-ai/omnigent` (release target) | `eebef804e1fe4beddc61ea232b951cddddd7f890` (`v0.13.0`) | Tagged source and PyPI wheel metadata checked on 2026-09-09 in `/Users/crs58/ghq/github.com/omnigent-ai/omnigent` (see local); D2 packages this release |
+| `github:omnigent-ai/omnigent` (historical research) | `381bf638fb31e6a51990d9dab54ea9ef4b933711` (`main`, `pyproject.toml` version `0.13.0.dev0`) | Original source pin; `v0.12.0` resolves to `f04b0354fb5344c1ea8b92795ceb6760a9ad7595`, 285 commits behind this historical pin (`github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:pyproject.toml:8`); neither is the package target |
 | `github:Qubasa/infra` | `439ded26a84965b6c782b6277626b0d40a90f26d` | Full, unshallowed clone |
 | `github:Lassulus/superconfig` | `afb34bfd269290c395d3cedd8a234a66e7d9ad62` | Full clone |
 | `github:fosskar/buzz-flake` | `6811fbd9bce5a4ec4889d2e6eb48fa75d1a7f4c7` | Whole repository, read only as a module-shape reference (D8) |
@@ -30,7 +31,7 @@ Kanidm citations use `local-kanidm@<revision>:<file>:<lines>` below, resolved ag
 The local fork's `v1.11.0` tag resolves to `ed10baa494adc1549c2e9e3d750465cc1052a7d1`; checkout HEAD is the different development revision `8d4465fa28a30833e730a8ffb7c25dce5e44f544`.
 Publishing a fork is not a deployment prerequisite, and this amendment neither contacted the fork nor changed the checkout.
 The S0 ACP and mobile findings were first gathered against local Omnigent revision `ea89e38cb2488c003cec06ae123640be0c97eb5d` at `/Users/crs58/ghq/github.com/omnigent-ai/omnigent`.
-Release checks on `v0.12.0` confirm the ACP configuration fields, runner environment forwarding, CLI-ticket store, and mobile login endpoints used below; the older citations elsewhere retain their original pins.
+Release checks on `v0.13.0` confirm the ACP configuration fields, runner environment forwarding, CLI-ticket store, and mobile login endpoints used below; the older citations elsewhere retain their original pins.
 
 ## Comparison table
 
@@ -58,30 +59,35 @@ The runner is co-located because a runner needs only an outbound HTTPS connectio
 Placing both roles on `magnetite` first exercises the whole path with one machine; all runners use the same outbound transport and server URL, while S8 generalizes the host role's account selection (D7).
 Run a single-worker server process, not multiple workers or replicas.
 CLI-login tickets live in the process-local `_cli_tickets` dictionary, so minting, callback fulfilment, and polling must reach that same process; PostgreSQL does not share these tickets (`/Users/crs58/ghq/github.com/omnigent-ai/omnigent@f04b0354fb5344c1ea8b92795ceb6760a9ad7595:omnigent/server/routes/auth.py:148-150,528-591`).
-No PostgreSQL backup, monitoring, or observability work is a precondition for this deployment; those items are deferred and are intended to be built with Omnigent itself once it runs (Deferred scope).
+We deliberately defer a PostgreSQL backup system, monitoring, and observability; real backups belong in a separate clan-native change alongside the existing ZFS snapshot work.
+The mandatory pre-deploy `pg_dump` in D3 is a stopgap rollback artifact, not that backup system.
 
 Reversing evidence: measured resident memory of server plus runner plus agent sessions that cannot fit under the limits without starving Kanidm or synapse, or a fleet machine that becomes always-on and is better placed for the runner than the shared VPS.
 
 ### D2 Packaging
 
-Package the released `v0.12.0` wheel from PyPI with `buildPythonPackage` at `pkgs/by-name/omnigent/package.nix`, and expose `omni` and `omnigent` with shebangs pointing to a `python3.withPackages` interpreter containing that library and its dependencies.
-Treat the pinned development revision as the source of truth only for behaviour that the tag-to-pin diff shows unchanged.
+Package the released `v0.13.0` wheel from PyPI with `buildPythonPackage` at `pkgs/by-name/omnigent/package.nix`, and expose `omni` and `omnigent` with shebangs pointing to a `python3.withPackages` interpreter containing that library and its dependencies.
+Pin the sibling `omnigent-client` and `omnigent-ui-sdk` wheels to the same `0.13.0` version.
+Use the tagged release as the current source of truth; older research citations remain evidence only where the release comparison confirms unchanged behaviour.
 
 Superconfig demonstrates the wheel recipe the plan adapts: `buildPythonApplication` on the PyPI wheel with `pythonRelaxDeps` for pins that lag nixpkgs and a `PYTHONPATH` prefix so the CLI's `sys.executable -m omnigent.host._daemon_entry` respawn can import the package (`github:Lassulus/superconfig@afb34bfd269290c395d3cedd8a234a66e7d9ad62:5pkgs/omnigent/package.nix:78-164`; `github:Lassulus/superconfig@afb34bfd269290c395d3cedd8a234a66e7d9ad62:5pkgs/omnigent/package.nix:152-160`); Qubasa's `uv2nix` source build targets `v0.3.0` and a removed web layout and is not reused (`github:Qubasa/infra@439ded26a84965b6c782b6277626b0d40a90f26d:pkgs/omnigent/package.nix:22-29`).
 The PYTHONPATH-only wrapper is superseded by the S4 deployment evidence reported on 2026-09-08: Claude Code Stop hooks on magnetite fail with `No module named 'omnigent'` from the bare `/nix/store/...-python3-3.14.6/bin/python3.14`, leaving responses visible in the terminal but absent from the web view.
-Both `build_mcp_config` and `build_hook_settings` select `python_executable or sys.executable`; the latter registers the Stop hook as `<python> -I -m omnigent.claude_native_hook` (`/Users/crs58/ghq/github.com/omnigent-ai/omnigent@ea89e38cb2488c003cec06ae123640be0c97eb5d:omnigent/claude_native_bridge.py:1496,1575-1585,1611`).
-The release has the same interpreter selection and isolated hook invocation at `f04b0354fb5344c1ea8b92795ceb6760a9ad7595:omnigent/claude_native_bridge.py:1367,1446-1456,1482` in that local repository.
+In `v0.13.0`, the Claude bridge still selects `python_executable or sys.executable` and registers the isolated hook as `<python> -I -m omnigent.harnesses.claude_native.hook` (`/Users/crs58/ghq/github.com/omnigent-ai/omnigent@eebef804e1fe4beddc61ea232b951cddddd7f890:omnigent/harnesses/claude_native/bridge.py:1585,1678,1714,1742,1868`).
+The removed `omnigent.claude_native_hook` module must not appear in package imports or executable probes.
 Foreign subprocesses cannot rely on the CLI's inherited environment, and `-I` ignores `PYTHONPATH` even when it is inherited.
 The replacement interpreter must import Omnigent under `env -i` and isolated mode; keep the existing version, package-build, and CLI `--help` gates.
 The vanixiets `pkgs/by-name` tree is flat with `pkgsNameSeparator = "-"`, so the file is `pkgs/by-name/omnigent/package.nix` and the attribute is `flake.packages.<system>.omnigent` (`github:cameronraysmith/vanixiets@590f75195cc7acbb3926d39397bf860c2c6efc65:modules/nixpkgs/per-system.nix:51-52`).
-The delta between `v0.12.0` and the pinned revision is 285 commits, but of the OIDC surface only `omnigent/server/routes/auth.py` changed, and that change extracts JWKS validation into `_validate_id_token` and adds the optional `reauth=1` path while leaving `email` and `email_verified` handling unchanged (`github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:omnigent/server/routes/auth.py:847-882`; `github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:omnigent/server/routes/auth.py:885-913`); `omnigent/server/oidc.py` is byte-identical between tag and pin.
-The runner surface is likewise stable: the tunnel path, the `~/.omnigent/config.yaml` identity, the harness version floors, and the native-spec `sandbox.type: none` stance are unchanged, and the pin adds only `omnigent host reset-id`, a tightened cross-owner rejection, creation of missing `write_paths`, and OIDC-mode device consent (`github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:omnigent/host/identity.py:188-200`; `github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:omnigent/server/routes/host_tunnel.py:216-249`; `github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:omnigent/inner/bwrap_sandbox.py:509-530`; `github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:omnigent/server/routes/device_auth.py:24-28`), none of which the first deployment depends on.
+The `v0.12.0` → `v0.13.0` comparison leaves `omnigent/server/oidc.py` byte-identical; the auth route extracts token validation and adds optional `reauth=1` without changing ordinary OIDC login (`github:omnigent-ai/omnigent@eebef804e1fe4beddc61ea232b951cddddd7f890:omnigent/server/routes/auth.py:177-222,340-371,844-911`).
+The tunnel URL, protocol major 1, config-home precedence, host identity and ACP schema retain the deployed contract; this release needs no NixOS, Darwin, Clan, OIDC or ACP configuration change.
+The new tmux floor is 3.3; pinned nixpkgs and the observed fleet provide 3.7b.
+`omnigent host reset-id` is shipped in 0.13.0 but remains a recovery operation, not an upgrade action.
 Runtime tools for sessions (`tmux`, `git`, `uv`, `nodejs_22`, bare `python3`, `bubblewrap`, and the harness CLIs) are supplied by the runner unit's `path` in D7 rather than baked into the package wrapper, so the package stays harness-agnostic and the server unit carries no agent toolchain.
-`psycopg` is not a baseline dependency at either revision and appears only in the `databricks` extra, so D3 needs the PostgreSQL driver added explicitly, as in the upstream server image (`github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:pyproject.toml:282-287`; `github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:deploy/docker/Dockerfile:157-159`).
+`psycopg` remains optional upstream: `v0.13.0` moves `psycopg[binary]<4,>=3.1` into the `postgres` extra, which `databricks` now includes; D3 still needs the driver explicitly.
+The release metadata adds no mandatory dependency beyond the sibling version pins, so retain all existing dependencies and the five `pythonRelaxDeps` entries; do not enable KMS, Vault or sandbox-provider extras.
 The Nix derivation substitutes `python3Packages.psycopg` for upstream's `psycopg[binary]`; pinned nixpkgs propagates `psycopg-c` linked against Nix `libpq` (`/nix/store/0r5rmqimlyq2qf8vjv9xk035shvfmrsm-source/pkgs/development/python-modules/psycopg/default.nix:61-88,165-168`).
 The Python line is the pinned nixpkgs default `python3Packages`, and any dependency the wheel pins tighter than nixpkgs ships is relaxed with `pythonRelaxDeps`.
 
-Reversing evidence: a `v0.12.0` wheel that fails Alembic migration against PostgreSQL 16, a dependency absent from the pinned `python3Packages` set, or a behaviour the plan depends on that the tag-to-pin diff shows was introduced after the tag.
+Reversing evidence: a `v0.13.0` wheel that fails Alembic migration against PostgreSQL 16, a dependency absent from the pinned `python3Packages` set, or a required behaviour contradicted by the tagged source.
 
 ### D3 Database
 
@@ -95,7 +101,19 @@ The cluster is PostgreSQL 16: `services.postgresql.package` defaults through `mk
 The cognee module, which forces `listen_addresses` and adds `scram-sha-256` rules, is not in the `magnetite` import list, so the shared instance listens on `localhost` and the peer rule above is the one in effect (`github:cameronraysmith/vanixiets@590f75195cc7acbb3926d39397bf860c2c6efc65:modules/nixos/cognee.nix:191-195`; `github:cameronraysmith/vanixiets@590f75195cc7acbb3926d39397bf860c2c6efc65:modules/machines/nixos/magnetite/default.nix:39-57`).
 Ensured databases and roles are created by `postgresql-setup.service`, a oneshot that runs after `postgresql.service`, and `postgresql.target` requires both units (`github:NixOS/nixpkgs@85f62611fa3f3eacbcfe3bc7a6d6518b443ca442:nixos/modules/services/databases/postgresql.nix:870-881`; `github:NixOS/nixpkgs@85f62611fa3f3eacbcfe3bc7a6d6518b443ca442:nixos/modules/services/databases/postgresql.nix:744-752`), so the server unit declares `after` and `requires` on `postgresql.target`, as buildbot-nix does, rather than on `postgresql.service` alone, which could start Omnigent's Alembic migration before the `omnigent` database exists (`github:nix-community/buildbot-nix@d193d375fe5c4be29f13dc34552903cae6813b07:nixosModules/master.nix:1047`).
 `CREATE DATABASE` is issued without locale or encoding arguments, so the `omnigent` database inherits the cluster defaults (`github:NixOS/nixpkgs@85f62611fa3f3eacbcfe3bc7a6d6518b443ca442:nixos/modules/services/databases/postgresql.nix:915-917`); whether Omnigent's schema cares is Q3.
-No backup of this database is a precondition for the first deployment (D1).
+Four new Alembic migrations run automatically at server start: `ga1b2c3d4e5f` → `gb1b2c3d4e5f` → `gc1b2c3d4e5f` → `gd1b2c3d4e5f` → `ge1b2c3d4e5f`.
+They add nullable host termination/deletion fields, then add and remove a background-title preference (`github:omnigent-ai/omnigent@eebef804e1fe4beddc61ea232b951cddddd7f890:omnigent/db/migrations/versions/{gb1b2c3d4e5f_add_terminating_sandbox_id,gc1b2c3d4e5f_add_hosts_deleted_at,gd1b2c3d4e5f_add_background_session_titles_user_setting,ge1b2c3d4e5f_drop_background_session_titles_user_setting}.py:18-34`).
+Migration failure is fatal and presents as a service restart loop, not a degraded but usable server (`github:omnigent-ai/omnigent@eebef804e1fe4beddc61ea232b951cddddd7f890:omnigent/db/utils.py:512-527,686-736`).
+**0.12.0 rejects a database at a newer revision, so a binary rollback alone cannot recover** (`github:omnigent-ai/omnigent@f04b0354fb5344c1ea8b92795ceb6760a9ad7595:omnigent/db/utils.py:502-522`).
+
+Accepted operational decision: do not build a PostgreSQL backup system now because this deployment uses the Omnigent database only for host registrations and session rows.
+Take a single `pg_dump` of `omnigent` on magnetite immediately before each deploy as the rollback artifact.
+The deploy phase's `updateMachine` runs it before `clan machines update`, using a timestamped private file under `/var/backups/omnigent/`; absent, zero-length or failed dumps block the update.
+It persists the path and byte size in an adjacent `<dump>.receipt.json` before activation and includes both in the update receipt; the SSH capture log retains them even if activation later fails.
+This same-machine artifact is a stopgap pending real clan-native backups alongside the existing ZFS snapshot work, not protection against loss of magnetite.
+If migration fails, the accepted recovery is a human decision to restore the dump with the matching old generation or reset the Omnigent database; the workflow performs neither automatically.
+We accept the reset cost: host re-registration with a new `host_id` per host, re-login on every host, and loss of conversation history; restoring instead recovers only what the pre-deploy dump contains.
+Quiesce sessions before deployment and stop server writes before restore-or-reset; never merely switch back to 0.12.0 against the migrated database.
 
 Reversing evidence: an Omnigent Alembic migration that requires a specific collation or encoding the cluster default does not provide, a `pg_hba.conf` rule added by another module that precedes the peer rule and rejects the socket connection, or a change to `system.stateVersion` or `services.postgresql.package` that moves the cluster off major 16.
 
@@ -138,6 +156,8 @@ The shell posts for a ticket, opens the returned same-origin login URL in the sy
 Only the Omnigent server exchanges the authorization code with Kanidm, so one confidential client suffices for laptop browsers and these mobile shells.
 Do not add a public mobile client, custom-scheme OAuth redirect, or device-grant requirement for this path.
 Phone passkey and laptop cross-device usability still require operator testing; the server's single-worker restriction is necessary for the shared ticket flow, not evidence of a successful mobile login.
+Electron system-browser OIDC handoff [#4650](https://github.com/omnigent-ai/omnigent/pull/4650) and [#4649](https://github.com/omnigent-ai/omnigent/issues/4649) remain OPEN at 0.13.0 (checked 2026-09-09).
+The browser-login workaround for Electron passkeys therefore stands; this release does not enable Electron's platform authenticator.
 
 Reversing evidence: a decoded `id_token` from the deployed server for an `omnigent_users` member with a primary mail that lacks `email_verified: true`, a Kanidm upgrade whose claim builder changes the `mail_primary` rule, or an Omnigent revision that starts reading a claim other than `email` on the generic OIDC path.
 
@@ -263,7 +283,7 @@ omp then uses its default `~/.omp/agent` state, whose credentials and selected m
 Keep omp approvals on deliberately: omp ACP requests permission for bash, and this runner executes unsandboxed as `cameron` (`/Users/crs58/ghq/github.com/can1357/oh-my-pi@a1b254047d12e143b7c6011536e918c6c35c5906:packages/coding-agent/src/session/session-tools.ts:697-719`).
 The two false integration flags do not disable ACP permission requests; add neither `--auto-approve` nor a permission-mode bypass (`/Users/crs58/ghq/github.com/omnigent-ai/omnigent@f04b0354fb5344c1ea8b92795ceb6760a9ad7595:omnigent/inner/acp_executor.py:970-1033`).
 
-The native omp RPC harness is expected to supersede this generic ACP path, as tracked by [omnigent-ai/omnigent#6714](https://github.com/omnigent-ai/omnigent/issues/6714) and [#6695](https://github.com/omnigent-ai/omnigent/pull/6695); it is not a shipped feature in the pinned release.
+The native omp RPC harness is expected to supersede this generic ACP path, but [omnigent-ai/omnigent#6714](https://github.com/omnigent-ai/omnigent/issues/6714) and [#6695](https://github.com/omnigent-ai/omnigent/pull/6695) remain OPEN at 0.13.0 (checked 2026-09-09); our generic `acp:oh-my-pi` row stands.
 [#4917](https://github.com/omnigent-ai/omnigent/issues/4917) is not a reason to wait: disabling MCP avoids its `session/new` stall, and [#5234](https://github.com/omnigent-ai/omnigent/pull/5234) merged `inject_system_prompt=false` before 0.12.0.
 The fix commit `583b4f0e0275982df71f29d38417bdf1ecd49bbf` is an ancestor of v0.12.0, whose executor sends no MCP servers and skips injected instructions with both flags false (`omnigent/inner/acp_executor.py:697-710,725-739,1503-1512` at `f04b0354fb5344c1ea8b92795ceb6760a9ad7595`).
 This shipped configuration contradicts an interpretation of #6714's retrospective comment that generic ACP must wait for RPC; it does not establish a completed turn with current credentials or approvals.
@@ -373,8 +393,8 @@ Reversing evidence: a decision to route Buzz sessions through the Omnigent serve
 
 - D1 Laptop-only runners with no runner on `magnetite`: `pyrite` suspends and hibernates and `stibnite` is a Darwin controller, so no session could run while both are asleep (`github:cameronraysmith/vanixiets@590f75195cc7acbb3926d39397bf860c2c6efc65:modules/machines/nixos/pyrite/default.nix:218-224`).
 - D1 A dedicated KVM or microvm sandbox host: the inventory holds only `magnetite`, `pyrite`, and `stibnite` (`github:cameronraysmith/vanixiets@590f75195cc7acbb3926d39397bf860c2c6efc65:modules/clan/inventory/machines.nix:65-75,77-86,99-108`); deferred.
-- D1 Backup, monitoring, or observability as preconditions: deferred by decision and intended to be built with Omnigent.
-- D2 Building from the pinned `main` revision: `0.13.0.dev0` is unreleased and the tag-to-pin diff shows no behaviour the first deployment depends on.
+- D1 A full backup system, monitoring, or observability as preconditions: deferred by decision; D3's single pre-deploy dump is mandatory pending the separate clan-native backup change.
+- D2 Building from the historical `main` snapshot `0.13.0.dev0`: use the released `v0.13.0` wheels rather than an unreleased development snapshot.
 - D2 The upstream Docker image under `virtualisation.oci-containers`: it bundles its own PostgreSQL client and Python and would bypass the shared instance, peer authentication, and clan vars.
 - D2 A two-letter shard path `pkgs/by-name/om/omnigent/`: the vanixiets tree is flat (`github:cameronraysmith/vanixiets@590f75195cc7acbb3926d39397bf860c2c6efc65:modules/nixpkgs/per-system.nix:51-52`).
 - D3 SQLite in `StateDirectory`: upstream documents it as the zero-config fallback and the shared PostgreSQL instance already exists on the host.
@@ -406,7 +426,7 @@ Reversing evidence: a decision to route Buzz sessions through the Omnigent serve
 
 Files to add or modify, without implementation commands.
 
-- Add `pkgs/by-name/omnigent/package.nix`: `buildPythonPackage` from the `v0.12.0` wheel with `python3Packages.psycopg` and `pythonRelaxDeps`, then expose the two commands using the interpreter of a Python environment containing that library and its dependencies (D2); retain `flake.packages.<system>.omnigent` and `checks.<system>.package-omnigent`.
+- Add `pkgs/by-name/omnigent/package.nix`: `buildPythonPackage` from the `v0.13.0` wheel with `python3Packages.psycopg` and `pythonRelaxDeps`, then expose the two commands using the interpreter of a Python environment containing that library and its dependencies (D2); retain `flake.packages.<system>.omnigent` and `checks.<system>.package-omnigent`.
 - Add `modules/nixos/omnigent.nix` as `flake.modules.nixos.omnigent`: options `services.omnigent.enable`, `package` (`mkPackageOption`), `domain`, `port`, `environmentFiles`, `cookieSecretGenerator` (default `omnigent-cookie-secret`), and `oidc.{issuer,clientId,allowedDomains}` with allowed domains unset by default; effects are the static account, additive PostgreSQL database/ownership declarations, a single-worker server unit ordered after and requiring `postgresql.target`, `StateDirectory = "omnigent"`, secret environment files, the D4 admin roster and `OMNIGENT_ADMIN_LIST_PATH`, memory limits, the named cookie generator, and the D6 nginx vhost.
 - Add `modules/home/ai/omnigent/{acp.nix,default.nix,merge-config.sh}` for the shared ACP value, `programs.omnigent` options, package installation, and writable runner configuration merge; the server module consumes the same value through its store-backed `OMNIGENT_CONFIG_HOME` (D7).
 - Add `modules/nixos/omnigent-host.nix` as `flake.modules.nixos.omnigent-host`: options `services.omnigent-host.enable`, `package`, `serverUrl`, `user`, `hostName`, `extraPackages`, and `environment` (`attrsOf str`, default `{ }`); emit the D7 foreground unit, `User = cfg.user`, HOME derived from that user, required PATH including Atomic, Bun, and bare `pkgs.python3` before `cfg.extraPackages`, merged environment, `NoNewPrivileges = true`, and memory limits without namespace-restricting hardening.
@@ -651,13 +671,14 @@ These inspections establish rendered configuration only; log-directory ownership
 - Managed sandbox providers: freestyle.sh, Modal, Daytona, Blaxel, Kubernetes, and OpenShell.
 - A dedicated KVM or microvm sandbox host.
 - Harnesses beyond Claude Code, Codex, Pi, Atomic through `acp:atomic`, and omp through `acp:oh-my-pi`; the native omp RPC replacement remains deferred (D7).
-- `magnetite` PostgreSQL backups, monitoring, and observability, intended to be built with Omnigent once it runs.
+- A real `magnetite` PostgreSQL backup system in its own clan-native change alongside the existing ZFS snapshot work; D3's mandatory per-deploy dump is only a stopgap.
+  Monitoring and observability also remain deferred.
 - Migration of the runner to a dedicated `omnigent-host` user after Home Manager aspect PRs #2957, #2980, and #2982 merge.
 - `enforce_sandbox` policy for native sessions after the dedicated-user migration, including the `PrivateUsers` and namespace-hardening review that enforcement requires.
 - Direnv protected-root handling for Pi and Atomic: operator decision between filtering protected variables and scoping the extension, with behavior unchanged in S5 (D7).
 - Activation of any API-key fallback provider only after OAuth login for each harness is verified in a session.
 - Separate Omnigent identities per runner or per person, if the single-owner model proves limiting.
-- `omnigent host reset-id` and other post-`v0.12.0` runner features, taken when the package moves past the tag.
+- Routine use of `omnigent host reset-id`: shipped in `v0.13.0`, but reserved for deliberate identity recovery rather than normal deployment.
 
 ## Open questions
 

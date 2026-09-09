@@ -5,7 +5,7 @@
   runCommand,
 }:
 let
-  version = "0.12.0";
+  version = "0.13.0";
   py = python3Packages;
   omnigent-client = py.callPackage ./omnigent-client.nix { inherit version; };
   omnigent-ui-sdk = py.callPackage ./omnigent-ui-sdk.nix {
@@ -29,7 +29,7 @@ let
       python = "py3";
       dist = "py3";
       platform = "any";
-      hash = "sha256-cDiE5p/7lE51VEo7OVoepm+nNZmIQ62uk8qtvxajt0Q=";
+      hash = "sha256-IQvXOpMsN0iN7o9wzkJXMiCuioSjMf4SxP2D/1pAtxM=";
     };
 
     pythonRelaxDeps = [
@@ -89,7 +89,7 @@ let
     pythonImportsCheck = [
       "omnigent"
       "omnigent.cli"
-      "omnigent.claude_native_hook"
+      "omnigent.harnesses.claude_native.hook"
       "omnigent_client"
       "omnigent_ui_sdk"
       "psycopg"
@@ -124,8 +124,8 @@ runCommand "omnigent-${version}"
         --replace-fail '#!${py.python.interpreter}' '#!${pythonEnv.interpreter}'
     done
     env -i ${pythonEnv.interpreter} -I -c '
-    import omnigent, omnigent.claude_native_hook, subprocess, sys
-    subprocess.run([sys.executable, "-I", "-m", "omnigent.claude_native_hook", "--help"], env={}, check=True)
+    import omnigent, omnigent.harnesses.claude_native.hook, subprocess, sys
+    subprocess.run([sys.executable, "-I", "-m", "omnigent.harnesses.claude_native.hook", "--help"], env={}, check=True)
     '
     env -i HOME="$TMPDIR" "$out/bin/omnigent" --help > omnigent-help.txt
     cat omnigent-help.txt
