@@ -143,8 +143,9 @@ Changing the schedule in the flake and pushing to the default branch triggers a 
 
 ## Mergify gating
 
-Merge automation gates on both buildbot status checks and any remaining GitHub Actions checks.
-The typical mergify configuration for a repository that has completed the phase 2 migration:
+For queue-managed GitHub repositories, external handoff follows `git-stacked-pr-integration` §Queue authorization, including its installation hold.
+Vanixiets retains its working Mergify queues until the coordinated cutover; the example below does not describe that repository's current checks or the adopted queue's gate.
+This historical phase-2 buildbot migration example applies outside the adopted protocol:
 
 ```yaml
 pull_request_rules:
@@ -159,10 +160,11 @@ pull_request_rules:
         method: merge
 ```
 
-The `check-fast-forward` condition is a GitHub Actions check that verifies the PR can be fast-forwarded to main.
+In that historical configuration, `check-fast-forward` verifies that a PR can be fast-forwarded to main.
 This is separate from buildbot-nix and remains in GitHub Actions because it is a git operation.
 
-Repositories in the phase 1 to phase 2 transition period may have both `check-fast-forward` and a GitHub Actions nix-check job listed alongside the buildbot checks.
+Repositories following that legacy phase-1-to-phase-2 migration may have both `check-fast-forward` and a GitHub Actions nix-check job listed alongside buildbot checks.
 Once the nix-check job is removed in phase 2 cleanup, only the buildbot checks and fast-forward check remain.
 
-Additional conditions (review approval counts, label requirements, branch protection rules) are orthogonal to the buildbot integration and configured per-repository as needed.
+Additional conditions in that legacy configuration are repository-specific.
+They do not establish authorization or review enforcement for the adopted queue; consult the policy owner.

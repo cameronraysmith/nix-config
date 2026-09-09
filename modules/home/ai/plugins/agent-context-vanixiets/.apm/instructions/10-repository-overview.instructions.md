@@ -42,7 +42,11 @@ Documentation has its own lane under `packages/docs`: `just docs-lint`, `just do
 ## Version control
 
 The default branch is `main`.
-Merge queue behaviour is declared in `.github/mergify.yml`: human pull requests fast-forward so their commit SHAs survive, while bot pull requests are batched and rebased.
+Mergify's queues in `.github/mergify.yml` remain configured and are the working landing path until the operator-coordinated App-installation window.
+The replacement gitea-mq service is deployed at https://mq.scientistexperience.net with App id 4875422 and `batchMax = 5`, but manages zero repositories because the App is deliberately not yet installed.
+Its required external checks are `nixbot/nix-eval` and `nixbot/nix-build`.
+At cutover, external handoff follows `git-stacked-pr-integration` §Queue authorization in every local VCS mode.
+Follow that owner's installation-readiness hold before authorizing; instruction delivery precedes installation, and Mergify queue removal belongs to the same coordinated window.
 
 Checkouts of this repository are commonly colocated with [jujutsu](https://jj-vcs.github.io/jj/), in which case a detached git `HEAD` is normal and must not be reattached.
 Because this is a flake repository, flake evaluation resolves the root through git, so a second working tree must be created with `git worktree add` rather than `jj workspace add`.

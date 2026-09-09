@@ -2,6 +2,9 @@
 
 This reference documents the migration recipe from hand-crafted CI workflows to nix-native CI, using the ironstar repository migration as the canonical template.
 The pattern is designed so that each phase independently delivers value and the repository remains fully functional between phases.
+The buildbot/Mergify landing examples describe that legacy migration, outside the adopted queue-managed GitHub protocol.
+For those managed repositories, external handoff follows `git-stacked-pr-integration` §Queue authorization, including its installation hold.
+Vanixiets retains its working Mergify queues until the coordinated installation window; the migration examples below do not define its current checks or future queue gate.
 
 
 ## Canonical commits
@@ -20,7 +23,7 @@ Deprecated CI artifacts (the old `ci-build-category.sh` script, the superseded w
 This preserves git history for reference while removing the dead code from the active workflow directory.
 
 `5d1a3e4` is the phase 2 transition commit.
-It adds `buildbot-nix.toml` to the repository root, configures mergify to gate on `buildbot/nix-eval` and `buildbot/nix-build` status checks, and converts the GitHub Actions nix-check job to a passthrough that reports buildbot results.
+In that historical migration, it adds `buildbot-nix.toml`, configures Mergify to gate on `buildbot/nix-eval` and `buildbot/nix-build`, and converts the GitHub Actions nix-check job to a buildbot-results passthrough.
 The `build-with-buildbot` topic is added to the repository's GitHub settings.
 
 `32bbb2a` is the final cleanup commit.
@@ -74,7 +77,8 @@ attribute = "checks.x86_64-linux"
 For repositories that target only one system, this prevents evaluation failures from cross-system attributes that the worker cannot build.
 Multi-system repositories may omit `attribute` or scope to multiple systems if workers for each system are available.
 
-Mergify configuration gates merges on buildbot results:
+The legacy migration used the following Mergify gate on buildbot results.
+It applies outside the adopted queue protocol; current authorization for queue-managed GitHub repositories follows `git-stacked-pr-integration` §Queue authorization.
 
 ```yaml
 pull_request_rules:
@@ -88,7 +92,7 @@ pull_request_rules:
         method: merge
 ```
 
-Additional GitHub Actions checks that remain (fast-forward verification, bootstrap checks, CD workflows) are listed alongside the buildbot checks in the mergify conditions.
+In that legacy configuration, remaining GitHub Actions checks were listed alongside buildbot checks in the Mergify conditions.
 
 
 ## What stays in GitHub Actions
@@ -98,7 +102,7 @@ Certain workflows remain in GitHub Actions regardless of buildbot-nix delegation
 CD workflows (deploy, release, publish) use platform-native effects that interact with GitHub APIs, container registries, or external services.
 These are discussed in the SKILL.md effect execution strategies section.
 
-Fast-forward merge checks validate that a PR can be fast-forwarded to main without creating a merge commit.
+The historical fast-forward check verifies that a PR can land without a merge commit; it is not the adopted queue's landing gate.
 This is a git operation, not a nix check.
 
 Flake.lock update automation (renovate, dependabot, or custom workflows) creates update PRs on a schedule.

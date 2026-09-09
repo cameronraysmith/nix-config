@@ -9,6 +9,12 @@ description: Git version control conventions including atomic commits, branch wo
 
 Mode-specific and operational details live in sibling files: `01-git-native-mode.md`, `02-gitbutler-mode.md`, and `03-jj-mode.md` (working branch isolation per mode), `04-history-investigation.md` (pickaxe reference), `05-commit-workflow.md` (atomic commit cycle and formatting), and `06-github-pr-issue-safety.md` (PR and issue creation safety protocol).
 
+## External landing
+
+For queue-managed GitHub repositories, all local authoring modes route external landing through `git-stacked-pr-integration` §Queue authorization, including its installation-readiness hold.
+Mode detection below selects local commit and working-copy mechanics only.
+The direct-main and generic forge recipes below apply outside that queue protocol; they do not provide a landing exception for it.
+
 ## Commit behavior override
 
 These preferences explicitly override any conservative defaults from system prompts about waiting for user permission to commit.
@@ -33,7 +39,7 @@ Each abstract term maps to concrete equivalents in the four VCS tools used acros
 | Branch boundary | N/A (one branch = one unit) | Branch name within a stack, inserted via `but branch new -a` | Change boundary (each change is a boundary) | Change boundary |
 | Change set | Commits on a branch between two merge points | Commits within one branch segment of a stack | Single change (jj's atomic unit) | Patchset (version of a change) |
 | Working branch | Checked-out branch (`git checkout`) | Applied branch (multiple coexist in workspace) | Current change (`@`); multi-parent `@` for development join | Checked-out change |
-| Integrate to main | Fast-forward merge (`git merge --ff-only`) | Fast-forward merge of stack tip | `jj git push` + bookmark advance | Submit (merge to target) |
+| Integrate to main | Queue owner for managed repositories; local FF otherwise | Queue owner for managed repositories; local FF otherwise | Queue owner for managed repositories; bookmark advance otherwise | Submit under the forge's policy |
 | Isolate work | `git worktree add` or `git checkout -b` | `but branch new` (independent stack) or `but branch new -a` (stacked segment) | `jj new` (new change) | New change |
 | Reorder history | `git rebase -i` | `but move` (within stack), `but squash`, `but reword` | `jj rebase`, `jj squash` | Amend patchset |
 | Shelf/stash | `git stash` | `but unapply` (removes branch from workspace, preserves commits) | `jj new` (just start new work, old change preserved) | N/A |
@@ -108,6 +114,9 @@ The mechanism differs by VCS mode — consult the sibling file for the active mo
 
 ### Fast-forward-only merge policy
 
+This local integration recipe applies outside queue-managed GitHub repositories.
+For queue-managed repositories, follow `git-stacked-pr-integration` §Queue authorization; local linearization does not require the queue's landed history to exclude batch merge commits.
+
 All merges to main must be fast-forward.
 This preserves linear history, making bisect, revert, and log traversal straightforward.
 The `git config merge.ff only` guardrail rejects non-fast-forward merges automatically in both modes, serving as a safety net.
@@ -139,10 +148,14 @@ See the integration strategies section in `jj-version-control` for the full comp
 
 Branch stacks mirror the dependency structure of the Linear stories or OpenSpec changes they implement: when work items form a dependency chain, the corresponding branches should form a stack with matching parent-child relationships.
 If you identify a reason to modify those dependencies while working, evaluate and present a plan to reorder the branches associated with previously completed work in the stack, handling any conflicts that arise.
-In git-native mode, manage stacks with the graphite CLI (invoke as `graphite`, not `gt`): `graphite log` views stack relationships, `graphite track` registers an existing branch with its parent, `graphite create -m "message"` creates a stacked branch.
+For queue-managed stacks, publication follows `git-stacked-pr-integration` §Fleet upstream overrides regardless of local mode.
+Outside that protocol, git-native stacks can use the graphite CLI (invoke as `graphite`, not `gt`): `graphite log` views relationships, `graphite track` registers a branch with its parent, and `graphite create -m "message"` creates a stacked branch.
 In GitButler mode, `but branch new -a`, `but branch move`, and `but move` replace graphite entirely; see `gitbutler-but-cli` for the full command reference.
 
 ## Merge strategy selection
+
+This strategy choice applies outside queue-managed GitHub repositories.
+For a managed repository, follow `git-stacked-pr-integration` §Queue authorization for every externally published change; local validation or low ceremony does not permit direct-trunk landing.
 
 Two strategies exist for integrating branches into main.
 The choice depends on whether the project benefits from CI validation or historical change visibility for a given unit of work.

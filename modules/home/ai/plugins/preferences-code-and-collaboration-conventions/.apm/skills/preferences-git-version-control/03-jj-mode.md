@@ -141,14 +141,10 @@ In Manual mode, also close the corresponding bead:
 bd close {issue-ID} --reason "Implemented in $(jj log -r '{epic-ID}-descriptor' --no-graph -T 'commit_id.short(8)')"
 ```
 
-To merge a completed epic to main, advance the main bookmark:
-
-```bash
-jj new
-jj bookmark set main -r @-
-jj git push --bookmark main
-jj bookmark delete {epic-ID}-descriptor
-```
+For queue-managed GitHub repositories, return the completed, verified ref and evidence to the orchestrator without publication or landing.
+The publisher follows `git-stacked-pr-integration` §Queue authorization, including its installation hold and upstream overrides.
+This external handoff leaves the shared working-copy restrictions and `jj-version-control` §Worktree interop return-by-ref discipline unchanged.
+Do not advance or push the default branch as a landing shortcut for this queue.
 
 ## No direnv initialization needed
 
@@ -172,8 +168,10 @@ When epic-scoped work spans multiple parallel streams — a Linear initiative or
 The mechanical implementation leverages jj's multi-parent working copy; the pattern generalizes conceptually to GitButler's applied-branches model and git-native worktrees.
 For the canonical operational recipe, theoretical foundations, and dependency-graph-to-jj mapping (including the beads-to-jj mapping used in Manual mode), see the `jj-version-control` skill's `diamond-workflow.md`.
 
-The sibling tools `jj-linearize-join` and `jj-stack-submit` are the canonical tooling for the diamond → linearized-chain → N+1 PR submission path: the former linearizes a development join into a stacked-base chain, the latter handles forge submission (push + N+1 PR creation via `gh`/`tea`).
-See the `jj-version-control` skill's `diamond-workflow.md` Phase 4 for the operational recipe.
+`jj-linearize-join` supplies the local diamond-to-linearized-chain transformation.
+Return that verified chain ref for publication under `git-stacked-pr-integration` §Queue authorization.
+The generic `jj-stack-submit` N+1 recipe, where retained for other forges, is outside the queue-managed GitHub route.
+See `jj-version-control/diamond-workflow.md` §Phase 4 for local mechanics and the external handoff.
 
 ## See also
 

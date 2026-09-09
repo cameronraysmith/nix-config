@@ -10,34 +10,38 @@ For the theoretical treatment of the diamond workflow (lattice theory, event str
 For the operational reference on the development join entity (edit-route cycle, conflict behavior, join + wip structure, composite maintenance invariant), see `SKILL.md` in this directory.
 For mode-detection context (when this document applies versus git-native or GitButler), see the `preferences-git-version-control` skill's `03-jj-mode.md`.
 
+These tiers choose local working-copy ceremony, independently of risk class and PR shape.
+Every externally published change in a queue-managed GitHub repository follows `git-stacked-pr-integration` §Queue authorization, including the installation-readiness hold.
+Workers return verified refs and evidence; the publisher handles external handoff under that owner.
+
 ## Tier 1: anonymous chain on `@`
 
 What it is: commits accumulate on `@` as an anonymous chain descending from the repository's default trunk bookmark (typically `main`).
 No bookmark beyond the trunk one is created.
-When the chain is ready, the trunk bookmark advances to the chain tip and gets pushed directly.
+When the chain is ready for external publication, return its verified ref or name a task bookmark for publication under the policy owner.
 
 Trigger to be in this tier: default state.
 Routine repo maintenance, small fixes, atomic commits each individually safe to land on the trunk, work where local `just check-fast` provides adequate verification severity.
 
 Cost: zero ceremony.
-No bookmark management, no PR, no buildbot wait, no Mergify.
+Local work needs no task bookmark until publication requires one.
 Verification severity is bounded by what local checks can establish on `currentSystem`.
 
 Operations: regular `jj describe -m "..."` + `jj new` cycle as documented in `SKILL.md`.
-Push via `jj bookmark move main --to @-` then `jj git push --bookmark main`.
+External handoff follows `git-stacked-pr-integration` §Queue authorization; tier 1 does not permit a direct-trunk push for this queue.
 
 ## Tier 2: single named bookmark
 
 What it is: one bookmark created at a specific change on an existing anonymous chain (or at `@-`), pushed to the remote to engage the nix-flake-pr-cycle workflow.
-Buildbot picks up the bookmark, runs flake checks across the declared system matrix, and the resulting PR becomes the merge gateway.
-CI validation is the severity-raising mechanism — it exercises fleet coverage that local `currentSystem` checks cannot.
+The task ref supports PR publication and CI feedback through `nix-flake-pr-cycle`.
+CI feedback extends local validation to the configured CI system set; the owner governs external authorization.
 
 Trigger to enter: the work's verification severity needs exceed what local `just check-fast` provides.
 Concretely, this fires when the change touches multi-platform artifacts, when the change is large enough that human review would benefit from a unified PR view, or when the change must clear the fleet-wide check matrix before reaching the trunk.
-The bookmark exists *for* the PR/CI gateway, not for any other reason.
+The bookmark supplies a stable ref for publication or handoff.
 
-Cost: one bookmark name, one push, one PR open/monitor/ready/merge cycle.
-The agent must monitor buildbot, address failures, and either trigger Mergify auto-merge or merge manually when checks pass.
+Cost: one bookmark name and a PR publication/feedback cycle.
+Address failures through `nix-flake-pr-cycle`, then follow `git-stacked-pr-integration` §Queue authorization for asynchronous handoff.
 
 Operations to enter (retroactive bookmark creation on an existing anonymous chain):
 
@@ -46,10 +50,9 @@ jj bookmark create <name> -r <change-id>   # or -r @- for the chain tip
 jj git push --bookmark <name>
 ```
 
-Then follow `nix-flake-pr-cycle` for the canonical draft-PR / buildbot-monitor / ready / Mergify sequence.
-
-Operations to integrate: rebase the bookmark onto trunk when ready, then either let Mergify FF-merge the PR or perform the FF merge directly.
-After merge, delete the bookmark and return to tier 1 for subsequent work.
+These task-bookmark examples are for ordinary PRs; registered stacks use the owner's publication overrides.
+Follow `nix-flake-pr-cycle` for validation and CI feedback, and `git-stacked-pr-integration` §Queue authorization for external handoff.
+After remote completion is observed, propose bookmark cleanup under `SKILL.md` §Post-session cleanup and return to tier 1 as appropriate.
 
 ## Tier 3: diamond workflow with development join
 
@@ -65,8 +68,8 @@ All content leaves `@` by routing DOWNWARD only — `jj absorb`, or `jj squash -
 The one sanctioned `jj rebase` naming `@` is the destination form `jj rebase -r @ -d <chain-a> -d <chain-b> …` that re-anchors the empty `@` when adding or removing a chain; it does not drift `@`.
 Where any splice or by-relocation recipe references a separate stacked commit `<X>`, that `<X>` must be a SEPARATE already-sealed non-wip commit, never `@`/`[wip]` itself.
 See `SKILL.md` invariant (iii-b) and §"The edit-route cycle" for the full canon and command templates.
-Each chain becomes its own PR via FF merge.
-Integration is sequential rebase linearization in phase 4 (serialize).
+Phase 4 linearizes the local chains and returns a verified ref for publication under `git-stacked-pr-integration` §Queue authorization.
+The local tier does not select a different landing mechanism.
 
 Trigger to enter: two or more independent work streams in the same repo concurrently.
 Examples include multiple beads issues within an epic being worked in parallel, a vocab refactor running alongside a peer agent's separate workstream, or parallel experiments that should compose into a coherent integrated state for validation.
@@ -91,18 +94,10 @@ jj new @ -m "wip"
 
 Describe `[merge]` once with the state-based convention `join N=<cardinality>: <alphabetical, comma-separated parent chain bookmarks>` (unbookmarked parents render as backtick-wrapped short change_ids), per the join + wip structure documented in `SKILL.md`; do not re-describe `[merge]` after creation, and rewrite the description in full whenever parents change so it always declares the current state.
 
-Operations to dissolve (phase 4 serialize): each chain rebases onto an updated trunk in dependency order.
-
-```bash
-# For each chain, in dependency order:
-jj rebase -b <bookmark> -d main
-# Then FF-merge each PR sequentially.
-```
-
-Once all chains are linearized to the trunk and bookmarks are deleted, `@` returns to a single-parent state on the trunk — back to tier 1.
-
-See `diamond-workflow.md` Phase 4 "serialize (integrate)" for the canonical N+1 stacked-base + aggregate PR exit ramp, including the GitHub auto-close-on-default-branch-reachability behavior and the 3-command post-merge recipe.
-The sibling tools `jj-linearize-join` and `jj-stack-submit` automate the local linearization and the forge submission steps respectively.
+Operations to dissolve and linearize remain in `diamond-workflow.md` §Phase 4.
+`jj-linearize-join` performs the local transformation; return its verified result for publication under `git-stacked-pr-integration` §Queue authorization.
+After local dissolution, work can resume in a single-parent chain without waiting for landing.
+Cleanup of submitted bookmarks requires later remote-completion evidence and the existing user approval.
 
 For the four-phase theoretical treatment and lattice-theoretic foundation, see `diamond-workflow.md`.
 For the operational entity-level reference of the development join, see `SKILL.md`.
@@ -123,15 +118,9 @@ jj new <existing-bookmark> <new-bookmark> -m "join N=2: <alphabetical bookmarks,
 jj new @ -m "wip"
 ```
 
-Tier 3 → tier 1 (after the diamond completes and all chains merge to trunk):
-
-```bash
-# For each chain, in dependency order:
-jj rebase -b <bookmark> -d main
-# FF-merge each PR, then delete the bookmark:
-jj bookmark delete <bookmark>
-# When all chains are integrated, @ descends from a single trunk parent — tier 1 resumes.
-```
+Tier 3 → tier 1: use `diamond-workflow.md` §Phase 4 to linearize and leave the development join, then return the verified ref for publication under the policy owner.
+After remote completion is observed, follow the approved cleanup procedure in `SKILL.md` §Post-session cleanup.
+No tier transition performs manual fast-forward or Mergify landing for queue-managed repositories.
 
 Descent is always available once the tier's trigger resolves.
 Do not stay at a higher tier than the work currently warrants; ceremony has a real coordination cost.

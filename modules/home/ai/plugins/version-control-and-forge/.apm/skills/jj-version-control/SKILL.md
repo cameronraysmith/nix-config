@@ -342,7 +342,9 @@ This structure provides continuous integration feedback (conflicts surface immed
 Conflict behavior: when antichain elements contain conflicting changes, `@` displays first-class jj conflicts as a continuous integration signal — informational, non-blocking.
 See "Conflict behavior in composite `@`" below for resolution options.
 
-Lifecycle: created via `jj new <bookmark-a> <bookmark-b> [...] -m "join N=<cardinality>: <alphabetical bookmarks>"` followed by `jj new @ -m "wip"` when promoting from tier 2 to tier 3 (see `tiered-ceremony.md`); maintained via the edit-route cycle and route-and-extend pattern below, with the `[merge]` description rewritten in full whenever the parent set changes so it always declares the current state; dissolved during the four-phase diamond workflow's serialize phase, where chains are rebased sequentially onto main and fast-forwarded (see `diamond-workflow.md`).
+Lifecycle: create the join with `jj new <bookmark-a> <bookmark-b> [...] -m "join N=<cardinality>: <alphabetical bookmarks>"`, then `jj new @ -m "wip"` when promoting from tier 2 to tier 3 (see `tiered-ceremony.md`).
+Maintain it through the edit-route cycle and route-and-extend pattern below, rewriting the `[merge]` description in full whenever its parent set changes.
+At completion, `diamond-workflow.md` §Phase 4 linearizes chains and returns a verified ref for publication; queue-managed GitHub landing follows `git-stacked-pr-integration` §Queue authorization.
 
 Not to use for: workspace isolation needs.
 The development join is the tier-3 mechanism for parallelizing related chains in one working copy.
@@ -931,7 +933,7 @@ Both are valid exits from a conflicted join.
 ### Splice-below-join
 
 When mid-diamond work surfaces a `<base>`-bound commit — hotfix, formatting, config tweak, dependency bump — that belongs on `<base>` below all chains, splice it into the base-to-join interval.
-The accumulated splice region fast-forwards `<base>` independently of when the diamond's chains land.
+The accumulated splice region can be submitted independently of the diamond's chains; queue-managed external handoff follows `git-stacked-pr-integration` §Queue authorization.
 
 Splice is the route for base-bound content only, and is not the general route out of `[wip]`.
 Decide by asking who inherits the content rather than by which recipe is familiar: fleet-wide configuration, shared modules and dependency bumps go below, while one chain's feature or documentation appends to that chain's tip instead (see §"Extending a chain with a new commit (route-and-extend pattern)").
@@ -1179,11 +1181,14 @@ Check `jj status` and `jj log -r 'mutable() ~ @ ~ ::main'` to understand in-prog
 The development join is ephemeral workspace scaffolding that is dissolved before integration.
 It does not appear in the final history on main.
 
-The default integration strategy is sequential rebase linearization: rebase each chain onto main in dependency order, producing a purely linear history with no merge commits.
+Local preparation uses sequential rebase linearization: rebase each chain in dependency order to produce a linear submission chain.
+For queue-managed GitHub repositories, return that verified chain ref and evidence to the publisher, who follows `git-stacked-pr-integration` §Queue authorization and §Fleet upstream overrides.
+This route applies to single-chain work too and includes the installation-readiness hold.
+Local linearization does not constrain the queue's tested batch history or authorize a default-branch push.
 The canonical recipe is documented in full in `diamond-workflow.md` Phase 4 — that document is authoritative when this section and the diamond-workflow recipe diverge.
 The summary here covers the mechanical steps in single-chain and multi-chain cases.
 
-*Sequential rebase linearization*: dissolve the development join first by abandoning `[wip]` and `[merge]`, then rebase chains sequentially in linearization order, fast-forwarding main to the tip via bookmark advance.
+*Sequential rebase linearization*: dissolve the development join first by abandoning `[wip]` and `[merge]`, then rebase chains sequentially in linearization order and name the resulting tip for return-by-ref.
 Dissolution-first is canonical: abandoning the multi-parent structure before rebase ensures each chain rebases against its actual base rather than the join.
 
 Two cases determine the linearization order.
@@ -1220,49 +1225,18 @@ jj bookmark create <aggregate-bookmark> -r chain-c
 
 The `jj-linearize-join` sibling tool performs the dissolution and sequential rebase steps with `--dry-run`, real-run, and embedded `test` subcommand modes.
 
-For a single chain, this reduces to advancing main directly to the chain tip:
+For a single chain, return its existing verified tip; no local default-branch advance is needed for publication.
+For multiple chains, return the linearized tip and its validation evidence.
+Workers do not publish or land; the orchestrator publishes delegated refs through the policy owner's upstream overrides and hands off through `git-stacked-pr-integration` §Queue authorization.
 
-```bash
-jj bookmark set main -r <chain-tip>
-jj git push --bookmark main
-```
+After local linearization, the `jj-linearize-join` tool exits to a single-parent working copy with `jj new <aggregate-bookmark>`.
+Here the aggregate bookmark names the local result; it does not require an extra aggregate PR or select a separate merge gate.
+Authoring can continue without waiting for landing.
+Once remote completion is observed during later work, fetch and inspect before proposing bookmark cleanup under §Post-session cleanup.
 
-This is the jj equivalent of fast-forward merge — advancing a bookmark creates no merge commits.
-
-*N+1 stacked-base PR submission (forge-driven exit)*: push N chain bookmarks plus one aggregate bookmark, then create N stacked-base chain PRs plus one aggregate PR targeting main, all initially draft.
-The aggregate PR is the merge gate.
-GitHub auto-closes a PR as MERGED when its head commit becomes reachable from the default branch regardless of the PR's specified base branch; advancing main to the aggregate tip therefore closes all N+1 PRs in one push.
-The `jj-stack-submit` sibling tool performs this submission (push N+1 bookmarks via `jj git push`, create N stacked-base chain PRs + 1 aggregate PR via `gh` or `tea`, post a backlink comment on the aggregate, mark the aggregate ready).
-
-The full post-merge recipe is three commands:
-
-```bash
-jj bookmark set main -r <aggregate-bookmark>
-jj git push --remote origin --bookmark main
-jj git fetch --tracked --remote origin   # auto-deletes local bookmarks for branches GitHub deleted on merge
-```
-
-After integration, exit the development join by resetting `@` to a single parent.
-In forge-driven merge flows where main is not locally advanced ahead of the push, the canonical exit is `jj new <aggregate-bookmark>` rather than `jj new main`, because the local main bookmark may not yet reflect the remote state at the moment of exit.
-The `jj-linearize-join` tool performs this exit step automatically.
-In the secondary case where main was locally advanced before the push, `jj new main` is equivalent.
-Individual chain bookmarks can be deleted in the post-session cleanup (or are auto-deleted by `jj git fetch --tracked` when the corresponding GitHub branches were deleted on merge).
-
-*Separate PRs (legacy)*: push each chain's bookmark independently for review before linearizing.
-Push all at once: `jj git push --bookmark chain-a --bookmark chain-b --bookmark chain-c`.
-Or push one at a time: `jj git push --bookmark chain-a`.
-Each pushed bookmark becomes a branch on the remote, suitable for PR creation via `gh pr create`.
-This pattern remains valid for unrelated chains but is superseded by the N+1 stacked-base pattern above for epic-scoped work where the chains share a logical integration boundary.
-When creating standalone PRs, use the bookmark name as the head branch and main as the base:
-
-```bash
-jj git push --bookmark chain-a
-gh pr create -d -a "@me" -B main -H chain-a -t "feat: description" -b ""
-```
-
-Follow the PR creation protocol in `preferences-git-version-control` for placeholder content and safety conventions.
-
-For GitHub-only repositories, Mergify's Stack-Aware Base feature would handle single-CI-gate behavior natively without an explicit aggregate PR; see the footnote in `diamond-workflow.md` Phase 4 for the trade-off against forge-agnostic compatibility.
+The generic `jj-stack-submit` N+1 stacked-base recipe and Mergify Stack-Aware Base references are outside the queue-managed GitHub protocol.
+For this protocol, chain-to-ref-to-stack publication and authorization always follow `git-stacked-pr-integration` §Queue authorization.
+Standalone PR creation still follows `preferences-git-version-control` §GitHub PR and Issue creation safety.
 
 ### Vocabulary cross-reference
 
@@ -1329,7 +1303,8 @@ If tidy sweeps too broadly, recover with `jj undo`.
 
 ## Post-session cleanup
 
-After advancing the main bookmark to the tip of completed work (whether from a single chain or a linearized multi-parent session), present a cleanup summary for user approval before executing.
+After observing remote completion and fetching the updated target, present a cleanup summary for user approval before executing.
+Authorization alone is not completion; do not delete queued refs or include them in a tidy sweep.
 
 Gather diagnostics:
 
@@ -1612,13 +1587,9 @@ Issue-level completion within a chain:
 Epic-level completion:
 
 1. All issues within the epic are closed.
-2. For single-chain epics, advance main to the epic chain tip and push:
-   ```bash
-   jj bookmark set main -r {epic-ID}-descriptor
-   jj git push --bookmark main
-   ```
-3. For multi-chain epics, use the N+1 stacked-base + aggregate PR pattern documented in `diamond-workflow.md` Phase 4 and the "Integration strategies at completion" section above.
-   The `jj-linearize-join` and `jj-stack-submit` sibling tools automate the transformation and submission.
+2. Return the verified single-chain tip, or use `diamond-workflow.md` §Phase 4 to linearize multiple chains and return that ref with evidence.
+3. For queue-managed GitHub repositories, the publisher follows `git-stacked-pr-integration` §Queue authorization and its upstream overrides, without direct-main or N+1 aggregate landing.
+   The `jj-linearize-join` tool supplies local linearization only; the queue owns asynchronous landing.
 4. After main reflects the epic's integrated state, fetch to auto-delete merged remote bookmarks:
    ```bash
    jj git fetch --tracked --remote origin
