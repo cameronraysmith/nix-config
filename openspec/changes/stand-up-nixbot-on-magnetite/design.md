@@ -98,6 +98,12 @@ Multi-architecture builds: aarch64 work would come from the host's remote-builde
 - **Choice**: no change to `buildbot-nix.toml`, and no `nixbot.toml` added.
 - **Rationale**: the file is upstream buildbot-nix's own convention, and nixbot still parses that exact filename with the same schema plus one additional key. The expectation that it was the artifact that would not carry over is refuted; it is one of the things that carries over most cleanly. A `nixbot.toml` becomes meaningful only once a repository is actually built by nixbot, which is a later change.
 
+### D11: The `world-assumptions` delta carries the whole designation table, including rows nixbot has no use for
+
+- **Choice**: keep this change's `MODIFIED` block for `Grounded vocabulary for behavioral requirements` a superset of the corpus table as it stands at archive time — currently all 54 rows, including the eight about laptop suspend, inactivity, wake sources, panels, login screens, desktop sessions, settings panels, and power sources that `pyrite-never-sleep` contributed and that have no bearing on a build service.
+- **Rationale**: a `MODIFIED` block is full replacement content, not a patch, and this requirement is shared with every other change that grounds vocabulary. A delta carrying only this change's own terms replaces the corpus table wholesale on archive and deletes every other change's rows — silently, with no error and no conflict, because a shorter table is still well-formed. That is the regression repaired on 2026-09-09; the method and the before-and-after row sets are in `logs/nixbot-world-assumptions-superset-repair.md`, and the eight rows originate in `openspec/changes/archive/2026-09-09-pyrite-never-sleep/`.
+- **Maintenance obligation**: if any further change modifies this requirement and archives before this one, refresh this delta from `openspec/specs/world-assumptions/spec.md` before archiving nixbot. Trimming rows that look irrelevant to nixbot is the defect, not the cleanup.
+
 ## Risks / Trade-offs
 
 [Risk] Capacity contention on a 32 GiB host: two eval-and-build services drawing from one memory pool, one nix store under quota, and one sandbox tree, with a prior disk incident as precedent → Mitigation: D9 sizes the new service explicitly rather than by core count; the service builds nothing on the day it lands (D3), so contention begins only when a later change opts a repository in, and that change owns re-observing the budget.

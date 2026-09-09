@@ -99,6 +99,14 @@ Twelve terms carry two senses in this repository today and are disambiguated bel
 | forge credential | — | a secret value that authenticates a build service to a forge, or authenticates a forge's delivery to that service | shared |
 | build capacity | — | the finite memory, processor time, and store disk available on one host at one time, shared by everything running on it | world-only |
 | operator | — | the person who maintains this fleet's hosts and holds the credentials its services use | world-only |
+| suspended state | — | a low-power state in which a host stops running entirely and does nothing further until a wake source rouses it | world-only |
+| inactivity | — | an elapsed interval during which no person operates a host's own keyboard, pointer, or panel | world-only |
+| wake source | — | a physical or electrical event a suspended host will resume for, such as a control pressed on the machine itself | shared |
+| panel | — | the display built into a laptop, which is the surface a person standing at that machine looks at | shared |
+| login screen | — | the state in which a host displays a credential prompt at its panel and no person is logged in | shared |
+| desktop session | — | the state in which a person is logged in at a host's panel and interacting with a graphical desktop | shared |
+| settings panel | — | the interface a desktop offers a person for changing that desktop's own settings, at the machine | shared |
+| power source | — | whether a laptop is drawing from mains power or from its own battery | shared |
 
 #### Scenario: A term resolves to two phenomena
 
