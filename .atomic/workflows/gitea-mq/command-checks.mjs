@@ -96,15 +96,48 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
     return;
   }
   {
-    const start = commands.length;
-    handler = (command) => {
-      if (command === "dig +short CNAME mq.scientistexperience.net") return observed("magnetite.scientistexperience.net.\n");
-      if (command === "dig +short A magnetite.scientistexperience.net") return observed("49.12.12.74\n");
-      throw Error("Unexpected DNS witness command");
-    };
-    await actual.dnsWitness("/mock", signal);
-    assert.deepEqual(commands.slice(start), ["dig +short CNAME mq.scientistexperience.net", "dig +short A magnetite.scientistexperience.net"]);
-    console.log("PASS DNS witness queries the normalized FQDN (mocked dig)");
+    const resolvers = ["1.1.1.1", "8.8.8.8"];
+    const target = "magnetite.scientistexperience.net";
+    const expected = resolvers.flatMap((resolver) => [
+      `dig @${resolver} +time=2 +tries=1 +short CNAME mq.scientistexperience.net`,
+      `dig @${resolver} +time=2 +tries=1 +short A mq.scientistexperience.net`,
+      `dig @${resolver} +time=2 +tries=1 +short A ${target}`,
+    ]);
+    async function witness(profile, passes) {
+      const start = commands.length;
+      handler = (command) => {
+        // The ambient resolver silently omits CNAME, just like the workstation.
+        if (!command.includes("@")) return observed(command.includes("CNAME") ? "" : "192.0.2.7\n");
+        assert(expected.includes(command), command);
+        return profile(command);
+      };
+      let evidence;
+      if (passes) evidence = await actual.dnsWitness("/mock", signal);
+      else await assert.rejects(actual.dnsWitness("/mock", signal), (error) => {
+        assert.match(error.message, /propagation.*retr/i);
+        evidence = error.evidence;
+        return true;
+      });
+      assert.deepEqual(commands.slice(start), expected);
+      assert.equal(evidence.quorum, 2);
+      assert.deepEqual(evidence.resolvers.map((r) => r.resolver), resolvers);
+      assert.deepEqual(evidence.resolvers.flatMap((r) => r.queries.map((q) => q.command)), expected);
+      return evidence;
+    }
+    const good = (command) => observed(command.includes("CNAME") ? `${target}.\n` : "192.0.2.7\n");
+    await witness(good, true);
+    await witness((command) => observed(command.includes("CNAME") ? "" : "192.0.2.7\n"), true);
+    await witness((command) => observed(command.includes("CNAME") ? "" : command.endsWith(`A ${target}`) ? "192.0.2.7\n" : `${target}.\n192.0.2.7\n`), true);
+    const wrong = (command) => observed(command.endsWith(`A ${target}`) ? "192.0.2.7\n" : command.includes("CNAME") ? "elsewhere.example.\n" : "192.0.2.8\n");
+    await witness((command) => command.includes("@1.1.1.1") ? good(command) : wrong(command), false);
+    await witness(wrong, false);
+    await witness((command) => observed(command.includes("CNAME") ? `${target}.\n` : "198.51.100.42\n"), true);
+    await witness(() => observed(""), false);
+    await witness((command) => observed(command.includes("CNAME") ? "" : command.includes("@1.1.1.1") ? "192.0.2.7\n" : "192.0.2.8\n"), false);
+    await witness((command) => command.includes("@1.1.1.1") ? good(command) : observed("", 9, "timed out"), false);
+    const timeout = await witness(() => observed("", 9, "communications error: timed out"), false);
+    assert(timeout.resolvers.every((r) => r.queries.every((q) => q.exitCode === 9 && q.stderr.includes("timed out"))));
+    console.log("PASS DNS witness: explicit public 2/2 quorum, CNAME-empty/A-chain fallback, disagreement/foreign/empty blocking, changed target A, bounded recorded timeouts");
   }
   {
     const sha = "ab".repeat(20), dnsPath = "/mock/modules/terranix/cloudflare.nix";
@@ -743,9 +776,16 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   let tables = "public|queue|table|gitea-mq";
   let acme = "LoadState=loaded\nResult=success\nExecMainStatus=0\nExecMainStartTimestampMonotonic=42";
   handler = (command) => {
+    if (command.startsWith("dig @")) {
+      assert.match(command, /^dig @(?:1\.1\.1\.1|8\.8\.8\.8) \+time=2 \+tries=1 \+short /);
+      return observed(command.includes("CNAME") ? "magnetite.scientistexperience.net.\n" : "198.51.100.42\n");
+    }
     if (command.startsWith("python3 -c")) return observed({ url: `https://${slices.domain}/webhook/github` });
     if (command.includes("is-active")) return observed("active");
-    if (command.startsWith("curl")) return observed(command.includes("-X POST") ? "401" : "200 ssl_verify=0");
+    if (command.startsWith("curl")) {
+      assert.match(command, /--resolve '(?:mq|nixbot)\.scientistexperience\.net:443:198\.51\.100\.42'/);
+      return observed(command.includes("-X POST") ? "401" : "200 ssl_verify=0");
+    }
     if (command.includes("-p Environment")) return observed(slices.runtimeEnvironment.join(" "));
     if (command.includes("SELECT d.datname")) return observed("gitea-mq|gitea-mq|f|f");
     if (command.includes("\\dt public")) return observed(tables);

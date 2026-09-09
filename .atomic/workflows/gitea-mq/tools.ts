@@ -964,11 +964,47 @@ export async function applyDns(cwd: string, root: string, name: string, plan: Aw
   const deletion = await deletePlans(cwd, root);
   return { applied: true, reconciled: false, plan: plan.plan, sha256: plan.sha256, foreignDrift, deletion };
 }
-export async function dnsWitness(cwd: string, signal: AbortSignal) {
-  const cname = await run(cwd, `dig +short CNAME ${domain}`, signal);
-  const address = await run(cwd, "dig +short A magnetite.scientistexperience.net", signal);
-  if (cname.trim() !== "magnetite.scientistexperience.net." || address.trim() !== "49.12.12.74") throw new Blocked("Public DNS is not the unproxied magnetite CNAME/A pair");
-  return { cname, address };
+export async function dnsWitness(cwd: string, signal: AbortSignal, hostname: typeof domain | "nixbot.scientistexperience.net" = domain) {
+  const target = "magnetite.scientistexperience.net";
+  const note = "DNS propagation can lag; the witness may be retried.";
+  type Query = Pick<Awaited<ReturnType<typeof capture>>, "command" | "stdout" | "stderr" | "state" | "exitCode" | "logPath">;
+  const resolvers: { resolver: string; queries: Query[]; cnames: string[]; addresses: string[]; resolved: string[]; agrees: boolean }[] = [];
+  const lines = (text: string) => text.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const ipv4 = (text: string) => /^(?:\d{1,3}\.){3}\d{1,3}$/.test(text) && text.split(".").every((octet) => Number(octet) <= 255);
+  for (const resolver of ["1.1.1.1", "8.8.8.8"]) {
+    const queries = [];
+    for (const question of [`CNAME ${hostname}`, `A ${hostname}`, `A ${target}`]) {
+      // dig's own deadline bounds each query; the enclosing tool signal also
+      // cancels the process group. capture persists exact commands and output
+      // even for dig's timeout exit (9), rather than run throwing prematurely.
+      const command = `dig @${resolver} +time=2 +tries=1 +short ${question}`;
+      const result = await capture(cwd, command, signal);
+      queries.push({ command, stdout: result.stdout, stderr: result.stderr, state: result.state, exitCode: result.exitCode, logPath: result.logPath });
+    }
+    const [cname, resolved, address] = queries;
+    const ok = (query: typeof cname) => query.state === "exited" && query.exitCode === 0;
+    const cnames = ok(cname) ? lines(cname.stdout) : [];
+    const chain = ok(resolved) ? lines(resolved.stdout) : [];
+    const addresses = ok(address) ? lines(address.stdout).filter(ipv4) : [];
+    const ips = chain.filter(ipv4);
+    const names = chain.filter((line) => !ipv4(line));
+    const expectedName = (name: string) => name.replace(/\.$/, "") === target;
+    // An explicit foreign name is contradictory evidence, not an invitation
+    // to bypass it using a coincidentally shared A address.
+    const foreign = cnames.some((name) => !expectedName(name)) || names.some((name) => !expectedName(name));
+    const cnameMatches = cnames.length > 0 && cnames.every(expectedName);
+    const addressMatches = ips.length > 0 && ips.every((ip) => addresses.includes(ip));
+    resolvers.push({ resolver, queries, cnames, addresses, resolved: chain, agrees: !foreign && (cnameMatches || addressMatches) });
+  }
+  // Strict majority of two is two: a single public resolver cannot attest DNS.
+  const commonAddresses = resolvers[0].addresses.filter((ip) => resolvers.every((resolver) => resolver.addresses.includes(ip)));
+  const consistent = resolvers.every((resolver) => resolver.cnames.length > 0) ||
+    commonAddresses.some((ip) => resolvers.every((resolver) => resolver.cnames.length > 0 || resolver.resolved.includes(ip)));
+  const evidence = { hostname, target, quorum: 2, resolvers, commonAddresses, note };
+  if (resolvers.filter((resolver) => resolver.agrees).length < evidence.quorum || !consistent) {
+    throw Object.assign(new Blocked(`Public DNS quorum does not confirm magnetite. ${note}\n${JSON.stringify(evidence)}`), { evidence });
+  }
+  return evidence;
 }
 export async function readRules(cwd: string, root: string, signal: AbortSignal) {
   const rulesets = await json(cwd, `gh api ${api}/rulesets --paginate --slurp`, signal);
@@ -1077,8 +1113,16 @@ export async function hookWitness(cwd: string, appId: number, signal: AbortSigna
 }
 export async function runtimeProbe(cwd: string, approved: string, beforeFile: string, appId: number, signal: AbortSignal, deferInstallation = false) {
   if (await run(cwd, ssh("systemctl is-active gitea-mq.service"), signal) !== "active") throw new Blocked("gitea-mq inactive");
-  for (const hostname of [domain, "nixbot.scientistexperience.net"]) {
-    const status = await run(cwd, `curl --max-time 30 -sS -o /dev/null -w '%{http_code} ssl_verify=%{ssl_verify_result}' ${quote(`https://${hostname}/`)}`, signal);
+  const publicDns = [];
+  const endpoints = new Map<string, string>();
+  for (const hostname of [domain, "nixbot.scientistexperience.net"] as const) {
+    const dns = await dnsWitness(cwd, signal, hostname);
+    publicDns.push(dns);
+    const address = dns.resolvers[0].addresses.find((ip) => dns.resolvers.every((resolver) => resolver.addresses.includes(ip)));
+    if (!address) throw new Blocked(`No public resolver quorum on magnetite A for HTTPS. ${dns.note}\n${JSON.stringify(dns)}`);
+    const endpoint = quote(`${hostname}:443:${address}`);
+    endpoints.set(hostname, endpoint);
+    const status = await run(cwd, `curl --noproxy '*' --resolve ${endpoint} --max-time 30 -sS -o /dev/null -w '%{http_code} ssl_verify=%{ssl_verify_result}' ${quote(`https://${hostname}/`)}`, signal);
     if (status !== "200 ssl_verify=0") throw new Blocked(`TLS/HTTP failed: ${hostname}: ${status}`);
   }
   const environment = await run(cwd, ssh("systemctl show gitea-mq.service -p Environment --value"), signal);
@@ -1094,11 +1138,11 @@ export async function runtimeProbe(cwd: string, approved: string, beforeFile: st
   if (/authentication (?:failed|error)|cannot enable allow_auto_merge|creat(?:ed|ing).*ruleset/i.test(journal)) throw new Blocked("Startup authentication/setup failure");
   const acme = await run(cwd, ssh("systemctl show acme-mq.scientistexperience.net.service -p LoadState -p Result -p ExecMainStartTimestampMonotonic -p ExecMainStatus"), signal);
   assertAcmeSuccess(acme);
-  const unsigned = await run(cwd, `curl --max-time 30 -sS -o /dev/null -w '%{http_code}' -X POST https://${domain}/webhook/github -d '{}'`, signal);
+  const unsigned = await run(cwd, `curl --noproxy '*' --resolve ${endpoints.get(domain)!} --max-time 30 -sS -o /dev/null -w '%{http_code}' -X POST https://${domain}/webhook/github -d '{}'`, signal);
   if (!["401", "403"].includes(unsigned)) throw new Blocked("Unsigned webhook was not rejected");
   const hookResult: VResult = deferInstallation ? { kind: "NotRun", reason: DEFERRED_INSTALLATION_REASON } : await hookWitness(cwd, appId, signal);
   await rulesWitness(cwd, approved, beforeFile, signal);
-  return { deployed: true, settings: runtimeEnvironment, tables, acme, hook: hookResult, redelivery: { kind: "NotRun" as const, reason: "Operator App-settings redelivery and matched journal evidence not performed by workflow" }, unsigned, database: db };
+  return { deployed: true, publicDns, settings: runtimeEnvironment, tables, acme, hook: hookResult, redelivery: { kind: "NotRun" as const, reason: "Operator App-settings redelivery and matched journal evidence not performed by workflow" }, unsigned, database: db };
 }
 export async function candidate(cwd: string, signal: AbortSignal) {
   const pulls = parse(Type.Array(Type.Array(Pull)), await json(cwd, `gh api '${api}/pulls?state=open&per_page=100' --paginate --slurp`, signal)).flat();
