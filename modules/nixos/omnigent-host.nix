@@ -56,6 +56,7 @@
             inputs.self.packages.${system}.atomic
             inputs.llm-agents.packages.${system}.codex
             inputs.llm-agents.packages.${system}.pi
+            inputs.llm-agents.packages.${system}.omp
             pkgs.bun
             pkgs.nodejs_22
             pkgs.python3

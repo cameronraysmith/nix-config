@@ -250,6 +250,13 @@ in
             displayName = "Omnigent";
             originUrl = "https://omni.scientistexperience.net/auth/callback";
             originLanding = "https://omni.scientistexperience.net";
+            # docs/images/omnigent-logo.svg is the 1024x1024 square mark.
+            # The platform-assets 1734x454 wordmark renders poorly in a square tile;
+            # favicon/vscode copies are only 32x32.
+            imageFile = pkgs.fetchurl {
+              url = "https://raw.githubusercontent.com/omnigent-ai/omnigent/ea89e38cb2488c003cec06ae123640be0c97eb5d/docs/images/omnigent-logo.svg";
+              hash = "sha256-ugW4JnZsXeq4nd/MTxbQnLg/7b7lVLUmceNcicj52fs=";
+            };
             preferShortUsername = true;
             scopeMaps.omnigent_users = [
               "openid"

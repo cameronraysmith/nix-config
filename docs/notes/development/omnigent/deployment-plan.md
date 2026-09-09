@@ -104,6 +104,9 @@ Provision a confidential Kanidm OAuth2 client `omnigent` whose only scope map is
 
 The client is declared with the options that exist at the pinned `services.kanidm.provision.systems.oauth2.<name>` surface, namely `displayName`, `originUrl`, `originLanding`, `basicSecretFile`, `preferShortUsername`, and `scopeMaps`, with `public`, `enableLegacyCrypto`, `allowInsecureClientDisablePkce`, `enableLocalhostRedirects`, `supplementaryScopeMaps`, and `claimMaps` left at their defaults (`github:NixOS/nixpkgs@85f62611fa3f3eacbcfe3bc7a6d6518b443ca442:nixos/modules/services/security/kanidm.nix:584-588`; `github:NixOS/nixpkgs@85f62611fa3f3eacbcfe3bc7a6d6518b443ca442:nixos/modules/services/security/kanidm.nix:590-726`), which is the shape the deployed `synapse` client already has (`github:cameronraysmith/vanixiets@590f75195cc7acbb3926d39397bf860c2c6efc65:modules/nixos/kanidm.nix:183-212`).
 `originUrl` is `https://omni.scientistexperience.net/auth/callback` because Omnigent's redirect URI is `OMNIGENT_OIDC_REDIRECT_URI` or `https://<OMNIGENT_DOMAIN>/auth/callback` (`github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:omnigent/server/oidc.py:243-278`).
+S6 adds the Kanidm tile's `imageFile` through `pkgs.fetchurl`, following the Matrix client precedent in `modules/nixos/kanidm.nix`.
+Use `docs/images/omnigent-logo.svg` at Omnigent commit `ea89e38cb2488c003cec06ae123640be0c97eb5d`, with hash `sha256-ugW4JnZsXeq4nd/MTxbQnLg/7b7lVLUmceNcicj52fs=`.
+This is the 1024x1024 square mark; the platform-assets 1734x454 wordmark fits a square tile poorly, while the favicon/vscode copies are only 32x32.
 A new group is used rather than `matrix_users` because Kanidm admits a request only when every requested scope is in the union of the scope maps of groups the identity belongs to, returning `AccessDenied` otherwise (`local-kanidm@ed10baa494adc1549c2e9e3d750465cc1052a7d1:server/lib/src/idm/oauth2.rs:3487-3514`).
 Membership of `omnigent_users` gates admission independently of Matrix membership; declare the group beside `matrix_users` with `members = [ ]` and `overwriteMembers = false`, and grant membership operationally with `kanidm group add-members omnigent_users <user>` (`modules/nixos/kanidm.nix:167-181`).
 The issuer is the server origin with path `/oauth2/openid/{client_id}` and no trailing slash (`local-kanidm@ed10baa494adc1549c2e9e3d750465cc1052a7d1:server/lib/src/idm/oauth2.rs:961-980`).
@@ -169,14 +172,14 @@ Reversing evidence: a tunnel disconnect trace showing nginx closing idle WebSock
 ### D7 Sandbox and runner
 
 Deploy the co-located runner as the declarative system service `omnigent-host.service`, with `User = cameron` and foreground command `omnigent host --server https://omni.scientistexperience.net`.
-Enable Claude Code, Codex, Pi, and Atomic via ACP, accept unsandboxed native sessions initially, and harden later in the order dedicated user first and `enforce_sandbox` second.
+Enable Claude Code, Codex, Pi, Atomic over pi-acp, and omp over its own-ACP entry; accept unsandboxed sessions initially and harden later in the order dedicated user first and `enforce_sandbox` second.
 
 Never daemonize this unit with `--background` or run `omnigent host enable` alongside it.
 The CLI-to-daemon environment filter drops `PI_*` values before the host-to-runner forwarding step; naming them later in `OMNIGENT_RUNNER_ENV_PASSTHROUGH` cannot restore lost values (`/Users/crs58/ghq/github.com/omnigent-ai/omnigent@ea89e38cb2488c003cec06ae123640be0c97eb5d:omnigent/cli.py:681-727,3267-3317`).
 Use the explicit `--server` option rather than relying on positional shorthand; systemd owns the foreground process and its lifecycle.
 The `cameron` account receives the Home Manager `ai` aggregate, including Atomic, so the runner can use the same `~/.claude`, `~/.codex`, `~/.pi/agent`, and `~/.atomic/agent` state as the operator (`modules/home/users/aliases.nix:17-22`; `modules/home/users/crs58/meta.nix:15-32`; `modules/home/ai/atomic/default.nix:33-70,116`).
 The declarative form is a system service rather than a Home Manager user service because the clan `host` role emits a `nixosModule`, because a system unit needs neither `loginctl enable-linger` nor a user session to start at boot, and because vanixiets already runs an agent under a named user this way: the hermes-agent clan service defaults `serviceUser` to `cameron`, derives the home from `config.users.users.${serviceUser}.home`, and sets `User = settings.serviceUser` on a system unit (`github:cameronraysmith/vanixiets@590f75195cc7acbb3926d39397bf860c2c6efc65:modules/clan/services/hermes-agent/flake-module.nix:22-24`; `github:cameronraysmith/vanixiets@590f75195cc7acbb3926d39397bf860c2c6efc65:modules/clan/services/hermes-agent/flake-module.nix:141`; `github:cameronraysmith/vanixiets@590f75195cc7acbb3926d39397bf860c2c6efc65:modules/clan/services/hermes-agent/flake-module.nix:449`); upstream's own `omnigent host enable` writes only a per-user unit, so a system unit is vanixiets-authored (`github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:omnigent/host/service.py:42-68`), and the Home Manager alternative is Q1.
-Set `HOME` from `config.users.users.${cfg.user}.home` and set the unit's required `path` explicitly to repository `claude-code` and `atomic`, `llm-agents` `codex` and `pi`, plus `bun`, `nodejs_22`, bare `pkgs.python3`, `tmux`, `git`, `uv`, and `bubblewrap`, before appending `cfg.extraPackages`.
+Set `HOME` from `config.users.users.${cfg.user}.home` and set the unit's required `path` explicitly to repository `claude-code` and `atomic`, `llm-agents` `codex`, `pi`, and `omp`, plus `bun`, `nodejs_22`, bare `pkgs.python3`, `tmux`, `git`, `uv`, and `bubblewrap`, before appending `cfg.extraPackages`.
 Home Manager installation alone does not populate a system service's PATH; `bunx`, `atomic`, and the native CLIs must be resolvable from the host's inherited PATH (`/Users/crs58/ghq/github.com/omnigent-ai/omnigent@ea89e38cb2488c003cec06ae123640be0c97eb5d:omnigent/host/connect.py:431-491`; `omnigent/inner/agent_env.py:36-108` at the same pin).
 
 Harness-visible environment is declared once at the service boundary, in the unit or a shared `flake.lib.omnigentACP`-style value, never inside an individual agent's own settings file.
@@ -228,8 +231,9 @@ environment = {
 The third variable forwards the first two through the host-to-runner allowlist; the ACP stanza below forwards them through the subsequent ACP-child allowlist (`/Users/crs58/ghq/github.com/omnigent-ai/omnigent@f04b0354fb5344c1ea8b92795ceb6760a9ad7595:omnigent/host/connect.py:657,743-772`; `omnigent/onboarding/acp_auth.py:95-124,163-182` at the same release).
 `PI_CODING_AGENT_DIR` deliberately roots the adapter's settings and session discovery in Atomic state, not Pi state; do not set a conflicting `ATOMIC_CODING_AGENT_DIR`.
 The package sources are the repository's own `claude-code` package, whose Linux wrapper already adds `bubblewrap` and `socat` to `PATH` (`github:cameronraysmith/vanixiets@590f75195cc7acbb3926d39397bf860c2c6efc65:modules/home/ai/claude-code/default.nix:21-25`), and the `llm-agents` Codex and Pi packages the `ai` aggregate already uses (`github:cameronraysmith/vanixiets@590f75195cc7acbb3926d39397bf860c2c6efc65:modules/home/ai/codex/default.nix:31-34`; `github:numtide/llm-agents.nix@10e3dca999e12a0d07f1e9e470707f4386dc3178:packages/pi/hashes.json:2`); the pinned nixpkgs `pi-coding-agent` `0.83.0` is not used because Omnigent's floor is Pi `0.84.2`, while `llm-agents` ships `0.84.4` (`github:NixOS/nixpkgs@85f62611fa3f3eacbcfe3bc7a6d6518b443ca442:pkgs/by-name/pi/pi-coding-agent/package.nix:16`; `github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:omnigent/onboarding/harness_install.py:121-129`).
-The initial harness catalogue contains Claude Code, Codex, native Pi (`pi`), and Atomic (`acp:atomic`) beside Pi; there is no built-in `atomic` harness.
-Native CLI discovery depends on PATH, while `acp:atomic` additionally requires this exact entry in `~/.omnigent/config.yaml` before a session can launch:
+The initial harness catalogue contains Claude Code, Codex, native Pi (`pi`), Atomic over pi-acp (`acp:atomic`), and omp over its own-ACP entry (`acp:oh-my-pi`).
+There is no built-in `atomic` harness; S6 authorizes a controlled generic-ACP trial for omp, not a claim of live turn success.
+Native CLI discovery depends on PATH, while both ACP entries additionally require this exact shared list in `~/.omnigent/config.yaml` before a session can launch:
 
 ```yaml
 acp:
@@ -239,9 +243,30 @@ acp:
       omnigent_mcp: false
       inject_system_prompt: false
       env_passthrough: [PI_ACP_PI_COMMAND, PI_CODING_AGENT_DIR]
+    - name: Oh My Pi
+      command: omp acp
+      omnigent_mcp: false
+      inject_system_prompt: false
+      env_passthrough: []
 ```
 
 `Atomic` slugifies to `atomic`, yielding catalogue identifier `acp:atomic`; `command` is split and executed directly, not interpreted by a shell, and `env_passthrough` lists names only.
+`Oh My Pi` slugifies to `oh-my-pi`, yielding `acp:oh-my-pi`; `omp acp` invokes omp's own ACP server without pi-acp.
+The required runner package is `inputs.llm-agents.packages.${system}.omp`, the same input used by `modules/home/ai/omp/default.nix:65-74`, even when `extraPackages = [ ]`.
+No unit environment or `OMNIGENT_RUNNER_ENV_PASSTHROUGH` additions are needed; retain all Atomic values above.
+
+`PI_CODING_AGENT_DIR` would send omp to Atomic state at `/home/cameron/.atomic/agent`, because omp v18.1.13 still honors that override (`/Users/crs58/ghq/github.com/can1357/oh-my-pi@a1b254047d12e143b7c6011536e918c6c35c5906:packages/utils/src/dirs.ts:438-473`).
+Omnigent's ACP child environment is deny-by-default, so omp's `env_passthrough` must stay exactly empty to exclude the Atomic override; do not add a spec-level passthrough bypass (`/Users/crs58/ghq/github.com/omnigent-ai/omnigent@f04b0354fb5344c1ea8b92795ceb6760a9ad7595:omnigent/inner/acp_executor.py:610-631`).
+omp then uses its default `~/.omp/agent` state, whose credentials and selected model must be usable before a trial.
+
+Keep omp approvals on deliberately: omp ACP requests permission for bash, and this runner executes unsandboxed as `cameron` (`/Users/crs58/ghq/github.com/can1357/oh-my-pi@a1b254047d12e143b7c6011536e918c6c35c5906:packages/coding-agent/src/session/session-tools.ts:697-719`).
+The two false integration flags do not disable ACP permission requests; add neither `--auto-approve` nor a permission-mode bypass (`/Users/crs58/ghq/github.com/omnigent-ai/omnigent@f04b0354fb5344c1ea8b92795ceb6760a9ad7595:omnigent/inner/acp_executor.py:970-1033`).
+
+The native omp RPC harness is expected to supersede this generic ACP path, as tracked by [omnigent-ai/omnigent#6714](https://github.com/omnigent-ai/omnigent/issues/6714) and [#6695](https://github.com/omnigent-ai/omnigent/pull/6695); it is not a shipped feature in the pinned release.
+[#4917](https://github.com/omnigent-ai/omnigent/issues/4917) is not a reason to wait: disabling MCP avoids its `session/new` stall, and [#5234](https://github.com/omnigent-ai/omnigent/pull/5234) merged `inject_system_prompt=false` before 0.12.0.
+The fix commit `583b4f0e0275982df71f29d38417bdf1ecd49bbf` is an ancestor of v0.12.0, whose executor sends no MCP servers and skips injected instructions with both flags false (`omnigent/inner/acp_executor.py:697-710,725-739,1503-1512` at `f04b0354fb5344c1ea8b92795ceb6760a9ad7595`).
+This shipped configuration contradicts an interpretation of #6714's retrospective comment that generic ACP must wait for RPC; it does not establish a completed turn with current credentials or approvals.
+
 Express the ACP block once as `flake.lib.omnigentACP` and deliver it to both serving and runner processes.
 The UI's `/v1/harnesses` catalogue reads `acp_agents()` in the server process, so configuring only cameron's home leaves Atomic absent from the UI (`/Users/crs58/ghq/github.com/omnigent-ai/omnigent@ea89e38cb2488c003cec06ae123640be0c97eb5d:omnigent/harness_plugins.py:1165,1196-1209`).
 Set the server unit's `OMNIGENT_CONFIG_HOME` to a store directory containing `config.yaml`, without writing into `/var/lib/omnigent`; configuration resolution uses that variable before `$HOME/.omnigent/config.yaml` (`omnigent/config.py:13-22` at the same pin).
@@ -318,7 +343,7 @@ Reversing evidence: a decision to route Buzz sessions through the Omnigent serve
 - D7 `DynamicUser` for the runner: vendor CLIs store credentials under a persistent home.
 - D7 Enforcing the bubblewrap sandbox for native sessions now: native specs default to `sandbox.type: none`, and enforcement under the shared interactive user would constrain the operator's own sessions.
 - D7 SSH-based runners: Omnigent's runner transport is an outbound WebSocket and has no SSH mode.
-- D7 Harnesses beyond Claude Code, Codex, Pi, and Atomic through `acp:atomic`: deferred.
+- D7 Harnesses beyond Claude Code, Codex, Pi, Atomic through `acp:atomic`, and omp through `acp:oh-my-pi`; the native omp RPC replacement remains deferred.
 - Module shape O1, plain modules only: the server URL would be duplicated by hand on every runner machine and there would be no place for a Darwin runner role.
 - Module shape O2, clan service only: option declarations inside `perInstance` collide when a machine holds both roles, and the plain modules keep every machine's configuration inspectable at `nixosConfigurations.<machine>.config.services.omnigent`.
 - D8 Judging Buzz's relay, Redis, or S3 semantics, reporting Buzz defects, or correcting the Buzz self-hosting note: outside this plan's scope by decision.
@@ -376,7 +401,10 @@ The `.#` examples below name attributes for local exploration; the current S1–
   The base `settings.json` is installed by `home.activation.claudeCodeMutableSettings`, whose generated store file pure evaluation cannot realize; verify the deployed base file separately through the deploy-phase `probe-claude-hook-env`.
   Evaluate the runner with `extraPackages = [ ]` and prove that its required PATH still contains bare `pkgs.python3`, before appending `cfg.extraPackages`.
   The controller owns the literal `slice-5.json` gates, including rendered-wrapper builds and the single remote machine build; source inspection or focused module evaluation does not replace composed Home Manager, rendered-file, or deployment verification.
-- ACP configuration: compare the operator-seeded YAML with the exact D7 stanza and verify `pi` and `acp:atomic` are both offered before testing a session; configuration alone is not session evidence.
+- ACP configuration: compare both the server's `OMNIGENT_CONFIG_HOME/config.yaml` and the runner's merged YAML with the exact D7 list of Atomic and Oh My Pi; verify the merge preserves a seeded `host.host_id`.
+  Evaluate with `extraPackages = [ ]` to prove omp remains on the required runner PATH, and resolve the pinned Kanidm image to a nonempty SVG.
+  The controller owns the S6 remote magnetite closure build and executable-omp check; independent gate nodes perform the carrier and merge checks.
+  The UI dropdown, a completed `acp:oh-my-pi` turn, and Kanidm icon appearance require separate human attestations, not inference from evaluation or build gates.
 - Machine: evaluate the composed toplevel `drvPath`, then the controller runs the single remote build gate for `.#checks.x86_64-linux.nixos-magnetite`; do not repeat an unchanged-input closure build in the writer.
 - Post-deployment, read-only: `GET https://accounts.scientistexperience.net/oauth2/openid/omnigent/.well-known/openid-configuration` returns `issuer` equal to the D4 string; `kanidm person get <name>` on `magnetite` shows a `mail` line for the operator; one browser login reaches the Omnigent UI; one session streams events end to end with `proxy_buffering off;` in place; the `magnetite` host appears online in the UI within 90 seconds of `omnigent-host.service` starting.
 - Operator acceptance: record laptop passkey login, the `/ui/apps` tile, Android app login, and one `acp:atomic` session individually as passed, failed, or not tested; keep these human attestations distinct from tool observations.
@@ -393,7 +421,7 @@ printf '%s' "$TOK" | python3 -c 'import sys,json,base64; t=json.load(sys.stdin);
 
 - Managed sandbox providers: freestyle.sh, Modal, Daytona, Blaxel, Kubernetes, and OpenShell.
 - A dedicated KVM or microvm sandbox host.
-- Harnesses beyond Claude Code, Codex, Pi, and Atomic through `acp:atomic`.
+- Harnesses beyond Claude Code, Codex, Pi, Atomic through `acp:atomic`, and omp through `acp:oh-my-pi`; the native omp RPC replacement remains deferred (D7).
 - `magnetite` PostgreSQL backups, monitoring, and observability, intended to be built with Omnigent once it runs.
 - `pyrite` and `stibnite` runner rollout as the next increment, including the `darwinModule` with a Home Manager `launchd.agents` entry.
 - Migration of the runner to a dedicated `omnigent-host` user after Home Manager aspect PRs #2957, #2980, and #2982 merge.
