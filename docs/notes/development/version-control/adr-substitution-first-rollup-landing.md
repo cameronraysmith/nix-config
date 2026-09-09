@@ -1,16 +1,23 @@
 ---
-title: "ADR-XXXX: Substitution-first rollup landing of mergify stacks through nixbot and gitea-mq"
+title: "ADR-XXXX: Substitution-first landing through nixbot and gitea-mq batching"
 ---
 
 ## Status
 
-Proposed, 2026-09-07. Unimplemented.
+Proposed, 2026-09-07; revised 2026-09-09.
+Unimplemented.
 
-Filed as a working note under `docs/notes/development/version-control/`. Promotion to `docs/development/architecture/adrs/` with a sequence number is decided after the verification items in Compliance have been discharged in vanixiets. Supersedes the working note `stacked-landing-settings-review.md` as the description of the landing mechanism; that note's validation of the fast-forward push remains valid.
+Filed as a working note under `docs/notes/development/version-control/`.
+Promotion to `docs/development/architecture/adrs/` with a sequence number follows discharge of the Compliance items in vanixiets.
+The registered-stack case of V1 blocks promotion from Proposed.
+Supersedes the working note `stacked-landing-settings-review.md` as the description of the landing mechanism; that note's validation of the fast-forward push remains valid.
 
-Scope: every repository built by the `sciexp-nixbot` GitHub App. First deployment: vanixiets.
+Scope: every repository built by the `sciexp-nixbot` GitHub App.
+First deployment: vanixiets.
 
-Related: OpenSpec change `stand-up-gitea-mq-on-magnetite` (to be opened; carries the requirements in Appendix A and the deployment tasks); agent instructions `030-stacked-landing-protocol` and skill `git-stacked-pr-integration` (to be updated from Appendix B); `stand-up-nixbot-on-magnetite` (In Review, not yet archived).
+Related: active OpenSpec changes `stand-up-gitea-mq-on-magnetite`, `filter-check-sources-for-substitution`, and `stand-up-nixbot-on-magnetite` (not yet archived); agent instructions `030-stacked-landing-protocol` and skill `git-stacked-pr-integration` (to be updated from Appendix B).
+Appendix A is candidate material for the relevant changes, not a second normative specification; remove it when the deltas carry it.
+Remove Appendix B when the instructions and skill carry its procedure.
 
 ## Context
 
@@ -18,223 +25,302 @@ Related: OpenSpec change `stand-up-gitea-mq-on-magnetite` (to be opened; carries
 
 Three ecosystems meet in this decision and each has a word the others lack.
 
-- Nix: a *derivation* is content-addressed by its inputs; a *substituter* is a binary cache that supplies a derivation's output instead of building it; *substitution* is the act of taking it from there. Whether a derivation is rebuilt is decided by hash, not by who last touched the source.
+- Nix: a *derivation* describes a build from its inputs; a *substituter* is a binary cache that supplies its output instead of building it.
+  *Substitution* is the act of taking it from there; reuse depends on input identity, not authorship.
 - bors: a *rollup* is several approved changes landed as one tested unit; `staging` is the branch CI runs on before the base is fast-forwarded; `try` is a CI run that lands nothing; approval is `r+`.
 - mergify-cli: a *stack* is one branch published as a chain of pull requests, one commit per PR, each carrying a `Change-Id` trailer that survives rebases.
+- gitea-mq: a *batch* contains queue entries tested together; a labelled stack contributes one entry, regardless of its depth.
 
-The decision is named for the property it buys: when a rollup is built in CI, every derivation that any single author could have built is *substituted* from the cache that author already populated, and the only derivations CI builds are the ones whose input closure spans more than one change in the rollup. CI's job is reduced to interaction testing. Hence *substitution-first rollup landing*.
+Substitution-first landing aims to reuse author-built derivations when the queue tests changes together.
+With filtered sources and available cache outputs, CI builds only inputs that differ from those already built, including interactions between changes.
+The queue constructs batches; an orchestrator does not assemble a separate rollup.
 
 ### The situation
 
-Each independently shippable step of an OpenSpec change is one commit and one PR. Workers prepare commits in their own jj clones and return a ref; an orchestrator publishes and lands (`030-stacked-landing-protocol`). Landing today is `stack-land`, a synchronous fast-forward push that requires every member PR's checks to be green, which means nixbot builds every PR in full before anything lands.
+The repository needs asynchronous landing for both ordinary trunk-based PRs and registered stacks.
+The existing worker/orchestrator protocol prepares commits in jj clones and uses `stack-land` for a synchronous fast-forward after every member PR's checks pass (`030-stacked-landing-protocol`).
+The proposed replacement must preserve the tested-tree property and reuse local builds without making a person wait for an orchestrator to assemble and publish a candidate.
 
-The check suite runs three times per change in that model: once locally by the author, once by nixbot on the PR, and once more by whatever gates the landing. Every rebase invalidates the PR-level result. For a rollup of N changes the count is at least 2N + 1 CI invocations, and the author waits on all of them.
+The earlier proposal depended on a false distinction between a tested linear candidate and a queue-created merge commit.
+gitea-mq constructs the merge commits before CI and then fast-forwards the target to the tested batch SHA (`internal/batch/batch.go::Engine.HandlePass`).
+Its `README.md`, “Batching (bors-style)”, states: “On green it fast-forwards the target branch itself to the tested SHA (the merged tree is exactly what CI saw)”.
+Batching changes history shape without losing that property, so an orchestrator rollup built on `staging` adds no substitution guarantee.
 
-The target is one CI invocation per rollup whose *uncached* work is only what no author could have tested alone, with the author's wait bounded by their own local build.
+Two independent properties govern landing: risk class determines when someone may authorize a change, and PR shape determines which enqueue signal they use.
+Human or agent authorship determines neither property.
+CI-sufficient changes need no additional review by policy; review-required changes must receive review before authorization.
 
 ### Constraints established from source
 
-Read from local clones under `~/ghq/github.com/` at the revisions in Notes.
+Source paths below are relative to the named upstream clone under `~/ghq/github.com/`, at the revisions in Notes.
+The verification reports in `logs/adr-verify/` record the supporting reads.
 
 nixbot:
 
-- Builds every PR on open, synchronize, reopen, and base retarget; there is no configuration to disable this and draft status is ignored (`webhooks.py`: "All pull requests build"). `[skip ci]` is applied to branch pushes only and is deliberately withheld from PRs.
-- Always builds pushes to `staging`, `trying`, `gh-readonly-queue/*`, and `gitea-mq/*` (`MERGE_QUEUE_PATTERNS`), regardless of `build_branches`.
-- Build identity is the post-merge tree hash. A PR, a branch, and main with the same tree share one build record and the terminal statuses are replayed to each new context (`db.py`, `build_reuse.py`).
-- Evaluates with `nix-eval-jobs --check-cache-status`; derivations reported `cached` are scheduled so that nix substitutes them, `local` ones are skipped, and everything else, including `notBuilt` and jobs with no cache status, is built (`build_scheduler.py::JobScheduler._classify`). The server pushes everything it builds to niks3 through a warn-only uploader (`services.nixbot.niks3`).
-- Posts check runs `nixbot/nix-eval` and `nixbot/nix-build` on the commit SHA (`status.py`; prefix `nixbot` in vanixiets).
-- Cancels a PR's in-flight builds when the PR closes unmerged; a PR closed as merged is not cancelled, because the merge commit shares its tree and reuses the build (`service.py::CIService._submit_pr_closed`, `canceller.py`).
+- Builds every PR on open, synchronize, reopen, and base retarget; no configuration disables PR builds, and draft status is ignored (`webhooks.py::_pr_action_builds`, `_parse_pr_event`; `repo_config.py::BranchConfig`).
+  `[skip ci]` applies to branch pushes only and is deliberately withheld from PRs (`canceller.py::has_skip_ci_marker`; `webhooks.py::_parse_pr_event`).
+- Always admits pushes to `staging`, `trying`, `gh-readonly-queue/*`, and `gitea-mq/*`, regardless of `build_branches` (`webhooks.py::MERGE_QUEUE_PATTERNS`; `service.py::CIService._process_change`).
+  An empty `build_branches` excludes other non-default branches; an unset value inherits instance configuration (`repo_config.py::BranchConfig`).
+- Build identity is the post-merge tree hash (`gitrepo.py::WorkTree.tree_hash`).
+  A PR build merges its head into the current base tip; a branch push builds the pushed tree.
+  Identical trees in one project reuse a build record, and terminal statuses replay to each new context (`db.py::get_or_create_build`; `build_reuse.py::replay_terminal_status`).
+- Evaluates with `nix-eval-jobs --check-cache-status`; `cached` derivations run so Nix substitutes, `local` ones are skipped, cached failures are skipped as failures, and other statuses, including `notBuilt` or missing status, run (`build_scheduler.py::JobScheduler._classify`; `models.py::CacheStatus`).
+  niks3 uploads are warn-only and do not fail a successful build (`build_run.py::AttributeBuilder._after_success`; `nixosModules/niks3.nix::services.nixbot.niks3`).
+- Posts check runs `nixbot/nix-eval` and `nixbot/nix-build` on the PR head SHA, or the pushed SHA for a branch event (`status.py::ForgeStatusReporter`, `GitHubCheckRunPoster.post`).
+- Cancels in-flight builds only when a PR closes unmerged; merged PR builds continue (`service.py::CIService._submit_pr_closed`; `canceller.py::CancellationManager.cancel_pr`).
+- Gates PR effects through `effects_on_pull_requests`, independently of `effects_branches`; default-branch pushes always qualify, and other branches must match `effects_branches` (`effects.py::should_run_effects`).
 
-nix-fast-build (the `just check-fast` recipe in vanixiets):
+nix-fast-build, used by vanixiets' `justfile::check-fast`:
 
-- `--skip-cached` builds only derivations absent from the configured substituters; `--niks3-server https://niks3.scientistexperience.net` uploads the outputs of every successful build, whether built or substituted, and of every `local` derivation, and an upload failure fails the run (`workers.py::run_evaluation`, `run_upload_worker`; `push=on` in the recipe, opt-in). `--select` narrows the evaluated attribute set with a Nix function. The recipe already pins `--flake .#checks.$system` and `--eval-workers 4`.
+- `--skip-cached` skips derivations reported `cached`; `local` outputs are uploaded without a build unless an output link is requested (`nix_fast_build/processes.py::nix_eval_jobs`; `nix_fast_build/workers.py::run_evaluation`).
+- `--niks3-server https://niks3.scientistexperience.net` uploads every successful build result, whether built or substituted, and every `local` output; upload failure fails the run (`nix_fast_build/workers.py::run_builds`, `run_upload_worker`).
+  Upload is opt-in: `just check-fast auto on` supplies the positional `push` parameter as `on` (`justfile::check-fast`).
+  `--select` narrows the evaluated attributes with a Nix function; the recipe pins `--flake .#checks.$system` and `--eval-workers 4` (`nix_fast_build/processes.py::nix_eval_jobs`; `justfile::check-fast`).
 
-gitea-mq (GitHub backend):
+gitea-mq, GitHub backend:
 
-- Enqueues on the `merge-queue` label or on a PR with GitHub auto-merge enabled (`poller.go::enqueueLabeledPRs`, `enqueueAutoMergePRs`); on GitHub these are the only ways to enqueue a stacked PR, and it resolves the stack through GitHub's Stacks API (`ResolveStack`). `Depends-On:` headers are not read.
-- With `GITEA_MQ_BATCH_MAX ≠ 1`, a batch with exactly one entry whose head already contains the target tip is landed by non-force `UpdateRef` of the target to that head, with no batch branch and no extra CI run (`headIfUpToDate`, `HandlePass`). A raced fast-forward is rebuilt and retried up to `MaxFFRetries = 3`, then ejected with a comment.
-- Two or more entries are merged in sequence through GitHub's repository merge API into `gitea-mq/batch/<id>` and land as a chain of merge commits; the README states repositories that mandate squash or rebase merges should leave `BATCH_MAX=1`.
-- Required checks come from branch protection, else `GITEA_MQ_REQUIRED_CHECKS`, else any single success. State is one Postgres row per batch; a crash resumes. After fast-forward it waits about 10 s for GitHub to mark members merged and otherwise closes them with a "✅ Merged as `<sha>` via batch #<id>." comment. Auto-setup creates a `gitea-mq` ruleset with the App as bypass actor.
+- `internal/poller/poller.go::enqueueAutoMergePRs` queues against `pr.BaseBranch` without resolving a stack.
+  `enqueueLabeledPRs` uses `labeledTargetBranch`, which calls `ResolveStack` and queues against `stack.BaseBranch` when `MembersUpTo` finds the labelled PR.
+  GitHub-native members are based on one another (operator assertion, consistent with `internal/github/forge.go::ResolveStack`, `internal/forge/forge.go::Stack.MembersUpTo`, and the branch-chain detection in `hintStackedPRs`).
+  Auto-merge on an upper member therefore targets the member below, rather than trunk.
+- `internal/poller/poller.go::PollOnce` runs auto-merge enqueue before label enqueue, and `enqueueLabeledPRs` skips already-queued PRs.
+  When auto-merge enqueue succeeds, it overrides a correct label's target selection.
+  Neither path reads `Depends-On:`; native registration is required for the stack-aware label path (`internal/github/forge.go::ResolveStack`).
+- A labelled stack forms one queue entry; lower members land as ancestors of the selected head (`internal/poller/poller.go::enqueuePR`, `labeledTargetBranch`; `internal/batch/batch.go::Engine.Build`).
+  Enqueue checks the selected head, not every lower member (`internal/poller/poller.go::prCheckResult`).
+- With `batchMax = 5`, entries become `testing` and successful `Engine.HandlePass` deletes them through `internal/queue/batch.go::Service.SaveBatch`.
+  Batch finalization posts completion and calls `Engine.ensureMergedOrClose` only for actual queue entries: for a labelled stack, the selected top PR alone.
+  That helper polls for merged-or-closed state for about ten seconds and, if still unresolved, comments with the landing SHA and closes the entry PR.
+  It never calls the forge merge endpoint (`internal/batch/batch.go::Engine.HandlePass`, `Engine.ensureMergedOrClose`).
+- Lower stack members receive no queue-posted completion status and no explicit close from gitea-mq under this lifecycle.
+  They can receive a pending `gitea-mq` hint before landing: `internal/poller/poller.go::PollOnce` calls `hintStackedPRs` without a batch-mode guard.
+  The hint goes on unlabelled, unqueued branch-chain members, deduplicated by head SHA, with “Stack detected — add the 'merge-queue' label to the topmost PR you want to merge”.
+  Their merged-or-closed state after the fast-forward is GitHub's behaviour alone, unobserved by the queue.
+  `finalizeLabeledMerge` and its “Merge queue passed (stack)” completion status are legacy/non-batch only, reachable here solely for persisted non-batch entries surviving a configuration change.
+- The batch engine is active when `batchMax != 1`; zero means unlimited, while five limits queue entries, not commits (`internal/batch/batch.go::Engine.Enabled`; `internal/queue/batch.go::Service.FormBatch`).
+  A single up-to-date entry with skipping enabled can land its original head without a batch ref or extra branch CI run (`internal/batch/batch.go::Engine.headIfUpToDate`, `Engine.Build`).
+  Existing head checks are still evaluated (`internal/poller/poller.go::pollMergeBranchChecks`; `internal/batch/monitor.go::Engine.HandleCheck`).
+- A head behind the target, an `IsUpToDate` error, or two or more entries takes `CreateMergeBranch`/`MergeInto` through `Engine.stack` (`internal/batch/batch.go::Engine.Build`, `Engine.headIfUpToDate`; `internal/github/forge.go::mergeHead`).
+  An `ErrNotFastForward` rebuild and bisection re-entry repeat that selection and can take the merge-branch path (`internal/batch/batch.go::Engine.HandlePass`, `Engine.HandleFail`, `popNext`).
+  Repository merge no-ops need not create a new commit; an original head can itself already contain merge commits.
+- Landing fast-forwards to the tested SHA with `Force: false`, an ancestry check rather than an expected-old-SHA compare-and-swap (`internal/github/forge.go::FastForward`).
+  An incompatible target move causes two rebuilds, then ejection on the third consecutive rejection (`internal/batch/batch.go::Engine.HandlePass`, `MaxFFRetries`).
+  Batch state persists in Postgres and resumes after restart (`internal/store/pg/migrations/004_batches.sql::batches`; `internal/batch/batch.go::Engine.ReconcileLive`).
+- Required checks are forge-derived whenever that list is nonempty; `GITEA_MQ_REQUIRED_CHECKS` is only fallback (`internal/monitor/monitor.go::ResolveRequiredChecks`).
+  GitHub unions rulesets and classic protection, excluding MQ-owned contexts (`internal/github/forge.go::GetRequiredChecks`).
+  Our ruleset's `nixbot/nix-eval` and `nixbot/nix-build` therefore supply the queue's required set; the environment fallback does not fire in the intended configuration.
+- The queue is review-blind: a case-insensitive search of `internal/` for `pull_request_review|approved|review` returned no matches, and `internal/poller/poller.go::enqueuePR` gates only on `prCheckResult`.
+  `internal/github/setup.go::EnsureRepoSetup` enables `allow_auto_merge`, attempts to add the App as a bypass actor on every other branch-target ruleset, and returns early if a ruleset named `gitea-mq` already exists.
+  Repository rulesets can be updated; organization-owned rulesets without bypass and insufficient setup permissions produce warnings (`internal/github/setup.go::ensureBypass`).
+  The App performs direct `UpdateRef` with that bypass, so a required-approving-review rule does not constrain queue landing.
+  The enqueue signal is the merge authorization.
 
 mergify-cli:
 
-- `mergify stack push --github-native` opens one PR per commit with title and body from the commit message, force-pushes every head branch on each push or sync so heads stay ancestors of the tip, and registers the stack with GitHub's Stacks API (opt-in per repository via `git config mergify-cli.stack-github-native true`). GitHub returns 403 on the classic merge endpoint for registered stacks; landing by ref update is a different path.
+- `mergify stack push --github-native` publishes one PR per commit and requests registration with GitHub's Stacks API (`crates/mergify-stack/src/plan.rs::plan`; `crates/mergify-stack/src/native_stack.rs::register`).
+  Registration is opt-in through `mergify-cli.stack-github-native` and requires at least two PRs; registration failure can degrade to `Depends-On:` headers without failing the push (`crates/mergify-stack/src/commands/push.rs::run`).
+  The operator must verify registration before using the stack enqueue rule.
+- New or updated head branches are pushed atomically with `--force-with-lease`; unchanged or merged entries are skipped (`crates/mergify-stack/src/notes_push.rs::push_branches`; `crates/mergify-stack/src/commands/push.rs::run`).
+- A commit counts as merged only when its PR has non-null `merged_at` and its head SHA equals the local commit (`crates/mergify-stack/src/sync_status.rs::classify`; `crates/mergify-stack/src/changes.rs::classify`).
+  Closed-unmerged PRs disappear from discovery and can be recreated on a later push or sync (`crates/mergify-stack/src/remote_changes.rs::group_by_change_id`).
+  Landed stack members must read as merged, not merely closed; V1 verifies this world assumption.
 
-GitHub:
+### Deployment survey and live rulesets
 
-- A PR is marked merged when its head SHA becomes reachable from the base. Rebased heads that are not pushed leave PRs open.
+Four consumers were surveyed; none uses `batchMax = 0`, and none showed a linear-history mandate.
+The three GitHub deployments set `batchMax = 5`: Mic92/dotfiles (`machines/eve/modules/gitea-mq.nix::services.gitea-mq`), SBEE-Lab/infra (`modules/gitea-mq/default.nix::services.gitea-mq`), and mulatta/dots (`machines/cask/modules/gitea-mq.nix::services.gitea-mq`).
+clan-lol/clan-infra uses the Gitea backend at the default one (`modules/web01/gitea-mq.nix::services.gitea-mq`); its live Gitea protection was not checked.
+Mic92/dotfiles' `.github/settings.yml::branches.protection.required_linear_history` is false, with “Disabled for bors to work”; this bors-era declaration is vestigial against the live GitHub state.
+
+Session GitHub API GET observations supplement the in-tree consumer reports:
+
+| Repository | Live default-branch rulesets | Classic protection |
+|---|---|---|
+| Mic92/dotfiles | App-owned `gitea-mq`, requiring only `gitea-mq` | 404 |
+| SBEE-Lab/infra | Human-owned deletion, non-fast-forward, `buildbot/nix-eval` and `buildbot/nix-build`; App-owned `gitea-mq`, requiring only `gitea-mq` | 404 |
+| mulatta/dots | Human-owned deletion, non-fast-forward, `buildbot/nix-eval` and `buildbot/nix-build`; App-owned `gitea-mq`, requiring only `gitea-mq` | 404 |
+
+These observations come from `GET /repos/{owner}/{repo}/rulesets`, individual ruleset reads, and `GET /repos/{owner}/{repo}/branches/main/protection`; none of the live GitHub rulesets mandates linear history or approving review.
+The two-ruleset deployment pattern makes the external checks visible to `GetRequiredChecks` even though the App bypasses enforcement when pushing.
+Mic92/dotfiles has only the queue-owned check, so its configuration is not evidence that our nixbot contexts can be omitted.
+
+In session API samples of the last 40 merged PRs per GitHub repository, `auto_merge` was recorded on 34/40, 38/40, and 36/40 respectively.
+None of those PRs carried `merge-queue`; the label did not exist in two repositories.
+Mic92/dotfiles had 810 lifetime uses, most recently on 2026-08-30 on #5847 and #5848, whose titles use a `[need #NNNN]` stacked convention (`GET /repos/{owner}/{repo}/pulls/{number}` and issue search for merged and labelled PRs).
+This supports ordinary PR → auto-merge and stack → label the top; those two labelled PRs do not establish native registration or V1.
+
+Mic92/dotfiles #5887–#5890 have `head.sha == merge_commit_sha` and GitHub reports them merged, discharging the observed non-stack fast-forward case.
+Dependabot #5885/#5886 share batch 507531 with distinct merge commits, demonstrating several PRs sharing one batch CI run.
+#5881 landed 17 commits without a force-push, with `main` equal to its head at the observed landing (`GET /repos/Mic92/dotfiles/pulls/{number}`, PR timelines, and commit reads).
+These observations distinguish original-head landing from batched merge history; they do not verify registered-stack member completion.
 
 ### Considered options
 
-1. Keep `stack-land`: synchronous fast-forward after every member PR is green in nixbot. Current state.
-2. Mergify server merge queue with `batch` and fast-forward. Licensed per repository; unavailable on private repos; its draft-PR batches are still full nixbot PR builds.
-3. Bespoke orchestrator queue: push a candidate to a `queue/*` ref, wait on nixbot, fast-forward, bisect, all in the agent. Revision 1 to 3 of this design.
-4. rust-lang/bors: detects CI completion only through GitHub Actions `workflow_run` webhooks (`docs/design.md`, `server/webhook.rs`), so it cannot observe nixbot check runs; fast-forwards the base onto a merge commit it built on its own branch (`merge_queue.rs::handle_successful_build`), so main receives merge commits by construction; no stack awareness; rust-lang's permission model and operational footprint.
-5. bors-ng: archived.
-6. GitHub native merge queue: rulesets conflict with direct ref update; no stack awareness; nixbot supports its `gh-readonly-queue/*` branches but nothing else fits.
-7. gitea-mq as the queue role, one labeled stack at a time, with the orchestrator building the rollup and nixbot building it once on `staging` before the PRs exist. Chosen.
+1. Keep `stack-land`: synchronous fast-forward after every member PR is green in nixbot; retains the author's landing wait.
+2. Mergify server merge queue with batching and fast-forward: retains an external queue dependency and nixbot's unconditional PR builds.
+   Earlier claims about per-repository licensing and private-repository availability were not verified in this source audit; they are not a basis for rejection here.
+3. Bespoke orchestrator queue: push a candidate to `queue/*`, wait on nixbot, fast-forward, and bisect in the agent; duplicates gitea-mq's state machine and recovery.
+4. rust-lang/bors: observes CI completion through GitHub Actions `workflow_run`, not nixbot check runs (`src/server/webhook.rs::parse_webhook_event`).
+   It fast-forwards its base onto a pre-built merge commit (`src/bors/merge_queue.rs::handle_successful_build`), preserving the tested tree but producing merge history.
+   It has no stack handling and requires rust-lang's permission model (`src/permissions.rs::UserPermissions.has_permission`).
+5. bors-ng: previously excluded as archived; current archive status was not reverified in this audit.
+6. GitHub native merge queue: nixbot supports `gh-readonly-queue/*`, but this would be a different landing integration; its suitability for registered stacks remains unverified here.
+   Do not combine it with gitea-mq (mulatta/dots `home/bin/gh-bootstrap::check_gitea_mq`).
+7. gitea-mq for one labelled stack at a time, after an orchestrator assembles and prebuilds a linear rollup on `staging`: rejected in this revision.
+   Queue-created merge commits are tested before landing, so assembly and serialization add no substitution guarantee and prevent multi-entry batching.
+8. gitea-mq alone for queue formation and landing, with `batchMax = 5`, author cache warming, and shape-specific authorization signals: chosen.
+   This follows all three surveyed GitHub deployments and preserves the tested-tree property without a bespoke rollup service.
 
 ## Decision
 
-We will land changes as bors-style rollups: an orchestrator knits ready changes into one linear mergify stack, nixbot builds the stack tip exactly once on `staging` before any PR exists, the stack is then published with `mergify stack push --github-native` and its top PR labeled `merge-queue`, and gitea-mq fast-forwards main to the tip through GitHub's non-force ref update. Authors run `just check-fast push=on` on their own change before pushing a transport bookmark, so their derivations are already in niks3 when the rollup is built, and nixbot's `--check-cache-status` evaluation substitutes them. The uncached work in the rollup build is the set of derivations whose inputs span more than one change.
+We will run gitea-mq with nixbot and retire the orchestrator rollup onto `staging`.
+We will let the queue assemble, test, bisect, and land batches, including batches mixing ordinary PRs and labelled stacks.
 
-Technical justification:
+We will separate authorization into two orthogonal axes:
 
-- nixbot's tree-hash identity makes the `staging` build, the tip PR build, and the post-landing main build one record. Fast-forward landing keeps that identity exact; a merge commit would create a tree nixbot never saw whenever main had moved.
-- gitea-mq's non-force `UpdateRef` is a compare-and-swap: a raced landing is rejected by the transport and retried, so main never receives an untested tree. nixbot hardcodes gitea-mq's branch pattern (`webhooks.py::MERGE_QUEUE_PATTERNS`; nixbot's own repository lands through `Mic92/auto-merge`, not gitea-mq), and gitea-mq reads check runs by name, which rust-lang/bors cannot.
-- nix-fast-build `--skip-cached` against the same niks3 that nixbot pushes to and reads from means "affected checks" is not computed; it is whatever the cache does not already hold. This holds only when each check's `src` is filtered to the files it depends on; with `src = self` every rebase rehashes every check and the property is lost.
-- nixbot's unconditional PR builds are kept. They are the evidence that each stack member builds on its own, which is what makes a red rollup attributable without probes once PRs exist. Their cost is bounded by ordering: PRs are opened only after the `staging` build is green and are merged by the landing seconds later. nixbot does not cancel a PR closed as merged (`service.py::CIService._submit_pr_closed`), so the intermediate builds run to completion, substituting from niks3 what the authors' `check-fast` runs and the `staging` build already pushed; they gate nothing, because gitea-mq reads checks on the tip SHA only.
+- Risk class determines when to authorize.
+  For CI-sufficient changes, we will permit the enqueue signal without additional review; the queue still waits for required CI success.
+  For review-required changes, we will obtain review of the intended changes before setting any enqueue signal, including all members selected by a stack's top label.
+  We will apply policy E1: enforce this ordering by convention, matching the absence of review gates in the three reference GitHub deployments.
+  We will treat the signal as merge authorization, rather than rely on an approving-review rule that the queue App bypasses.
+- Shape determines how to enqueue.
+  For an ordinary trunk-based PR, we will enable GitHub native auto-merge.
+  For a registered stack, we will label its topmost intended PR `merge-queue` after verifying registration and head ancestry.
+  We will never enable auto-merge on any stack member, including the bottom member; auto-merge enqueue does not resolve stacks and wins over label enqueue.
+
+We will deploy `services.gitea-mq.batchMax = 5` and `skipQueueIfUpToDate = true`, keeping the default `merge-queue` label.
+We will enable repository `allow_auto_merge` and maintain two default-branch rulesets: ours requiring deletion protection, non-fast-forward protection, `nixbot/nix-eval`, and `nixbot/nix-build`; the App's requiring `gitea-mq`.
+We will permit the queue App's ruleset bypass and use neither `required_linear_history` nor classic branch protection.
+We will derive the required CI set from our ruleset; an environment fallback will not substitute for that ruleset.
+
+Technical justification: the batch engine fast-forwards to the exact tested SHA, and nixbot admits `gitea-mq/*` builds without branch-filter configuration.
+We will preserve substitution by filtering check sources, except the declared whole-tree scan allow-list, and warming shared niks3 with `just check-fast auto on` before publication.
+We will retain unconditional PR builds; their evaluation cost remains, and reuse depends on matching trees and available derivation outputs.
+We will measure uncached work rather than assume that every change costs a full rebuild or that every batch needs exactly one CI execution.
 
 Business justification:
 
-- Cost: one uncached CI build per rollup instead of 2N + 1 full builds; gitea-mq is self-hosted with no per-repository license, which also removes the Mergify server queue from every repository and makes the queue available on private repositories where no queue existed.
-- Time to market: the author's wait is their own `check-fast` run; landing is asynchronous, so an agent or person enqueues and takes the next task.
-- Strategic positioning: every component is a maintained, general-purpose project in the Nix ecosystem the fleet already depends on (nixbot, niks3, nix-fast-build, gitea-mq are all Mic92 projects; mergify-cli is Mergify's supported client), with no bespoke queue to maintain.
+- Cost: we will share batch CI across several PRs and reuse cached derivations, reducing redundant building and eliminating bespoke rollup maintenance.
+  The self-hosted queue removes dependence on Mergify server queue licensing; no unverified price or fixed savings ratio is assumed.
+- Time to market: we will make landing asynchronous after authorization, allowing a person or agent to start the next task while the queue tests and lands work.
+  Required review and CI remain prerequisites; there is no fixed author-wait bound.
+- User satisfaction: we will provide the same discoverable signals to people and agents, with pending stack hints and queue status, instead of requiring a human to wait for orchestrator assembly.
+- Strategic positioning: we will follow the deployed Nix ecosystem configuration and maintain source-filtering and cache integration rather than a second queue implementation.
 
 ## Consequences
 
 ### Positive
 
-- Uncached CI work per rollup is bounded by interaction derivations; a rollup of unrelated changes with well-filtered sources builds close to nothing.
-- Main is never in an untested state, enforced by the transport rather than by orchestrator discipline.
-- The queue state machine, race retry, ejection comments, merged-or-close fallback, dashboard, and ruleset setup are gitea-mq's, not ours. The orchestrator is reduced to assembly, publication, labeling, and bisection.
-- Each stack member still gets a nixbot build, so per-commit buildability (R3) is checked, not assumed.
-- Provenance of the tested unit is preserved in a linear history through landing refs and a `Landed-With:` trailer.
+- Bors-style batching shares a nixbot batch execution across several PRs, as observed in dependabot batch 507531; cache warming further reduces uncached work.
+- The normal batch landing updates the target to the tested SHA even when that SHA contains merge commits; incompatible target movement triggers rebuilding rather than an untested merge.
+- gitea-mq owns queue persistence, race handling, bisection, ejection, and entry finalization.
+  The orchestrator leaves the human landing path; people authorize their PRs directly.
+- Every stack member still receives a nixbot PR build, providing per-member feedback without requiring an orchestrator to defer PR publication.
+  Those lower-member results are not separate queue gates.
 
 ### Negative
 
-- N − 1 nixbot PR builds are dispatched per rollup and run to completion, since nixbot does not cancel a PR closed as merged. Each evaluates in full; its uncached work is whatever neither the author's `check-fast` run nor the `staging` build pushed to niks3. Removing this requires a nixbot PR-build gate, which we will not request; unconditional PR builds are the posture we want.
-- Linear history is available only in gitea-mq's single-entry path. Labeling two stacks at once produces merge commits. Serialization is an orchestrator rule, not a gitea-mq setting.
-- Author signatures do not survive the rebase; the orchestrator signs.
-- Bisection of a red `staging` build is the orchestrator's job (probe pushes to `trying`); gitea-mq bisects only multi-entry batches, which this design does not use.
-- A second GitHub App with Contents and Administration write permissions, a Postgres database, and a public endpoint are added to magnetite.
-- The substitution property depends on discipline in every flake: per-check source filtering and `push=on` when the author's build is worth publishing. The `check-fast` recipe keeps push opt-in deliberately.
+- `main` may carry batch merge commits.
+  Fast-forward to the original head without queue-created merge commits is guaranteed only for a single up-to-date entry taking the shortcut without a subsequent fallback or rebuild.
+  All normal batch landings use a fast-forward ref update, including those landing merge commits.
+- The queue is review-blind, so an errant authorization signal can land unreviewed work under E1.
+  Repository approving-review rules do not repair this because the App bypasses them.
+- Auto-merge-wins ordering makes auto-merge on a stack member actively wrong: an upper member can be queued against its parent branch even when correctly labelled for trunk landing.
+- Stack-member bookkeeping is GitHub's, unobserved by the queue.
+  A failed V1 would leave landed lower members reading as open or closed rather than merged, breaking mergify-cli's merged detection and potentially recreating PRs.
+  The queue supplies no lower-member completion status or explicit close under batch mode.
+- An unlabelled stack member sits with the required `gitea-mq` check pending and a message directing a human to label the topmost intended PR.
+  This makes the label discoverable instead of leaving an unexplained missing check; the hint does not establish post-landing completion.
+- PR builds remain unconditional and merged PR builds run to completion.
+  Each distinct tree can require evaluation, and a failed batch adds bisection builds; neither one execution per batch nor a fixed invocation reduction is guaranteed.
+  A stack is one entry, so queue bisection cannot isolate its internal commits.
+- A second GitHub App, Postgres database, and public endpoint are added to magnetite.
+  Source filtering, author uploads, and working cache access remain operational dependencies; nixbot's warn-only uploader can leave a green build without reusable remote outputs.
 
 ### Neutral
 
-- `stack-land` remains as a dry-run assertion tool and manual fallback; it no longer performs the landing.
-- The Mergify server queue is no longer configured; mergify-cli is used for stacks only.
-- `gitea-mq`'s multi-entry batch mode remains available if bisecting production regressions ever makes merge-commit landings preferable; nothing else changes.
+- `stack-land` is demoted to a dry-run assertion tool; it is no longer a landing fallback.
+- The Mergify server queue is retired; mergify-cli remains the stack publication client.
+- History rewrites and author signing remain the publisher's responsibility; there is no orchestrator rebase, batch trailer, or landing-ref protocol.
 
 ## Compliance
 
-Automated:
+Automated checks to implement in the related OpenSpec changes:
 
-- A flake check asserts no `checks.*` derivation depends on `self` unfiltered (compare each check's `src` against an allow-list of filtered sources, or measure: a rebase of an unrelated file must not change the check's derivation hash).
-- A flake check or NixOS module assertion pins gitea-mq configuration: `GITEA_MQ_BATCH_MAX ≠ 1`, `GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE = true`, `GITEA_MQ_REQUIRED_CHECKS` equal to nixbot's two contexts, `GITEA_MQ_MERGE_LABEL = merge-queue`.
-- A repository check asserts `landing.toml` exists and `mergify-cli.stack-github-native` is set in the orchestrator's clone.
-- nixbot's API (`web/api_routes.py`) lists builds by branch, PR number, or commit prefix and returns each build's `tree_hash` and each attribute's `status` and `cached` flag; a periodic report resolves each `refs/landings/*` ref to its commit, fetches the builds for that commit, confirms `staging`, tip PR, and main share one `tree_hash`, and counts attributes with `cached` false and `status` other than `skipped_local` as the uncached work.
+- Retain `filter-check-sources-for-substitution`'s `structure-check-source-isolation` check, negative control, and transitive `check-source-audit` probe against its declared whole-tree allow-list (`openspec/changes/filter-check-sources-for-substitution/proposal.md`, “Assertion of the property”).
+  Unrelated source changes must leave unaffected filtered checks' derivation hashes stable; the deliberately whole-tree `gitleaks` scan is the declared exception.
+- Add a module assertion pinning `services.gitea-mq.batchMax = 5` and `skipQueueIfUpToDate = true`; assert no merge-label override, because `nix/module.nix::services.gitea-mq` exposes batch size but not the label.
+- Add a read-only GitHub ruleset check requiring both `nixbot/nix-eval` and `nixbot/nix-build` in our default-branch ruleset.
+  Also verify the separate App-owned `gitea-mq` gate, bypass actor, absence of linear-history and classic protection, and `allow_auto_merge = true`.
+  Checking only `GITEA_MQ_REQUIRED_CHECKS` is insufficient because `internal/monitor/monitor.go::ResolveRequiredChecks` prefers the forge-derived set.
+- Report batch SHA, landed PRs, and nixbot build identities using `web/api_routes.py::create_api_router`, `Build`, and `Attribute`.
+  Query by branch, PR number, or commit prefix, compare returned `tree_hash` values, and count attributes with `cached = false` and `status != skipped_local` as an uncached-work proxy.
+  This API has no tree-hash query or raw `notBuilt` count; failed or missing-status work requires log inspection rather than treating the proxy as a count of builders actually run.
 
-Manual, before promotion from Proposed (verification items):
+Manual checks before promotion from Proposed (existing V identifiers retained for traceability):
 
-- V1. GitHub marks members of a natively registered stack merged after a non-force `UpdateRef` fast-forward of main. If not, gitea-mq closes them with a comment and they read as closed; decide whether that is acceptable or whether native registration is dropped, which also removes gitea-mq's stack resolution and requires labeling each PR.
-- V2. gitea-mq accepts check runs that were posted on the tip SHA before the label was applied (the `staging` build's runs replayed to the tip PR); confirm no arrive-after-enqueue assumption in the poller for the single-entry path.
-- V3. The replayed check runs on the tip PR are named exactly `nixbot/nix-eval` and `nixbot/nix-build`.
-- V4. A `staging` build of a rollup whose members were all built with `check-fast push=on` shows only interaction derivations as uncached in nixbot's build record (attributes with `cached` false and `status` other than `skipped_local`; nixbot's API does not expose the `notBuilt` status itself).
-- V5. Intermediate PR builds, which nixbot does not cancel when the PR closes as merged, substitute rather than rebuild: for each, record the uncached attribute count and wall-clock time against the `staging` build, and confirm they never delay a landing.
-- V6. Rulesets accept `refs/landings/*` from the orchestrator identity and protect them from deletion.
-- V7. mergify-cli preserves the `Landed-With:` trailer and orchestrator signature across `stack push`, `sync`, and `drop`.
-- V8. mergify-cli's stack branch prefix is configurable per repository, and `stack push` from an orchestrator-created branch does not require the invoking user to be the commit author.
-- V9. The gitea-mq NixOS module at the pinned revision exposes batch size and merge label, or the unit's environment is set directly.
-- V10. Scoping `effects_branches` in vanixiets (currently `["*"]` with `effects_on_pull_requests = true`) to keep effects off intermediate PR builds does not remove an effect the fleet relies on for PR previews.
+- V1. After a fast-forward landing of a labelled registered stack, GitHub marks every member merged, not closed or left open, without any action by gitea-mq on lower members.
+  Require the top PR also to be marked merged without queue close fallback; retain head SHAs and `merged_at` for every member and confirm subsequent mergify-cli sync recognizes them.
+  The non-stack case is discharged empirically by Mic92/dotfiles #5887–#5890 (`head.sha == merge_commit_sha`, GitHub merged).
+  The registered-stack case remains unverified and blocks promotion; a pending hint or top-only merged-or-close fallback does not discharge it.
+- V2. Confirm in vanixiets that existing green checks on the selected head are accepted when authorization arrives later, including the single-entry shortcut.
+  Source supports this: `internal/poller/poller.go::prCheckResult`, `pollMergeBranchChecks`, and `internal/batch/monitor.go::Engine.HandleCheck` have no arrive-after-enqueue timestamp requirement.
+- V3. Confirm replayed and newly posted check runs are exactly `nixbot/nix-eval` and `nixbot/nix-build` on the selected SHA (`status.py::ForgeStatusReporter`; `build_reuse.py::replay_terminal_status`).
+- V4. Measure uncached derivations per batch after members' authors use `just check-fast auto on`.
+  Inspect the API proxy and logs to distinguish interaction inputs, cache misses, uploader failures, and unrelated-source invalidation; verify that unchanged filtered derivations substitute.
+- V9. Confirm the deployed module exposes `batchMax` and `skipQueueIfUpToDate`, and the binary retains its default merge label.
+  This is settled at the source pin (`nix/module.nix::services.gitea-mq`; `internal/config/config.go::Load`); validate the rendered unit, database provisioning, and reverse proxy in deployment.
+- V10. Review needed PR previews before changing vanixiets' current `effects_on_pull_requests = true` and `effects_branches = ["*"]`.
+  Scope PR effects through `effects_on_pull_requests` and queue-branch effects through `effects_branches`; changing the latter alone does not disable PR effects (`effects.py::should_run_effects`).
+- V11. Measure actual nixbot executions per PR landed, including unconditional PR builds, batch retries/bisection, and tree reuse, against a comparable Mergify baseline.
+  Record the sample window, cache state, and workload; savings remain unverified until measured.
+- V12. Audit authorization samples across both risk classes and PR shapes: review precedes the signal where required, native registration and ancestry hold, and no stack member has auto-merge enabled.
+  This is manual governance of E1, not a queue-enforced review guarantee.
 
 ## Notes
 
-Author: Cameron Ray Smith with Claude, 2026-09-07. Not yet approved.
+Author: Cameron Ray Smith with Claude, 2026-09-07.
+Approval date and approved by: not yet approved.
+Superseded date: not applicable.
 
-Source basis: nixbot `25df5fb` (2026-09-06), gitea-mq `d44c455` (2026-09-03), mergify-cli `d393fe7` (2026-09-07), nix-fast-build `8f0c351` (2026-09-06), rust-lang/bors `43a7baa` (2026-09-03), MADR template `ba75bb1` (2026-08-28), vanixiets `edc85b40` (2026-09-07). Claims about component behavior should be re-verified against upstream when these pins move.
+Source basis: nixbot `25df5fb`, gitea-mq `d44c455`, mergify-cli `d393fe7`, nix-fast-build `8f0c351`, rust-lang/bors `43a7baa`, MADR template `ba75bb1`, vanixiets `edc85b40` (original source baseline).
+Claims about component behaviour must be reverified when these pins move; upstream commit dates were not established by the verification reports.
+Evidence: `logs/adr-verify/{gitea-mq,nixbot,mergify-cli,nix-fast-build,bors,gitea-mq-enqueue-and-landing,gitea-mq-consumers-mic92,gitea-mq-consumers-third-party}.md`, supplemented by the session GitHub GET observations described in Context.
+Those ignored logs are working evidence; the source symbols and API observation scope above preserve the basis in this ADR.
 
-Structure follows the repository's ADR conventions (seven sections, Richards/Ford qualification test) with MADR's considered-options and confirmation elements folded into Context and Compliance.
+Last modified: 2026-09-09, by the implementation assistant for Cameron Ray Smith.
+Revision 2 replaces orchestrator rollups with queue-only batching on two authorization axes, based on verified source, four consumer configurations, and live GitHub ruleset, signal, and landing observations.
+It distinguishes pending stack hints from completion and makes unverified GitHub member bookkeeping a promotion blocker.
+The appendices remain temporary transfer material outside the seven-section ADR structure.
 
 ---
 
-## Appendix A. Candidate requirements (to become spec deltas in the OpenSpec change)
+## Appendix A. Candidate requirements (to become OpenSpec deltas)
 
-Commits and PRs
+Source filtering and cache warming are the core; process policies and upstream world assumptions must be classified separately from machine requirements when transferred.
 
-- R1. One change is one commit is one PR; PR title and body are rendered from the commit message by `mergify stack push`.
-- R2. Every commit carries a `Change-Id` trailer matching `^I[0-9a-f]{40}$`; jj templates emit it so a transport bookmark already has one.
-- R3. Each commit builds on its own; checked by nixbot's unconditional PR build.
-- R4. Commit bodies carry the Linear issue id and any `Depends-On: <Change-Id>`; the transport bookmark is named by the Linear issue id.
+- R1. Every filterable `checks.*` derivation depends only on its filtered source; unrelated file changes preserve its derivation hash, with `gitleaks` as the declared whole-tree allow-list exception (`filter-check-sources-for-substitution`).
+- R2. Authors warm the cache with `just check-fast auto on` before publication; authors and nixbot use the same niks3 substituter and upload destination.
+- R3. Each independently shippable change is one commit and one PR; mergify-cli renders stack PR title and body from its commit message.
+- R4. Each stack commit carries a `Change-Id` matching `^I[0-9a-f]{40}$`.
+- R5. Each commit must build on its own; nixbot's unconditional PR builds provide per-member feedback, while the queue gates the selected head and tested batch rather than all lower members separately.
+- R6. Commit bodies retain the Linear issue id for traceability, without a rollup-specific transport bookmark or dependency-assembly contract.
+- R7. Set `build_branches = []` to suppress arbitrary non-default branch builds; queue patterns remain admitted independently.
+- R8. Keep unconditional PR builds without orchestrator-controlled publication timing.
+- R9. Required external contexts are `nixbot/nix-eval` and `nixbot/nix-build`.
+- R10. Scope PR previews with `effects_on_pull_requests` and non-default branch effects with `effects_branches`, preserving the previews identified in V10.
+- R11. Serve `mq.scientistexperience.net` with `batchMax = 5`, `skipQueueIfUpToDate = true`, and the default `merge-queue` label; provision its database and reverse proxy.
+- R12. Publish stacks with `--github-native` and verify registration and selected-head ancestry before enqueue; `Depends-On:` alone does not enable queue stack resolution.
+- R13. Use a separate GitHub App from nixbot's with the permissions and events in gitea-mq `README.md`, “GitHub setup”: Checks read/write, Commit statuses read, Contents read/write, Pull requests read/write, Administration read/write, Metadata read; events `pull_request`, `check_run`, `status`, `installation`, `installation_repositories`.
+- R14. Maintain our deletion/non-fast-forward/nixbot-check ruleset and the App's `gitea-mq` ruleset, with queue App bypass; enable `allow_auto_merge`, with no linear-history rule or classic protection.
+- R15. Apply E1: classify risk and obtain required review before authorization; the enqueue signal is merge authorization, enforced by convention and manual audit.
+- R16. Enable auto-merge only for ordinary trunk-based PRs; label only the topmost intended registered-stack member and never enable auto-merge on any stack member.
 
-Nix
+## Appendix B. Operating procedure (to move into instructions and skill)
 
-- R5. Every `checks.*` derivation depends only on its own filtered source; `src = self` in a check closure is a defect.
-- R6. Authors run `just check-fast push=on` (nix-fast-build `--skip-cached --niks3-server`) before pushing a bookmark; nixbot reads and writes the same niks3.
-- R7. Root-touching changes (globs in `landing.toml`: `flake.nix`, `flake.lock`, `nix/**`, shared library roots) form single-member rollups.
+After cache warming and any review required by E1, authorize by shape:
 
-nixbot
+1. Ordinary trunk-based PR: enable GitHub native auto-merge; gitea-mq waits for required checks and handles landing asynchronously.
+2. Stack: publish with `mergify stack push --github-native`, verify native registration and selected-head ancestry, then label the topmost PR intended to land `merge-queue`.
 
-- R8. `build_branches` unset or empty; `staging`, `trying`, `gitea-mq/*` build regardless.
-- R9. PR builds unconditional; the procedure controls when PRs exist.
-- R10. Required-check names are `nixbot/nix-eval` and `nixbot/nix-build`.
-- R11. vanixiets `effects_branches` scoped so effects do not fire on intermediate PR builds unless wanted.
-
-gitea-mq
-
-- R12. `mq.scientistexperience.net`; `GITEA_MQ_BATCH_MAX=0`, `GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE=true`, `GITEA_MQ_REQUIRED_CHECKS=nixbot/nix-eval,nixbot/nix-build`, `GITEA_MQ_MERGE_LABEL=merge-queue`.
-- R13. Stacks are published with `--github-native`; `Depends-On:` alone is invisible to gitea-mq.
-- R14. One labeled stack per repository at a time (orchestrator-enforced).
-- R15. Separate GitHub App from nixbot's: Contents rw, Administration rw, Checks rw, Pull requests rw, Commit statuses r, Metadata r; events `pull_request`, `check_run`, `status`, `installation`, `installation_repositories`.
-- R16. Rulesets: linear history; `gitea-mq` check required; bypass actors gitea-mq App and orchestrator identity; no PR-level check requirement; no Actions workflows.
-
-mergify-cli
-
-- R17. Orchestrator stack branch prefix set to the orchestrator identity; workers never `stack push`.
-- R18. History rewrites on a published stack only through `mergify stack drop|sync|reorder`, and only inside the landing sequence.
-- R19. Upstream `skills/mergify-stack/SKILL.md` installed with its per-PR-CI and draft-PR guidance overridden.
-
-Provenance
-
-- R20. `refs/landings/<batch-id>` pushed at each landed tip.
-- R21. `Landed-With: <batch-id>` trailer written during assembly, before publication.
-- R22. Orchestrator signs rebased commits; `Author` preserved.
-- R23. Batch revert is the range delimited by consecutive landing refs, exposed by batch id.
-
-Orchestrator
-
-- R24. `Depends-On:` edges order the rollup; a member whose dependency is neither landed nor present is refused.
-- R25. Batch ids are ULIDs shared by ref name and trailer.
-- R26. One candidate in flight per repository from `staging` push to landing; no speculative pipelining.
-- R27. Candidate branch `landing/<batch-id>`.
-- R28. State reconstructible from forge state (`staging` head and checks, open PRs with `Landed-With:` and label, gitea-mq API, newest landing ref).
-- R29. Ready signal is on the Linear issue; bookmark name is the join key.
-- R30. Orchestrator is the sole pusher of `staging`, `trying`, stack heads, and the sole applier of `merge-queue`.
-
-## Appendix B. Operating procedure (to move into agent instructions)
-
-Worker, per change:
-
-1. One commit in own jj clone; `Change-Id`; Linear id and `Depends-On:` in the body.
-2. `just check-fast push=on`. Only derivations absent from niks3 build; outputs upload.
-3. `jj git push` the transport bookmark. No PR; nixbot idle.
-4. Mark the Linear issue ready; move on.
-
-Orchestrator, one round:
-
-1. Wait for a non-empty ready set and no candidate in flight.
-2. Collect ready bookmarks; join to Linear; split root-touching changes into single-member rollups.
-3. `landing/<batch-id>` at main; cherry-pick in `Depends-On:` order; append `Landed-With:`; sign. Conflicts eject to the author.
-4. Push the tip to `staging`. nixbot evaluates with cache status; substitutes author-built derivations; builds interaction derivations only.
-5. Poll `nixbot/nix-eval` and `nixbot/nix-build` on the `staging` SHA.
-
-Green:
-
-6. `mergify stack push --github-native`. PRs open; nixbot enqueues per-PR builds; the tip PR dedupes to the `staging` record.
-7. Optionally `stack-land --dry-run --tip <sha> <prs…>`.
-8. Label the top PR `merge-queue`. gitea-mq: one up-to-date entry, checks present, non-force `UpdateRef` of main.
-9. Race: gitea-mq retries thrice, then ejects; orchestrator rebases, re-pushes the stack, re-labels.
-10. GitHub marks members merged; nixbot cancels intermediate builds; main attaches to the existing record.
-11. Push `refs/landings/<batch-id>`; transition Linear; delete bookmarks.
-
-Red (before PRs exist):
-
-12. Read the failing attribute on the `staging` SHA. Attribute directly, or bisect with `trying` pushes of intermediate commits (probes substitute everything unchanged).
-13. Drop the culprit from `landing/<batch-id>`; comment its Linear issue with the excerpt and build URL; clear its ready state.
-14. New batch id, rewrite trailers, return to step 4.
-
-Red after publication (race retry rebuilt on a moved main): every member has a PR build; the first red member in stack order is the culprit; `mergify stack drop`, new batch id, re-push, re-label.
-
-Ejected author: amend the same `Change-Id`; re-run `check-fast push=on`; re-push the bookmark; re-mark ready.
-
-Accounting per rollup of N: one `staging` build whose uncached work is interaction derivations; N − 1 cancelled PR builds; author wait is their own `check-fast`. Red adds up to log2 N `trying` probes.
+Never enable auto-merge on any stack member, even when its top PR is correctly labelled; the auto-merge enqueue path runs first and does not resolve the stack base.

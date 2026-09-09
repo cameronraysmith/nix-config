@@ -176,3 +176,24 @@ Suggested end state: about 150 lines against 240 today.
 6. Signature survival across `sync`/`drop` (V7) depends on the orchestrator's `commit.gpgsign` setting during rebase, which no report checked; V7 remains a runtime item.
 7. Notes lacks a last-modified entry for this in-place revision; adding one is a conventions fix, not a factual correction, so it was not applied.
 8. `stacked-landing-settings-review.md` has no frontmatter; adding `superseded-by:` requires adding a frontmatter block.
+
+## Revision 2
+
+Reviewed and rewritten in place, 2026-09-09; the ADR remains Proposed.
+The preceding review is a historical record of revision 1, including its old requirement numbers and open items; this section records the replacement design.
+The title is now “Substitution-first landing through nixbot and gitea-mq batching”; the filename stays unchanged for existing links.
+The central correction is that queue merge commits are built before landing: `internal/batch/batch.go::Engine.HandlePass` fast-forwards to the tested SHA, so the orchestrator rollup onto `staging` is unnecessary.
+The decision uses `batchMax = 5`, like all three surveyed GitHub deployments, with our nixbot-check ruleset alongside the App's `gitea-mq` ruleset and no linear-history or classic protection.
+Risk class controls when authorization is allowed; shape controls whether to enable ordinary-PR auto-merge or label the topmost intended registered-stack PR.
+E1 explicitly chooses review-before-signal by convention: `internal/poller/poller.go::enqueuePR` is review-blind, and the App bypasses approving-review rules when updating refs.
+`PollOnce` attempts auto-merge enqueue first without stack resolution; no stack member may have auto-merge enabled, even if correctly labelled.
+In batch mode, `Engine.HandlePass` and `Engine.ensureMergedOrClose` finalize only actual queue entries, which for a labelled stack means its selected top PR.
+Lower members receive no queue completion status or explicit close; their pending hint comes from `internal/poller/poller.go::hintStackedPRs`, called without a batch-mode guard.
+`finalizeLabeledMerge` and “Merge queue passed (stack)” are legacy paths, reachable here only for persisted non-batch entries surviving a configuration change.
+V1 now requires GitHub to mark every registered-stack member merged without queue repair, blocks promotion, and remains unverified; #5887–#5890 discharge only the observed non-stack case.
+Appendices remove assembly, serialization, `staging`, landing refs/trailers, and orchestrator-only publication; R1–R16 replace R1–R30, with the complete mapping in `logs/adr-verify/adr-rewrite-report.md`.
+Compliance retains V1–V4, V9, and V10, drops V5–V8, and adds execution-per-PR measurement (V11) and a manual E1/shape audit (V12).
+Source corrections also preserve the source-filtering change's `gitleaks` allow-list, use the positional command `just check-fast auto on`, and scope PR effects with `effects_on_pull_requests` rather than branch globs alone.
+Unsupported universal reachability, fixed CI-count savings, native-stack classic-merge 403, and universal signature-loss claims were removed; commercial and alternative-queue assumptions are marked unverified.
+Standards review: seven ADR sections remain in order, both justifications and labelled consequences are present, citations use paths and symbols, and modification metadata is recorded.
+Spec review: the queue-only decision, deployment evidence, enqueue asymmetry, pending/completion distinction, and blocking V1 are represented; runtime verification and OpenSpec/instruction transfer remain follow-up work.
