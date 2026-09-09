@@ -23,7 +23,7 @@ let
     ];
     text = builtins.readFile ./stack-land.sh;
     meta = {
-      description = "Land a reviewed stacked-PR tip with one fast-forward push";
+      description = "Assertion-only diagnostics for stacked-PR ancestry, Change-Id trailers, and reported checks";
       license = lib.licenses.mit;
       mainProgram = "stack-land";
     };

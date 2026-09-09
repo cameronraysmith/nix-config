@@ -13,6 +13,11 @@ forge="$scratch/forge"
 fake_bin="$scratch/bin"
 mkdir -p "$forge/checks" "$fake_bin"
 
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ALLOW_PROTOCOL=file
+git_trace="$scratch/git-trace"
+forge_trace="$scratch/forge-trace"
+failures=0
+
 git init --quiet --bare --initial-branch=main "$remote"
 git init --quiet --initial-branch=main "$work"
 git -C "$work" config user.name "Stack Landing Test"
@@ -68,30 +73,18 @@ git -C "$work" switch --quiet stack
   printf '#!%s\n' "$BASH"
   cat <<'EOF'
 set -euo pipefail
-
+printf 'gh' >>"$FAKE_FORGE_TRACE"
+printf ' %q' "$@" >>"$FAKE_FORGE_TRACE"
+printf '\n' >>"$FAKE_FORGE_TRACE"
 if [[ "$1 $2" == "pr checks" ]]; then
   pr="$3"
   [[ "$4 $5" == "--json name,state" ]]
   cat "$FAKE_FORGE/checks/$pr.json"
   if [[ "${FAKE_ADVANCE_ON_PR:-}" == "$pr" ]]; then
-    git --git-dir="$FAKE_REMOTE" update-ref refs/heads/main "$FAKE_ADVANCE_SHA"
+    GIT_TRACE=0 git --git-dir="$FAKE_REMOTE" update-ref refs/heads/main "$FAKE_ADVANCE_SHA"
   fi
   jq -e 'length > 0 and all(.[]; .state == "SUCCESS")' \
     "$FAKE_FORGE/checks/$pr.json" >/dev/null
-  exit
-fi
-
-if [[ "$1 $2" == "pr view" ]]; then
-  pr="$3"
-  [[ "$4 $5" == "--json state,mergedAt" ]]
-  if [[ "${FAKE_BLOCKED_PR:-}" == "$pr" ]]; then
-    printf '{"state":"OPEN","mergedAt":null}\n'
-  elif git --git-dir="$FAKE_REMOTE" merge-base --is-ancestor \
-    "$FAKE_TIP_SHA" refs/heads/main; then
-    printf '{"state":"MERGED","mergedAt":"2026-09-02T12:00:00Z"}\n'
-  else
-    printf '{"state":"OPEN","mergedAt":null}\n'
-  fi
   exit
 fi
 
@@ -102,20 +95,6 @@ EOF
 } >"$fake_bin/gh"
 chmod +x "$fake_bin/gh"
 
-mkdir -p "$work/.git/hooks"
-{
-  printf '#!%s\n' "$BASH"
-  cat <<'EOF'
-set -euo pipefail
-if [[ -f "$FAKE_FORGE/advance-in-pre-push" ]]; then
-  advance_sha="$(<"$FAKE_FORGE/advance-in-pre-push")"
-  git --git-dir="$FAKE_REMOTE" update-ref refs/heads/main "$advance_sha"
-  command rm "$FAKE_FORGE/advance-in-pre-push"
-fi
-EOF
-} >"$work/.git/hooks/pre-push"
-chmod +x "$work/.git/hooks/pre-push"
-
 printf '[{"name":"nixbot/nix-eval","state":"SUCCESS"},{"name":"nixbot/nix-build","state":"SUCCESS"}]\n' >"$forge/checks/101.json"
 printf '[{"name":"nixbot/nix-eval","state":"SUCCESS"},{"name":"nixbot/nix-build","state":"CANCELLED"}]\n' >"$forge/checks/102.json"
 printf '[]\n' >"$forge/checks/103.json"
@@ -124,42 +103,81 @@ printf '[{"name":"nixbot/nix-eval","state":"SUCCESS"},{"name":"nixbot/nix-build"
 output="$scratch/output"
 export FAKE_FORGE="$forge"
 export FAKE_REMOTE="$remote"
-export FAKE_TIP_SHA="$tip_sha"
+export FAKE_FORGE_TRACE="$forge_trace"
 export GH_BIN="$fake_bin/gh"
 
 reset_main() {
   git --git-dir="$remote" update-ref refs/heads/main "$base_sha"
 }
 
+record_failure() {
+  printf 'not ok - %s\n' "$*" >&2
+  ((failures += 1))
+}
+
 run_subject() {
-  (cd "$work" && "$subject" "$@") >"$output" 2>&1
+  local before after
+  before="$(git --git-dir="$remote" rev-parse refs/heads/main)"
+  : >"$git_trace"
+  : >"$forge_trace"
+  subject_status=0
+  (cd "${subject_cwd:-$work}" &&
+    PATH="${subject_path:-$PATH}" GIT_TRACE="$git_trace" "$subject" "$@") >"$output" 2>&1 || subject_status=$?
+  after="$(git --git-dir="$remote" rev-parse refs/heads/main)"
+  if [[ "$after" != "${FAKE_ADVANCE_SHA:-$before}" ]]; then
+    record_failure 'fixture target changed during diagnostics'
+  fi
+  if grep -E 'built-in: git .*push|git-receive-pack|receive-pack' "$git_trace"; then
+    record_failure 'remote-write command recorded in git trace'
+  fi
+  if grep -Ev '^gh pr checks [1-9][0-9]* --json name\\?,state$' "$forge_trace"; then
+    record_failure 'forge mutation or merged-state query recorded in trace'
+  fi
 }
 
 expect_failure() {
   local name="$1"
   local pattern="$2"
   shift 2
-  if run_subject "$@"; then
-    printf 'not ok - %s: command succeeded\n' "$name" >&2
-    return 1
-  fi
-  if ! grep -Eq "$pattern" "$output"; then
-    printf 'not ok - %s: expected /%s/ in:\n' "$name" "$pattern" >&2
+  run_subject "$@"
+  if [[ "$subject_status" == 0 ]]; then
+    record_failure "$name: command succeeded"
+  elif ! grep -Eq "$pattern" "$output"; then
+    record_failure "$name: expected /$pattern/ in:"
     sed 's/^/  /' "$output" >&2
-    return 1
+  else
+    printf 'ok - %s: %s\n' "$name" "$(tail -n 1 "$output")"
   fi
-  printf 'ok - %s: %s\n' "$name" "$(tail -n 1 "$output")"
 }
 
 expect_success() {
   local name="$1"
   shift
-  if ! run_subject "$@"; then
-    printf 'not ok - %s: command failed:\n' "$name" >&2
+  run_subject "$@"
+  if [[ "$subject_status" != 0 ]]; then
+    record_failure "$name: command failed:"
     sed 's/^/  /' "$output" >&2
-    return 1
+  else
+    printf 'ok - %s\n' "$name"
   fi
-  printf 'ok - %s\n' "$name"
+}
+
+expect_no_operations() {
+  if [[ -s "$git_trace" || -s "$forge_trace" ]]; then
+    record_failure 'rejected invocation or help called git/gh'
+    cat "$git_trace" "$forge_trace" >&2
+  else
+    printf 'ok - no git/gh operations\n'
+  fi
+}
+
+expect_assertion_summary() {
+  if ! grep -Fq 'dry run: assertions passed; no landing performed' "$output"; then
+    record_failure 'dry run must report assertions only'
+    tail -n 2 "$output" >&2
+  else
+    printf 'ok - dry run reports assertions only\n'
+  fi
 }
 
 expect_check_state_failure() {
@@ -172,7 +190,7 @@ expect_check_state_failure() {
     "$check" "$state" >"$forge/checks/$pr.json"
   reset_main
   expect_failure \
-    "$category check state $state blocks landing" \
+    "$category check state $state fails diagnostics" \
     "PR $pr checks are not all green: $check=$state" \
     --dry-run --tip "$tip_sha" "$pr"
 }
@@ -217,14 +235,14 @@ printf '[{"name":"nixbot/nix-eval","state":"SUCCESS"},{"name":"Mergify Merge Que
   >"$forge/checks/105.json"
 reset_main
 expect_success \
-  'a neutral check does not block landing' \
+  'a neutral check passes diagnostics' \
   --dry-run --tip "$tip_sha" 105
 
 printf '[{"name":"nixbot/nix-eval","state":"SUCCESS"},{"name":"optional-check","state":"SKIPPED"}]\n' \
   >"$forge/checks/106.json"
 reset_main
 expect_success \
-  'a skipped check does not block landing' \
+  'a skipped check passes diagnostics' \
   --dry-run --tip "$tip_sha" 106
 
 pr=107
@@ -250,37 +268,45 @@ expect_failure \
 unset FAKE_ADVANCE_ON_PR FAKE_ADVANCE_SHA
 
 reset_main
-printf '%s\n' "$competing_sha" >"$forge/advance-in-pre-push"
-expect_failure \
-  'the fast-forward push rejects a concurrent target update' \
-  '(non-fast-forward|failed to push some refs)' \
-  --tip "$tip_sha" 101
+subject_cwd="$scratch"
+expect_success 'help works without --dry-run outside a repository' --help
+expect_no_operations
+unset subject_cwd
+if ! grep -Fq 'assertion-only diagnostic' "$output"; then
+  record_failure 'help must describe assertion-only diagnostics'
+fi
 
 reset_main
-PATH=/unusable GH_BIN="$fake_bin/gh" run_subject --dry-run --tip "$tip_sha" 101
-[[ "$(git --git-dir="$remote" rev-parse refs/heads/main)" == "$base_sha" ]]
-grep -Fq "dry run: would push $tip_sha to origin/main" "$output"
-printf 'ok - installed wrapper supplies its runtime commands with an unusable PATH\n'
+subject_path=/unusable
+expect_success 'installed wrapper supplies runtime commands with an unusable PATH' \
+  --dry-run --tip "$tip_sha" 101
+unset subject_path
+expect_assertion_summary
 
 reset_main
-run_subject --dry-run --tip "$tip_sha" 101
-[[ "$(git --git-dir="$remote" rev-parse refs/heads/main)" == "$base_sha" ]]
-grep -Fq "dry run: would push $tip_sha to origin/main" "$output"
-printf 'ok - dry run validates without updating main\n'
+expect_success 'dry run validates without writes or merged-state polling' \
+  --dry-run --tip "$tip_sha" 101 104
+expect_assertion_summary
 
 reset_main
-run_subject --tip "$tip_sha" 101
-[[ "$(git --git-dir="$remote" rev-parse refs/heads/main)" == "$tip_sha" ]]
-grep -Fq 'landed stack and verified merged PRs: 101' "$output"
-printf 'ok - valid stack fast-forwards main and verifies merged state\n'
+expect_failure 'legacy real invocation is rejected' \
+  'assertion-only diagnostic; --dry-run is required' --tip "$tip_sha" 101
+expect_no_operations
 
-git -C "$work" switch --quiet stack
-commit_file next.txt next next I6666666666666666666666666666666666666666
-next_tip_sha="$(git -C "$work" rev-parse HEAD)"
-export FAKE_TIP_SHA="$next_tip_sha"
-export FAKE_BLOCKED_PR=104
-expect_failure \
-  'post-push state requires every PR to be merged' \
-  'PR 104 did not close as merged after push' \
-  --tip "$next_tip_sha" 101 104
-unset FAKE_BLOCKED_PR
+reset_main
+subject_cwd="$scratch"
+expect_failure 'rejection does not require a repository or forge' \
+  'assertion-only diagnostic; --dry-run is required' --tip "$tip_sha" 101
+expect_no_operations
+expect_failure 'empty invocation requires explicit diagnostics' \
+  'assertion-only diagnostic; --dry-run is required'
+expect_no_operations
+expect_success 'short help works outside a repository' -h
+expect_no_operations
+unset subject_cwd
+
+if ((failures)); then
+  printf 'FAIL: %s assertion-only contract violations\n' "$failures" >&2
+  exit 1
+fi
+printf 'PASS: all stack-land diagnostics; no remote writes; fixture targets preserved\n'

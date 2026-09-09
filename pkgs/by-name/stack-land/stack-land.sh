@@ -3,9 +3,9 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: stack-land [--dry-run] [--remote REMOTE] [--target BRANCH] --tip REV PR...
+Usage: stack-land --dry-run [--remote REMOTE] [--target BRANCH] --tip REV PR...
 
-Land a reviewed stacked-PR tip with one fast-forward push.
+Inspect a stacked-PR tip with an assertion-only diagnostic.
 
 Defaults:
   --remote origin
@@ -17,11 +17,11 @@ Assertions:
   ^I[0-9a-f]{40}$.
   Every member PR has at least one check and every check state is SUCCESS,
   NEUTRAL, or SKIPPED.
-  Target ancestry is fetched and checked again immediately before the push.
-  After a real push, every member PR reaches state MERGED with mergedAt set.
+  Target ancestry is fetched and checked again after inspecting PR checks.
 
-The push has no force option. The remote rejects it if the target update is
-not a fast-forward. Dry-run performs every pre-push assertion and no push.
+These optional diagnostics do not authorize or perform landing and are not
+the queue's selected-head check gate or a prerequisite for authorization.
+--dry-run is required; target fetching may update local fetch state.
 EOF
 }
 
@@ -78,6 +78,7 @@ while (($#)); do
   esac
 done
 
+[[ "$dry_run" == true ]] || fail 'assertion-only diagnostic; --dry-run is required'
 [[ -n "$tip" ]] || fail '--tip is required'
 ((${#prs[@]} > 0)) || fail 'at least one PR number is required'
 [[ "$remote" != -* ]] || fail 'remote must not begin with a hyphen'
@@ -165,19 +166,6 @@ assert_green_pr() {
   fi
 }
 
-pr_is_merged() {
-  local pr="$1"
-  local pr_json
-
-  pr_json="$("$gh_bin" pr view "$pr" --json state,mergedAt)" ||
-    fail "could not query merged state for PR $pr"
-  if ! printf '%s\n' "$pr_json" |
-    jq -e 'type == "object" and .state == "MERGED" and (.mergedAt | type == "string")' \
-      >/dev/null 2>&1; then
-    return 1
-  fi
-}
-
 base_sha="$(fetch_target_base)"
 assert_ancestry "$base_sha"
 printf 'assertion passed: target base %s is an ancestor of stack tip %s\n' \
@@ -194,35 +182,8 @@ done
 
 base_sha="$(fetch_target_base)"
 assert_ancestry "$base_sha"
-printf 'assertion passed immediately before push: target base %s is an ancestor of stack tip %s\n' \
+printf 'assertion passed after PR checks: target base %s is an ancestor of stack tip %s\n' \
   "$base_sha" "$tip_sha"
 
-if [[ "$dry_run" == true ]]; then
-  printf 'dry run: would push %s to %s/%s\n' "$tip_sha" "$remote" "$target"
-  printf 'dry run: post-push merged-state assertion was not run because no push occurred\n'
-  exit 0
-fi
-
-git push "$remote" "$tip_sha:refs/heads/$target"
-
-for _attempt in {1..10}; do
-  all_merged=true
-  for pr in "${prs[@]}"; do
-    if ! pr_is_merged "$pr"; then
-      all_merged=false
-    fi
-  done
-  if [[ "$all_merged" == true ]]; then
-    printf 'landed stack and verified merged PRs: %s\n' "${prs[*]}"
-    exit 0
-  fi
-  sleep 1
-done
-
-for pr in "${prs[@]}"; do
-  if ! pr_is_merged "$pr"; then
-    fail "PR $pr did not close as merged after push"
-  fi
-done
-
-fail 'post-push merged-state verification failed'
+printf 'dry run: assertions passed; no landing performed for %s at %s/%s\n' \
+  "$tip_sha" "$remote" "$target"
