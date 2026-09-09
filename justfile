@@ -693,18 +693,16 @@ test-quick:
   @echo ""
   @echo "✓ All validation tests passed"
 
-# Run integration tests (VM tests - Linux only)
+# Run the QEMU/KVM NixOS VM tests (checks named vm-*; requires /dev/kvm on a Linux builder)
 [group('clan')]
 test-integration:
-  @echo "Running VM integration tests (Linux only)..."
-  @echo ""
-  @echo "TC-005: VM test framework validation"
-  {{nix_cmd}} build .#checks.x86_64-linux.vm-test-framework --print-build-logs
-  @echo ""
-  @echo "TC-010: VM boot all machines"
-  {{nix_cmd}} build .#checks.x86_64-linux.vm-boot-all-machines --print-build-logs
-  @echo ""
-  @echo "All VM integration tests passed!"
+  #!/usr/bin/env bash
+  set -euo pipefail
+  system="$(nix eval --impure --raw --expr 'builtins.currentSystem')"
+  for name in $({{nix_cmd}} eval ".#checks.$system" --apply 'cs: builtins.filter (n: builtins.match "vm-.*" n != null) (builtins.attrNames cs)' --json | jq -r '.[]'); do
+    echo "==> $name"
+    {{nix_cmd}} build ".#checks.$system.$name" --no-link --print-build-logs
+  done
 
 # Build all machine configurations using nom
 [group('clan')]
