@@ -16,12 +16,13 @@ The machine SHALL serve the merge queue at one hostname of its own, distinct fro
 
 ### Requirement: The four landing settings are evaluated values guarded by an assertion
 
-The machine's evaluated configuration SHALL carry the queue's batch maximum as `0`, its up-to-date shortcut as enabled, its fallback required checks as exactly `nixbot/nix-eval` and `nixbot/nix-build`, and no override of the merge label on the queue's unit, and SHALL refuse to evaluate when the merged configuration differs from those values.
+The machine's evaluated configuration SHALL carry the queue's batch maximum as `5`, its up-to-date shortcut as enabled, its configured fallback required checks as exactly `nixbot/nix-eval` and `nixbot/nix-build`, and no override of the merge label on the queue's unit, and SHALL refuse to evaluate when the merged configuration differs from those values.
+The configured fallback is not the operative required set: the queue consults it only when the forge names no required check, and the ruleset requirement below keeps the forge's set non-empty, so the two settings are one invariant rather than two independent ones.
 
 #### Scenario: The evaluated options are read
 
 - **WHEN** the queue's options are read from the host's evaluated configuration
-- **THEN** the batch maximum is `0`, the up-to-date shortcut is enabled, the fallback required checks are exactly the two build-service contexts, and the unit's environment carries no merge-label attribute
+- **THEN** the batch maximum is `5`, the up-to-date shortcut is enabled, the configured fallback required checks are exactly the two build-service contexts, and the unit's environment carries no merge-label attribute
 
 #### Scenario: Another module forces a different value
 
@@ -31,7 +32,7 @@ The machine's evaluated configuration SHALL carry the queue's batch maximum as `
 #### Scenario: The unit's environment is read on the host
 
 - **WHEN** the queue's unit environment is read on the host after activation
-- **THEN** it carries the batch maximum `0`, the up-to-date shortcut `true`, the two contexts as the required-checks list, and no merge-label variable, so the queue's own default of `merge-queue` is in force
+- **THEN** it carries the batch maximum `5`, the up-to-date shortcut `true`, the two contexts as the configured required-checks list, and no merge-label variable, so the queue's own default of `merge-queue` is in force
 
 ### Requirement: A database and role exist for the unit's dynamic user
 
@@ -63,7 +64,8 @@ Each forge credential the merge queue uses SHALL reach it as a systemd credentia
 
 ### Requirement: The forge application holds exactly the queue's permission and event set
 
-The forge application the merge queue acts through SHALL hold repository permissions Contents read and write, Administration read and write, Checks read and write, Pull requests read and write, Commit statuses read, and Metadata read, SHALL configure subscriptions to `check_run`, `pull_request`, and `status`, and SHALL be a registration distinct from the build service's. GitHub automatically delivers `installation` and `installation_repositories` to every App; these cannot be subscribed to and SHALL NOT be required in the API `events` array.
+The forge application the merge queue acts through SHALL hold repository permissions Contents read and write, Administration read and write, Checks read and write, Pull requests read and write, Commit statuses read, and Metadata read, SHALL subscribe to exactly `check_run`, `pull_request`, and `status`, and SHALL be a registration distinct from the build service's.
+GitHub automatically delivers `installation` and `installation_repositories` to every App; these cannot be subscribed to and SHALL NOT be required in the API `events` array.
 The application SHALL be installed on `cameronraysmith/vanixiets` alone, and the machine SHALL retain `github.repos = [ "cameronraysmith/vanixiets" ]` as additive explicit registration, not an exclusion filter.
 Installation scope supplies confinement and is externally maintained forge state, not a restriction enforced by this NixOS configuration.
 Before deployment authorization, verification SHALL establish the one-repository installation scope through complete enumeration of all App installations and the repositories available to each, with pagination where applicable, or equivalent complete operator-page evidence.
@@ -72,31 +74,37 @@ The target-repository installation endpoint alone cannot establish exclusivity; 
 #### Scenario: The application is read on the forge
 
 - **WHEN** the forge application's registration is read through the forge's API
-- **THEN** its permissions are exactly the set above, its `events` array contains all three required subscribable events (extra reported entries SHALL be recorded without blocking; any missing required event SHALL block), automatic installation deliveries are recorded separately, and its numeric id differs from the build service's application id
+- **THEN** its permissions are exactly the set above, its `events` array equals the three subscribable events as a set, automatic installation deliveries are recorded separately, and its numeric id differs from the build service's application id
 
 #### Scenario: The application is installed more broadly than intended
 
 - **WHEN** the forge application is installed on any repository beyond `cameronraysmith/vanixiets`
 - **THEN** the one-repository boundary is violated and deployment authorization is withheld, because installation discovery adds those repositories independently of `github.repos`; the explicit list does not filter them out
 
-### Requirement: The default branch is governed by the queue's ruleset
+### Requirement: The default branch is governed by two rulesets
 
-The managed repository's default branch SHALL be governed by a ruleset that requires linear history and the queue's own status, names the queue's forge application and the orchestrator identity as bypass actors, requires no build-service check at the pull-request level, and involves no Actions workflow, and the repository's `allow_auto_merge` setting SHALL be left as the queue sets it.
+The managed repository's default branch SHALL be governed by two rulesets: one maintained by the operator, requiring deletion protection, non-fast-forward protection, and both of the build service's check contexts; and one created and owned by the queue's own startup setup, requiring only the queue's own status.
+Neither SHALL require linear history, no classic branch protection SHALL govern the branch, the queue's forge application SHALL be a bypass actor on the operator's ruleset, and the repository's `allow_auto_merge` setting SHALL be left as the queue sets it.
 
-#### Scenario: The ruleset is read on the forge
+#### Scenario: The rulesets are read on the forge
 
 - **WHEN** the default branch's rulesets are read through the forge's API after the queue has started
-- **THEN** exactly one ruleset governs it, its required status checks name only the queue's status pinned to the queue's application, its bypass actors are the queue's application and the orchestrator identity, and no build-service context is required
+- **THEN** two rulesets govern it, the operator's naming both build-service contexts and the queue's naming only its own status pinned to the queue's application, the queue's application is a bypass actor on the operator's ruleset, no rule requires linear history, and the branch's classic protection is absent
 
 #### Scenario: The queue's startup setup runs
 
 - **WHEN** the queue starts and performs its repository setup
-- **THEN** it finds the ruleset already present, adds nothing, and leaves `allow_auto_merge` enabled
+- **THEN** it creates its own ruleset if none by that name exists, adds itself as a bypass actor on the operator's ruleset, and leaves `allow_auto_merge` enabled, without editing the operator's rules
 
-#### Scenario: A build-service context is added to the ruleset
+#### Scenario: The operator optionally pre-created a disabled queue ruleset
 
-- **WHEN** a build-service context is added as a required status check on the default branch
-- **THEN** the queue gates on the forge's list and stops consulting its configured pair, which is the drift the behavioral requirement `The queue gates on the build service's verdicts and nothing else` names
+- **WHEN** startup finds an existing ruleset named `gitea-mq`, including one with disabled enforcement
+- **THEN** setup returns without creating, repairing, or activating that ruleset, and the operator must activate the queue gate at the separately approved time before live landing verification
+
+#### Scenario: A build-service context is dropped from the operator's ruleset
+
+- **WHEN** either build-service context is removed from the operator's ruleset on the default branch
+- **THEN** the queue's required set shrinks to whatever the forge still names, because it prefers a non-empty forge list over its configured fallback, which is the drift the behavioral requirement `The queue gates on the build service's verdicts and nothing else` names
 
 ### Requirement: The service registers its own webhook endpoint
 
@@ -128,22 +136,22 @@ What the merge queue runs SHALL be determined by the host's declared configurati
 
 ### Requirement: This capability states its own trust boundary
 
-This capability SHALL state what its properties guarantee and what they do not, and SHALL NOT be described, by itself or in any downstream report, as an end-to-end guarantee that only orchestrator-assembled stacks land or that the build services are unaffected.
+This capability SHALL state what its properties guarantee and what they do not, and SHALL NOT be described, by itself or in any downstream report, as an end-to-end guarantee that only authorized or reviewed changes land or that the build services are unaffected.
 
 #### Scenario: The properties above are read as a set
 
 - **WHEN** the properties of this capability are read as a set
-- **THEN** what they establish is that the queue is reached at its own hostname over its own certificate through a loopback listener, that its four landing settings are fixed at evaluation and visible at runtime, that its database and role are its own, that its credentials exist only as activation-resolved systemd credentials, that its forge application holds exactly the stated set, that the default branch's ruleset names only the queue's status, that the queue maintains its own delivery endpoint, and that what runs is a consequence of the host's declared configuration
+- **THEN** what they establish is that the queue is reached at its own hostname over its own certificate through a loopback listener, that its four landing settings are fixed at evaluation and visible at runtime, that its database and role are its own, that its credentials exist only as activation-resolved systemd credentials, that its forge application holds exactly the stated set, that the default branch is governed by the operator's ruleset naming both build-service contexts and the queue's own ruleset naming only its status, that the queue maintains its own delivery endpoint, and that what runs is a consequence of the host's declared configuration
 
 #### Scenario: A guarantee about who can enqueue is sought from this capability
 
-- **WHEN** someone asks whether these properties guarantee that only the orchestrator can put a change into the queue
-- **THEN** the answer is no: the merge label and auto-merge can be applied by any identity with write access to the repository, and that set is the forge's collaborator list, which this machine cannot observe
+- **WHEN** someone asks whether these properties enforce required review or orchestrator-only authorization
+- **THEN** the documented boundary says that identities permitted by the forge can set either signal, the queue reads no review state, and its App bypasses rulesets; E1 review-before-signal and shape-specific authorization remain sibling policy, not machine guarantees
 
 #### Scenario: A guarantee about the landed state is sought from this capability
 
 - **WHEN** someone asks whether these properties guarantee that members of a fast-forwarded stack read as merged on the forge
-- **THEN** the answer is no: whether the forge marks a member merged when its head becomes reachable from the default branch is the forge's behavior, carried as a world assumption and tested by the landing protocol change rather than asserted here
+- **THEN** the documented boundary attributes merged bookkeeping to GitHub under world assumption A23 and discharged V1, with re-confirmation at the first live stacked landing, rather than claiming a guarantee from this machine
 
 #### Scenario: A guarantee about the running process is sought from this capability
 

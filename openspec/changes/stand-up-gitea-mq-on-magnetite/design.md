@@ -4,35 +4,38 @@ Magnetite is the Hetzner CX53 host that carries this fleet's server-side service
 Its composition is the repository's deferred-module pattern: `flake.nix` hands `modules/` to `import-tree`, each aspect file assigns a deferred module into `flake.modules.nixos.<aspect>`, `modules/machines/nixos/magnetite/default.nix` imports upstream modules and names the aspects the host takes, and `modules/clan/inventory/machines.nix` binds the result into `clan.machines.magnetite`, which `clan machines update magnetite` deploys.
 nixbot sits in that pattern as `inputs.nixbot.nixosModules.nixbot` imported at the host plus the aspect `flake.modules.nixos.nixbot` in `modules/nixos/nixbot.nix`, and serves `cameronraysmith/vanixiets` and `sciexp/ironstar` under the App `sciexp-nixbot` (id `4743700`).
 
-The ADR `docs/notes/development/version-control/adr-substitution-first-rollup-landing.md` decides that changes land as bors-style rollups through gitea-mq: one labeled stack at a time, checks read from nixbot's two contexts on the tip SHA, `main` fast-forwarded by non-force `UpdateRef`.
-Its review memo assigns this change R12 (the service and its four settings), R15 (a separate GitHub App), R16 (rulesets), the second automated Compliance item (pinning the settings), and the world-assumption entries about gitea-mq and GitHub.
-The memo also settles V9 from source: `batchMax`, `requiredChecks`, and `skipQueueIfUpToDate` are first-class options of gitea-mq's NixOS module, the merge label is not exposed but defaults to `merge-queue` in `config.go::Load`, and the module has no environment escape hatch.
+The ADR `docs/notes/development/version-control/adr-substitution-first-rollup-landing.md` decides that changes land through gitea-mq's own bors-style batching: up to five queue entries tested together, checks read from nixbot's two contexts, and `main` fast-forwarded by non-force `UpdateRef` to the exact commit CI tested.
+Revision 2 of that ADR retired the earlier orchestrator rollup onto `staging`, because `internal/batch/batch.go::Engine.HandlePass` fast-forwards the target to the tested batch SHA, so a separately assembled linear candidate adds no substitution guarantee.
+The ADR assigns this change R11 (the service and its four settings), R13 (a separate GitHub App), R14 (the two rulesets, App bypass, `allow_auto_merge`, no linear history, no classic protection), the second automated Compliance item (pinning the settings), and the world-assumption entries about gitea-mq and GitHub.
+R15 and R16, the human-and-agent authorization procedure, and R1 and R2, source filtering and cache warming, belong to sibling changes; this change references them where a dependency needs stating and does not absorb them.
+V9 is settled from source: `batchMax`, `requiredChecks`, and `skipQueueIfUpToDate` are first-class options of gitea-mq's NixOS module, the merge label is not exposed but defaults to `merge-queue` in `config.go::Load`, and the module has no environment escape hatch.
 
 gitea-mq's module, `nix/module.nix` at `d44c455`, provides `services.gitea-mq.{github.{appId,privateKeyFile,webhookSecretFile,repos,pollInterval},databaseUrl,listenAddr,externalUrl,skipQueueIfUpToDate,requiredChecks,batchMax,bisectMaxSteps,hideRefFromClients,...}`, runs the unit with `DynamicUser = true`, reads both GitHub secrets through `LoadCredential`, listens on TCP only, and provisions no database.
-Its `setup.go::EnsureRepoSetup` runs at startup against every managed repository: it sets `allow_auto_merge`, adds the App as bypass actor to every branch ruleset, and creates a ruleset named `gitea-mq` if none exists.
+`internal/github/setup.go::EnsureRepoSetup` enables `allow_auto_merge`, attempts to add App bypass to other branch-target rulesets, and creates its own `gitea-mq` ruleset only if none has that name; organization-owned rulesets or insufficient permissions can produce warnings (`ensureBypass`).
 Its `App.SyncHookConfig` patches the App's webhook URL and secret to match the running configuration.
 
 Two constraints frame the decisions below.
 First, nixbot and buildbot keep running untouched; the queue is added beside them.
 Second, the deliverable is a deployment provable by `clan machines update magnetite`, with the settings the ADR fixes provable by evaluation before deployment.
 
-Stakeholders are the fleet's single operator, who registers the App, populates one credential slot, and approves the ruleset diff, and the orchestrator identity `cameronraysmith`, which is the only identity that labels pull requests and the only human bypass actor.
+Stakeholders are the operator, who registers the App, supplies credentials, and approves G2, and people or agents authorizing ordinary PRs or registered stacks under the sibling R15/R16 procedure.
+The earlier orchestrator-only labelling and bypass role is retired with the rollup.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
 A gitea-mq instance on magnetite, served at `mq.scientistexperience.net` over TLS, deployed by `clan machines update magnetite`.
-The four R12 settings in force and pinned by an assertion that fails host evaluation on drift.
-A dedicated GitHub App with exactly the R15 permission and event set, its credentials supplied through clan vars with no value in the repository.
-Rulesets on `cameronraysmith/vanixiets` per R16, applied by the operator from an approved diff, with the `allow_auto_merge` question settled.
-Runtime confirmation of V2 and V3 and the observation for V6 recorded in this change's verification.
+The four R11 settings in force and pinned by an assertion that fails host evaluation on drift.
+A dedicated GitHub App with exactly the R13 permission and subscribable-event set, its credentials supplied through clan vars with no value in the repository.
+The two-ruleset arrangement on `cameronraysmith/vanixiets` per R14: our ruleset gains `nixbot/nix-eval` by an operator-approved diff, the queue's own ruleset is created by its startup setup, and the `allow_auto_merge` question is settled.
+Runtime confirmation of V2, V3, and V9, with discharged V1 re-confirmed at the first live stacked landing.
 
 **Non-Goals:**
 
-The landing protocol, the `030-stacked-landing-protocol` instructions, the `git-stacked-pr-integration` skill, `landing.toml`, and `nixbot.toml`.
-A second repository in the allowlist.
-The `refs/landings/*` provenance mechanism beyond recording what rulesets can and cannot do for it.
+The R15/R16 authorization procedure, the `030-stacked-landing-protocol` instructions, the `git-stacked-pr-integration` skill, R1/R2 source filtering/cache warming, and `nixbot.toml` changes.
+A second repository in the installation scope.
+The retired `landing.toml` and `refs/landings/*` protocol, including its V6 probe.
 Any change to nixbot's App, aspect, generators, vhost, or database, or to buildbot's.
 Any upstream filing to gitea-mq.
 
@@ -47,8 +50,10 @@ Any upstream filing to gitea-mq.
 
 ### D2: The four settings are module options, the label is a default, and an assertion pins all four
 
-- **Choice**: `batchMax = 0`, `skipQueueIfUpToDate = true`, `requiredChecks = [ "nixbot/nix-eval" "nixbot/nix-build" ]`; no value for the merge label; `assertions` in the aspect that read `config.services.gitea-mq.batchMax`, `.skipQueueIfUpToDate`, and `.requiredChecks` from the merged configuration and compare them to those values, plus one asserting `!(config.systemd.services.gitea-mq.environment ? GITEA_MQ_MERGE_LABEL)`.
+- **Choice**: `batchMax = 5`, `skipQueueIfUpToDate = true`, `requiredChecks = [ "nixbot/nix-eval" "nixbot/nix-build" ]`; no value for the merge label; `assertions` in the aspect that read `config.services.gitea-mq.batchMax`, `.skipQueueIfUpToDate`, and `.requiredChecks` from the merged configuration and compare them to those values, plus one asserting `!(config.systemd.services.gitea-mq.environment ? GITEA_MQ_MERGE_LABEL)`.
+- **Reversal**: the earlier design chose unlimited `batchMax = 0` while relying on orchestrator serialization to supply one rollup entry at a time; zero itself never guaranteed a singleton (`internal/queue/batch.go::Service.FormBatch`). The rollup rested on a false premise about queue-created merge commits. `internal/batch/batch.go::Engine.HandlePass` calls `internal/github/forge.go::FastForward` with the exact tested batch SHA, preserving nixbot's tested-tree identity (`gitrepo.py::WorkTree.tree_hash`) even with merge history. Five matches the three surveyed GitHub deployments (`Mic92/dotfiles machines/eve/modules/gitea-mq.nix::services.gitea-mq`, `SBEE-Lab/infra modules/gitea-mq/default.nix::services.gitea-mq`, `mulatta/dots machines/cask/modules/gitea-mq.nix::services.gitea-mq`).
 - **Rationale**: the module maps the three options straight to `GITEA_MQ_BATCH_MAX`, `GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE`, and `GITEA_MQ_REQUIRED_CHECKS`; `GITEA_MQ_MERGE_LABEL` is not an option, the module's `environment` set is closed, and `config.go::Load` defaults the label to `merge-queue`, so the only drift possible is an override from another module, which is what the fourth assertion detects. The assertions read the merged configuration, so an `lib.mkForce` elsewhere or a one-sided edit fails `checks.x86_64-linux.nixos-magnetite` at evaluation. The ADR's Compliance item allows a flake check or a module assertion; the assertion needs no new check attribute.
+- **Coupling, not two settings**: `requiredChecks` is a fallback the queue consults only when the forge names no required check (`internal/monitor/monitor.go::ResolveRequiredChecks`), and D7 keeps both nixbot contexts in our ruleset, so the forge list is non-empty and this fallback never fires. The assertion pins the fallback; D7 pins what is actually operative.
 - **Alternatives considered**: setting `GITEA_MQ_MERGE_LABEL` on the unit directly, rejected because it duplicates a default that already holds and creates the override the assertion exists to catch. A structure check under `modules/checks/structure/` evaluating the magnetite configuration, rejected as a second place to keep the same four values.
 - **Boundary**: source-versus-delivered. The assertion is a property of evaluation and says nothing about the running process; the runtime tasks read the unit's environment on the host.
 
@@ -71,26 +76,29 @@ Any upstream filing to gitea-mq.
 - **Rationale**: the module reads both through `LoadCredential`, which systemd performs as root before the dynamic user exists, so a root-owned file is the correct shape and `owner = "gitea-mq"` would fail at activation for want of a static user; this is the deliberate difference from `modules/nixos/nixbot.nix`, whose files are owned by the static `nixbot` user. The webhook secret needs no manual copy into GitHub: `App.SyncHookConfig` pushes the running configuration's URL and secret to the App at every startup. The private key has no such path; GitHub generates it and the operator sets it. The unit snapshots credentials at start, so `restartUnits` is not optional.
 - **Boundary**: source-versus-delivered. The generator is source; the file the unit reads exists only after activation, so verification is on the host, not by reading the repository.
 
-### D6: A dedicated GitHub App with the R15 set, registered at a human gate
+### D6: A dedicated GitHub App with the R13 set, registered at a human gate
 
 - **Choice**: a second App with repository permissions Contents read and write, Administration read and write, Checks read and write, Pull requests read and write, Commit statuses read, Metadata read, and configured subscribable events `check_run`, `pull_request`, `status`; GitHub automatically delivers `installation` and `installation_repositories` to every App, and they cannot be subscribed to or required in the API `events` array; proposed name `sciexp-gitea-mq`, owner `sciexp`, public, installed on `cameronraysmith/vanixiets` alone; its numeric id written into the aspect as `github.appId`.
-- **Rationale**: this is R15 and the README's "GitHub setup" permission set, with subscribable events distinguished from automatic GitHub deliveries rather than copying its event list literally. Contents write and Administration write are permissions the build service must never hold, and adding them to `sciexp-nixbot` would edit a registration a running service depends on. The name and owner mirror the sibling and are the operator's to change at the gate.
-- **Alternatives considered**: reusing `sciexp-nixbot`, rejected above. Registering without Administration so that `EnsureRepoSetup` is skipped, rejected because R15 fixes the set and the ADR relies on setup to keep the App a bypass actor on every branch ruleset.
+- **Rationale**: this is R13 and the README's "GitHub setup" permission set, with subscribable events distinguished from automatic GitHub deliveries rather than copying its event list literally. Contents write and Administration write are permissions the build service must never hold, and adding them to `sciexp-nixbot` would edit a registration a running service depends on. The name and owner mirror the sibling and are the operator's to change at the gate.
+- **Correction**: the earlier five-event API expectation incorrectly required automatic installation deliveries as subscriptions and blocked a live gate; revised ADR R13 and `GET /apps/sciexp-gitea-mq` establish the exact three-event subscription set.
+- **Alternatives considered**: reusing `sciexp-nixbot`, rejected above. Registering without Administration so that `EnsureRepoSetup` is skipped, rejected because R13 fixes the set and the ADR relies on setup to create the queue's own ruleset and to keep the App a bypass actor on ours.
 - **Trust boundary**: the installation selection is externally maintained forge state, not a restriction enforced by this NixOS configuration. D11 requires complete external verification of the one-repository installation scope before deployment authorization.
 
-### D7: Rulesets require only `gitea-mq`, and the existing nixbot requirement is removed
+### D7: Two rulesets — ours gains one check context, the queue creates its own
 
-- **Choice**: the default-branch ruleset on `cameronraysmith/vanixiets` requires linear history and the `gitea-mq` status pinned to the new App's integration id, names the gitea-mq App (`Integration`) and the orchestrator identity (`User`, beside the existing repository-admin role) as bypass actors, retains the `deletion` and `non_fast_forward` rules, drops the `nixbot/nix-build` required check, and involves no Actions workflow. The diff is presented before it is applied, and it is applied before the service first starts.
-- **Rationale**: `monitor.go::ResolveRequiredChecks` uses the forge's list when it is non-empty and falls back to `GITEA_MQ_REQUIRED_CHECKS` only when it is empty, and `forge.go::GetRequiredChecks` builds the forge's list from rulesets and classic protection minus gitea-mq's own contexts. A ruleset still requiring `nixbot/nix-build` makes the forge's list `[nixbot/nix-build]`, and `nixbot/nix-eval` is never consulted. With only `gitea-mq` required, the forge's list is empty and the configured pair is operative. Applying the diff before first start means `EnsureRepoSetup` finds a ruleset named `gitea-mq` and returns rather than creating a second one beside `nixbot`. `User` is an accepted bypass actor type per GitHub's 2026-05-07 rulesets changelog.
-- **Alternatives considered**: requiring both nixbot contexts in the ruleset so the forge's list equals the configured pair, rejected because it makes the pin live in two places and puts a PR-level check requirement on every pull request, which R16 excludes. Letting startup create the `gitea-mq` ruleset and then deleting `nixbot`, rejected because it leaves an interval with two rulesets and no approval.
-- **V6 note**: rulesets target branches, tags, pushes, or the repository, not arbitrary ref namespaces, so no ruleset can protect `refs/landings/*` from deletion; whether GitHub accepts a push to that namespace from the orchestrator is a runtime observation recorded in this change.
+- **Choice**: ruleset `16212553` on `cameronraysmith/vanixiets` keeps its name, its `deletion` and `non_fast_forward` rules, its existing `nixbot/nix-build` required check pinned to App `4743700`, and its repository-admin bypass, and gains `nixbot/nix-eval` beside `nixbot/nix-build`. Nothing is renamed, nothing is removed, no linear-history rule is added, and classic branch protection stays absent. The queue's `EnsureRepoSetup` creates a second ruleset named `gitea-mq` requiring only its own status pinned to the queue's App, and adds the queue's App as a bypass actor on ours. The single-context addition is presented as a diff for approval (gate G2) before it is applied.
+- **Reversal**: an earlier revision chose the opposite edit — rename `16212553` to `gitea-mq`, add `required_linear_history`, drop `nixbot/nix-build`, and require only the queue's status — so that the forge list would be empty and `GITEA_MQ_REQUIRED_CHECKS` would become operative. It is retired for two reasons. Linear history was a consequence of the abandoned one-entry rollup and no surveyed deployment mandates it. And `internal/github/setup.go::EnsureRepoSetup` returns early only when a ruleset *named* `gitea-mq` already exists, so pre-creating one was a way to suppress a second ruleset that is not needed: SBEE-Lab/infra and mulatta/dots both run two rulesets live, a human-owned one carrying `deletion`, `non_fast_forward`, and their build service's two contexts, beside the App-owned one carrying only `gitea-mq`.
+- **Rationale**: `internal/monitor/monitor.go::ResolveRequiredChecks` prefers the forge's list whenever it is non-empty and consults `GITEA_MQ_REQUIRED_CHECKS` only when it is empty, and `internal/github/forge.go::GetRequiredChecks` unions ruleset and classic contexts minus the queue's own. Keeping both nixbot contexts in our ruleset therefore makes the forge the operative source and the pair exactly what the queue requires; a ruleset naming one context only would silently shrink the queue's gate to that one. This is one invariant with D2 rather than two independent settings: the module's `requiredChecks` is the fallback, and it does not fire in this configuration.
+- **Alternatives considered**: leaving our ruleset unchanged and relying on `requiredChecks` is rejected because its non-empty `[nixbot/nix-build]` list suppresses the fallback pair. Pre-creating a disabled ruleset named `gitea-mq` remains optional, solely to choose when the queue context starts blocking. Setup returns early for that name without creating, repairing, or activating it, so the operator must separately approve activation; otherwise setup creates its own active second ruleset.
+- **Retired verification**: V6's `refs/landings/*` probe is removed because the revised ADR retires that provenance protocol.
 
-### D8: `allow_auto_merge` stays on; the orchestrator is its sole enabler
+### D8: `allow_auto_merge` stays on, and the enqueue signal is the authorization
 
-- **Choice**: the repository setting is left as `EnsureRepoSetup` sets it, `true`, and the design records the orchestrator identity as the sole identity that enables auto-merge on a pull request.
-- **Rationale**: R16 says off or sole enabler. Off is not attainable while the App holds Administration write: `setup.go::EnsureRepoSetup` sets `AllowAutoMerge: true` at every startup. The repository is user-owned with one collaborator, so the identities that can enable auto-merge are the orchestrator and Apps holding Pull requests write; the sole-enabler arm holds by the collaborator set, which the verification task records. `allow_auto_merge` is already `true` on the repository today, so nothing observable changes.
+- **Choice**: keep `allow_auto_merge = true` and document the enqueue signal as merge authorization, without restricting it to an orchestrator.
+- **Rationale**: R14 enables ordinary trunk PR auto-merge; `internal/github/setup.go::EnsureRepoSetup` restores that setting at startup. `internal/poller/poller.go::enqueuePR` gates only on check results and the App updates the ref with ruleset bypass, so approving-review rules cannot constrain queue landing. E1 orders risk-required review before authorization by convention, matching all three reference GitHub deployments; implementation and manual audit belong to sibling R15/R16 work.
+- **Reversal**: the earlier framing treated auto-merge as an unwanted second enqueue path to be bounded, because the rollup premise made the label the only correct signal. Under the two-axis design, auto-merge is correct for ordinary trunk-based pull requests and wrong only on stack members, where `enqueueAutoMergePRs` queues against `pr.BaseBranch` with no stack resolution and `PollOnce` runs it before label enqueue. That shape rule belongs to the landing-protocol change; this change records the fact as world assumption A28.
 - **Alternatives considered**: a post-start job that turns the setting off, rejected because it races the next restart and makes the state depend on timing. Removing Administration from the App, rejected under D6.
-- **Trust boundary**: the collaborator set is world state; the machine cannot assert it.
+- **Trust boundary**: forge permissions govern who can set signals; this deployment neither enforces review nor proves E1 compliance by counting collaborators.
 
 ### D9: `hideRefFromClients` off
 
@@ -114,9 +122,9 @@ Any upstream filing to gitea-mq.
 
 ## Risks / Trade-offs
 
-[Risk] A later change edits one of the four settings, or another module forces one, and the queue silently lands merge commits or gates on one context → Mitigation: D2's assertions read the merged configuration and fail host evaluation, which `checks.x86_64-linux.nixos-magnetite` and every deployment run.
+[Risk] A later edit changes batch size, skipping, the configured fallback, or the label → Mitigation: D2's assertions reject that drift during host evaluation; merge commits in tested batches are expected, not a configuration failure.
 
-[Risk] The ruleset keeps a nixbot requirement and gitea-mq drops `nixbot/nix-eval` without any error → Mitigation: D7 removes it, the G2 diff shows the removal explicitly, and the runtime task reads the queue's resolved required-check list from its log.
+[Risk] A nixbot context disappears from our ruleset and the queue gates only on the remaining context → Mitigation: D7 and tasks 11.4/11.5 read both rulesets and classic-protection state to establish the exact forge-derived pair; visibility of the resolved list in logs or the dashboard is unverified.
 
 [Risk] Peer authentication fails because the role name and the dynamic user name diverge → Mitigation: D3 records the coupling; the deployment task checks the unit's log for a successful migration rather than inferring from the role's existence.
 
@@ -124,15 +132,15 @@ Any upstream filing to gitea-mq.
 
 [Risk] The App's Contents write and Administration write are installed more broadly than intended → Mitigation: D11 requires complete external evidence of installation on `cameronraysmith/vanixiets` alone before deployment authorization. Missing or incomplete evidence blocks authorization, and broader installation is a boundary violation, not a condition filtered by `github.repos`. The explicit list remains one repository but supplies no machine-side confinement.
 
-[Risk] A pull request with auto-merge enabled enters the queue without a label → Mitigation: D8 records the collaborator set that bounds who can enable it; the world assumption carries the violation condition.
+[Risk] An early signal lands review-required work unreviewed → Mitigation: D8 documents E1 and points to the sibling authorization procedure and manual audit; A27 records the review-blind/bypass boundary, which collaborator counts do not discharge.
 
-[Risk] Startup's `EnsureRepoSetup` creates a second ruleset because the approved diff was not applied first → Mitigation: the migration order applies the diff before the first `clan machines update`, and the runtime task lists rulesets after startup.
+[Risk] Our ruleset is edited by the queue's startup setup rather than left alone → Mitigation: `EnsureRepoSetup` adds only a bypass actor to other branch-target rulesets and creates its own ruleset when none is named `gitea-mq`; the runtime task lists both rulesets after startup and compares ours against the approved state.
 
-[Risk] GitHub does not mark fast-forwarded stack members merged (V1) → Mitigation: outside this change's discharge; recorded as a world assumption whose violation voids the landing protocol's reliance on it, for the protocol change to test.
+[Risk] GitHub does not mark fast-forwarded stack members merged (V1) → Mitigation: the ADR discharges V1, empirically for the non-stack case and on operator confirmation of GitHub's retarget-and-mark behaviour for the stacked case, and marks it for re-confirmation at the first live stacked landing; carried here as world assumption A23 with its violation condition.
 
 [Trade-off] The assertion guards evaluation only, not the running process → accepted; runtime tasks read the unit's environment on the host, and a process started outside the unit is not something a NixOS assertion can see.
 
-[Trade-off] `allow_auto_merge` on is a second enqueue path → accepted, because off is unattainable under R15 and the collaborator set bounds it.
+[Trade-off] Native auto-merge is available as an authorization signal → accepted for ordinary trunk PRs, with no auto-merge on any registered-stack member under the sibling shape policy.
 
 [Trade-off] A second App with write and administration permissions is a second high-privilege registration to hold → accepted, because the queue cannot update refs or maintain rulesets without them, and the build service must not hold them.
 
@@ -145,14 +153,17 @@ Write the aspect with both generators, the service configuration, the PostgreSQL
 Generate the webhook secret.
 Instantiate the host's configuration as a check.
 Apply the DNS record and confirm resolution.
-G2: present the ruleset diff for `cameronraysmith/vanixiets` and wait for approval; apply it.
+G2: present the single-context ruleset addition for `cameronraysmith/vanixiets` and wait for approval; apply it.
 Deploy with `clan machines update magnetite`.
-Confirm the service's own setup left the rulesets as approved, that the App's webhook URL was patched by the service, and the V2, V3, and V6 observations.
+Confirm that setup created its own ruleset if absent and added App bypass to ours without changing our rules, that the App's webhook URL matches the service, and that V2, V3, and V9 hold.
+Re-confirm discharged V1 at the first live stacked landing; the old V6 ref probe is retired.
 
 Rollback is the ordinary one: remove `gitea-mq` from the host's aspect list and redeploy, which withdraws the unit, the vhost, and the assertions.
-The database and role, the cache directory, the credential entries, the App registration, and the ruleset persist after such a rollback; the ruleset in particular still requires `gitea-mq`, so a rollback of the service without a rollback of the ruleset leaves the default branch landable only by a bypass actor, and the G2 diff records the reverse edit for that case.
+The database and role, the cache directory, the credential entries, the App registration, and both rulesets persist after such a rollback.
+The App-owned queue gate still requires `gitea-mq` after service removal; an operator-approved disabling of that gate accompanies rollback so the branch is not left awaiting a stopped service.
+Record that separately from the G2 reverse diff, which removes only the added eval context from ours and preserves its build check and protection rules.
 
-Acceptance is the integration verification in tasks.md: the hostname serves over TLS, the unit is running with the four settings visible in its environment, the database exists owned by its role and the schema is migrated, the App's webhook URL reads the service's endpoint, the ruleset matches the approved diff, and a labeled up-to-date pull request whose tip already carries both nixbot contexts is landed by fast-forward.
+Acceptance is the integration verification in tasks.md: the hostname serves over TLS, the unit is running with the four settings visible in its environment, the database exists owned by its role and the schema is migrated, the App's webhook URL reads the service's endpoint, both rulesets read as approved and as created by startup, and an up-to-date pull request whose tip already carries both nixbot contexts is landed by fast-forward.
 
 ## Gate 1 modality verdicts
 
@@ -165,10 +176,10 @@ The repository has no BDD runner, and every observable this change asserts is ei
 | Requirement | Capability | Stratum | Modality | Witness |
 |---|---|---|---|---|
 | A merge queue is reachable at its own hostname | `merge-queue-service` | behavioral | smoke (deployment) | tasks 11.1 |
-| One up-to-date stack lands by fast-forward | `merge-queue-service` | behavioral | build gate (`nix eval`) and smoke (deployment) | tasks 4.2, 11.7 |
+| Landing advances the default branch to a tested commit | `merge-queue-service` | behavioral | build gate (`nix eval`) and smoke (deployment) | tasks 4.2, 11.7 |
 | The queue gates on the build service's verdicts and nothing else | `merge-queue-service` | behavioral | build gate (`nix eval`) and smoke (forge) | tasks 4.2, 8.3, 11.5 |
 | The queue acts under its own identity | `merge-queue-service` | behavioral | smoke (forge) | tasks 1.2, 1.4 |
-| Only the orchestrator puts a change into the queue | `merge-queue-service` | behavioral | recorded collaborator set | tasks 8.4 |
+| The enqueue signal is exposed as merge authorization | `merge-queue-service` | behavioral | documentation and world-assumption boundary | tasks 8.4, 10.1 |
 | Queue credentials are operator-supplied and never legible in the repository | `merge-queue-service` | behavioral | content search and build gate (`nix eval`) | tasks 3.3, 3.1 |
 | One activation establishes the queue | `merge-queue-service` | behavioral | smoke (deployment) | tasks 9.1, 11.1 |
 | Landing settings cannot drift unnoticed | `merge-queue-service` | behavioral | build gate (`nix eval`, negative control) | tasks 4.3 |
@@ -177,7 +188,7 @@ The repository has no BDD runner, and every observable this change asserts is ei
 | A database and role exist for the unit's dynamic user | `merge-queue-interface` | interface | build gate (`nix eval`) and smoke (deployment) | tasks 4.1, 11.3 |
 | Credentials exist only as activation-resolved systemd credentials | `merge-queue-interface` | interface | build gate (`nix eval`) and smoke (deployment) | tasks 3.1, 9.1 |
 | The forge application holds exactly the queue's permission and event set | `merge-queue-interface` | interface | smoke (forge) | tasks 1.2 |
-| The default branch is governed by the queue's ruleset | `merge-queue-interface` | interface | smoke (forge) | tasks 8.3, 11.4 |
+| The default branch is governed by two rulesets | `merge-queue-interface` | interface | smoke (forge) | tasks 8.3, 11.4 |
 | The service registers its own webhook endpoint | `merge-queue-interface` | interface | smoke (forge) | tasks 11.2 |
 | The service is a consequence of the host's declared configuration | `merge-queue-interface` | interface | build gate (`nix eval`) | tasks 7.1 |
 | This capability states its own trust boundary | `merge-queue-interface` | interface | capability text and documentation | specs text, tasks 10.1 |
@@ -185,6 +196,9 @@ The repository has no BDD runner, and every observable this change asserts is ei
 | A23 — GitHub marks a fast-forwarded stack member merged | `world-assumptions` | world | violation-condition witness | its own scenario |
 | A24 — gitea-mq enqueues auto-merge-enabled pull requests and enables `allow_auto_merge` | `world-assumptions` | world | violation-condition witness | its own scenario |
 | A25 — gitea-mq takes required checks from the forge's protection first | `world-assumptions` | world | violation-condition witness | its own scenario |
+| A26 — the batch engine advances the target to the exact tested commit | `world-assumptions` | world | violation-condition witness | its own scenario |
+| A27 — the queue is review-blind and the enqueue signal is the merge authorization | `world-assumptions` | world | violation-condition witness | its own scenario |
+| A28 — native stack members are based on one another | `world-assumptions` | world | violation-condition witness | its own scenario |
 | Grounded vocabulary for behavioral requirements | `world-assumptions` | world | designation table and its lint | the table itself |
 
 No row carries an `est-property`, `est-contract`, or `est-symbolic` modality, so this change carries no executable-specification-testing obligation.
@@ -193,8 +207,8 @@ No row carries an `est-property`, `est-contract`, or `est-symbolic` modality, so
 
 Whether the operator wants the App owned by `sciexp` and public, as `sciexp-nixbot` is, or owned by `cameronraysmith`; either works for a user-owned repository and the G1 gate is where it is decided.
 
-Whether the `User` bypass actor for `cameronraysmith` is wanted beside the repository-admin role that already covers the owner, or whether the admin role alone is the orchestrator identity's bypass; the G2 diff proposes both and the operator chooses.
-
-Whether GitHub accepts a push to `refs/landings/*` from the orchestrator identity at all (the accept half of V6); no ruleset can protect that namespace, and the observation is recorded either way.
+Whether to pre-create a disabled `gitea-mq` ruleset or let setup create it active is an optional timing preference, not a prerequisite.
+If pre-created, setup does not create or activate it; the operator separately chooses activation timing.
+The old explicit-User-bypass question and V6 namespace question are retired: G2 adds only `nixbot/nix-eval`, and the ADR removes the orchestrator provenance protocol.
 
 The `world-assumptions` designation table is modified by this change and by `stand-up-nixbot-on-magnetite`, which is In Review and not yet archived; archive applies MODIFIED by full-text replacement, so this change's table carries the union of the corpus rows, the sibling's rows, and its own, and whichever change archives second must carry the other's rows or lose them.

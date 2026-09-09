@@ -16,42 +16,48 @@ The fleet SHALL provide a merge queue on the host that runs its build service, r
 - **WHEN** the hostname for the merge queue does not resolve to the host at the time of activation
 - **THEN** no certificate can be obtained for it and the requirement is unmet, which is why declaring the hostname precedes activating the host
 
-### Requirement: One up-to-date stack lands by fast-forward
+### Requirement: Landing advances the default branch to a tested commit
 
-The merge queue SHALL land a single queued stack whose tip already contains the default branch's tip by advancing the default branch to that tip, with no merge commit and no further build, and SHALL land nothing while a landing is in flight for that default branch.
+The merge queue SHALL test queued changes together, up to five queue entries at a time, and SHALL advance the default branch only to a commit whose content the build service has already reported on, by an ancestry-checked update that creates no commit the build service has not seen.
+A single queued change whose head already contains the default branch's tip MAY land that head without a further build.
 
-**Discharged by**: `merge-queue-interface` requirement `The four landing settings are evaluated values guarded by an assertion`, resting on world assumptions `A22 — gitea-mq resolves stacks only through GitHub's Stacks API` and `A23 — GitHub marks a fast-forwarded stack member merged`.
+**Discharged by**: `merge-queue-interface` requirement `The four landing settings are evaluated values guarded by an assertion`, resting on world assumptions `A22 — gitea-mq resolves stacks only through GitHub's Stacks API`, `A23 — GitHub marks a fast-forwarded stack member merged`, and `A26 — the batch engine advances the target to the exact tested commit`.
 
-#### Scenario: The orchestrator labels the top of an up-to-date stack
+#### Scenario: Several ready changes are tested together
 
-- **WHEN** the orchestrator applies the merge label to the top pull request of a stack whose tip contains the default branch's tip and whose tip carries the build service's two verdicts as passed
-- **THEN** the default branch advances to that tip without a merge commit, and every member of the stack reads as merged on the forge
+- **WHEN** between two and five ready queue entries targeting the same branch are selected together for a batch
+- **THEN** the queue tests them as one unit and, on a pass, advances the default branch to the commit that was tested, so that what lands is what was tested even when the unit contains merge commits
+
+#### Scenario: An authorized publisher labels the intended top of a stack
+
+- **WHEN** an authorized person or agent labels the topmost intended PR of a verified registered stack, its head contains every intended lower member, and no member has auto-merge enabled
+- **THEN** the selected stack prefix contributes one queue entry regardless of its depth, and after the default branch advances, every landed member reads as merged on the forge under A23
 
 #### Scenario: The default branch moves during a landing
 
-- **WHEN** the default branch advances by another path while the queue is landing a stack
-- **THEN** the landing is refused by the forge rather than forced, the queue retries a bounded number of times, and after the bound the stack is removed from the queue with a comment naming the cause
+- **WHEN** another update moves the default branch incompatibly with the queue's tested SHA while the queue is landing
+- **THEN** the forge refuses the non-force update, the queue rebuilds twice, and on the third consecutive rejection removes the affected entries with a comment naming the cause
 
 ### Requirement: The queue gates on the build service's verdicts and nothing else
 
-The merge queue SHALL consider a stack ready to land only when the build service's two verdicts, its evaluation verdict and its build verdict, are both passed on the stack's tip, and SHALL NOT require any other check run, whether or not those verdicts were published before the stack was queued.
+The merge queue SHALL consider a change ready to land only when the build service's two verdicts, its evaluation verdict and its build verdict, are both passed on the commit it tests, and SHALL NOT require any other check run beyond its own, whether or not those verdicts were published before the change was queued.
 
-**Discharged by**: `merge-queue-interface` requirements `The four landing settings are evaluated values guarded by an assertion` and `The default branch is governed by the queue's ruleset`, resting on world assumption `A25 — gitea-mq takes required checks from the forge's protection before its own list`.
+**Discharged by**: `merge-queue-interface` requirements `The four landing settings are evaluated values guarded by an assertion` and `The default branch is governed by two rulesets`, resting on world assumption `A25 — gitea-mq takes required checks from the forge's protection before its own list`.
 
-#### Scenario: Verdicts were published before the label
+#### Scenario: Verdicts were published before the change was queued
 
-- **WHEN** both of the build service's verdicts were published as passed on the stack's tip before the orchestrator applied the merge label
-- **THEN** the queue reads them as satisfied at the moment it enqueues the stack and proceeds without waiting for a further verdict
+- **WHEN** a single up-to-date entry's head already carries both successful build-service verdicts before authorization and the queue takes the head shortcut without a later rebuild
+- **THEN** the queue accepts the existing head verdicts for enqueue and landing without requiring a new check run or an arrive-after-enqueue timestamp
 
 #### Scenario: One verdict is failed
 
-- **WHEN** either of the build service's two verdicts on the stack's tip is failed
-- **THEN** the queue removes the stack from the queue with a comment naming the failed verdict, and the default branch does not move
+- **WHEN** a tested batch fails either required build-service verdict
+- **THEN** the queue withholds that batch's landing and bisects a multi-entry batch, or ejects a failing singleton with a comment naming the failed verdict; any surviving subset must pass on its tested SHA before landing
 
-#### Scenario: The forge's own protection names a verdict
+#### Scenario: The forge's own protection names one verdict only
 
-- **WHEN** the repository's forge-side protection comes to name a build-service verdict as required on the default branch
-- **THEN** the queue gates on the forge's list instead of its own, which is why the protection names only the queue's own status and no build-service verdict
+- **WHEN** the repository's forge-side protection on the default branch comes to name one of the build service's two verdicts and not the other
+- **THEN** the queue gates on that single verdict, because it prefers the forge's list whenever that list is non-empty, which is why both verdicts are required in our own ruleset rather than left to the queue's configured fallback
 
 ### Requirement: The queue acts under its own identity
 
@@ -69,21 +75,22 @@ The merge queue SHALL act on the forge under a forge application of its own, sep
 - **WHEN** a person reads the build service's forge application after the queue exists
 - **THEN** its permissions, events, and installation selection are what they were before
 
-### Requirement: Only the orchestrator puts a change into the queue
+### Requirement: The enqueue signal is exposed as merge authorization
 
-The fleet SHALL arrange that the orchestrator identity is the only identity that applies the merge label or enables auto-merge on a pull request in a managed repository, so that what the queue lands is what the orchestrator assembled.
+The fleet SHALL document the merge label and native auto-merge as merge-authorization signals accepted by a review-blind queue, and SHALL NOT claim that this deployment enforces review or restricts authorization to an orchestrator.
+The earlier orchestrator-only requirement is retired with the rollup: risk class governs when review is needed, while PR shape governs which signal targets the intended branch (ADR R15/R16, implemented by sibling work).
 
-**Discharged by**: world assumption `A24 — gitea-mq enqueues auto-merge-enabled pull requests and its setup enables allow_auto_merge`, together with the collaborator set recorded in this change's verification; no interface property can discharge this one, because who may label or enable auto-merge is the repository's collaborator set, which the machine cannot observe.
+**Discharged by**: `merge-queue-interface` requirement `This capability states its own trust boundary`, resting on world assumptions `A24 — gitea-mq enqueues auto-merge-enabled pull requests and its setup enables allow_auto_merge`, `A27 — the queue is review-blind and the enqueue signal is the merge authorization`, and `A28 — native stack members are based on one another`.
 
-#### Scenario: The collaborator set is read
+#### Scenario: The authorization boundary is read
 
-- **WHEN** the set of identities able to write to a managed repository is read on the forge
-- **THEN** it contains the orchestrator identity and the fleet's forge applications and no other identity
+- **WHEN** a person or agent reads this deployment's authorization interface
+- **THEN** it identifies review-before-signal under E1 as a sibling convention, ordinary trunk PR auto-merge and registered-stack top label as distinct signals, and the prohibition on auto-merge on every stack member
 
-#### Scenario: A second collaborator is added
+#### Scenario: An approving-review rule is proposed as a queue gate
 
-- **WHEN** a second identity gains write access to a managed repository
-- **THEN** this requirement is no longer discharged for that repository until the orchestrator's sole-enabler role is re-established by another means
+- **WHEN** someone treats an approving-review rule as enforcement of review before this queue lands
+- **THEN** the documented boundary identifies that claim as unsupported because the queue reads no approval state and its App bypasses the rule when updating the ref
 
 ### Requirement: Queue credentials are operator-supplied and never legible in the repository
 
@@ -119,7 +126,7 @@ The merge queue SHALL be established on the host by the fleet's ordinary activat
 
 ### Requirement: Landing settings cannot drift unnoticed
 
-The settings that decide how the merge queue lands — that batching is enabled, that an up-to-date stack skips a further build, that the build service's two verdicts are the required ones, and that the merge label is `merge-queue` — SHALL be fixed such that a change to any of them is refused before the host can be activated.
+The settings that decide how the merge queue lands — how many entries it tests together, that an up-to-date change skips a further build, which verdicts it names as its configured fallback, and that the merge label is `merge-queue` — SHALL be fixed such that a change to any of them is refused before the host can be activated.
 
 **Discharged by**: `merge-queue-interface` requirement `The four landing settings are evaluated values guarded by an assertion`.
 
@@ -131,4 +138,4 @@ The settings that decide how the merge queue lands — that batching is enabled,
 #### Scenario: The settings are unchanged
 
 - **WHEN** the host's configuration is evaluated with the four settings at their fixed values
-- **THEN** it evaluates, and the running queue's environment carries those values
+- **THEN** it evaluates; after activation, the runtime environment is checked separately to confirm those values

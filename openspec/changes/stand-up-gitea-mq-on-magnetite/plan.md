@@ -9,20 +9,27 @@ path. It decomposes tasks.md group by group with the same numbering, so task 4.2
 Task 4 Step 2 here where the mapping is one to one and is cross-referenced where it is not.
 -->
 
-**Goal:** Stand up gitea-mq on magnetite at `mq.scientistexperience.net`, deployed by `clan machines update magnetite`, with the four landing settings the ADR fixes pinned by an assertion, a dedicated GitHub App, and the repository ruleset on `cameronraysmith/vanixiets` aligned with the fast-forward landing path.
+**Goal:** Stand up gitea-mq on magnetite at `mq.scientistexperience.net` with `batchMax = 5`, the other pinned landing settings, a dedicated GitHub App, database/proxy provisioning (R11/R13), and two default-branch rulesets (R14).
 
 **Architecture:** A new first-party aspect `flake.modules.nixos.gitea-mq` at `modules/nixos/gitea-mq.nix` carries the service configuration, the PostgreSQL provisioning, the nginx vhost, two clan vars generators, and the pinning assertions; the upstream `inputs.gitea-mq.nixosModules.default` is imported at the host beside `inputs.nixbot.nixosModules.nixbot`. The unit runs as a dynamic user named for the unit, authenticates to PostgreSQL by peer identity, listens on loopback port 8092 behind the host's nginx, and reads both GitHub secrets as systemd credentials from root-owned clan vars files. Two operator gates stop the plan: App registration (Task 1) and the ruleset diff (Task 8).
 
 **Tech Stack:** nix flakes with flake-parts and import-tree; clan-core for deployment and vars; gitea-mq (`github:Mic92/gitea-mq`, `nixosModules.default`, pinned at or after `d44c455`); nginx with ACME; PostgreSQL; terranix against Cloudflare for DNS; `gh` for forge reads and the ruleset write.
 
+Revision 2 follows `docs/notes/development/version-control/adr-substitution-first-rollup-landing.md` §Decision: `internal/batch/batch.go::Engine.HandlePass` fast-forwards to the exact tested batch SHA, including tested merge commits.
+That reverses the orchestrator rollup, zero batch limit, linear-history mandate, and proposed replacement of the nixbot ruleset.
+R1/R2 source filtering/cache warming and R15/R16 authorization procedure remain sibling work.
+From an aarch64-darwin laptop, the sibling warming command is `just check-fast auto off x86_64-linux 2>&1 | tee logs/checks-linux-$(date +%Y%m%d-%H%M%S).log`.
+Its positional system parameter adds `--remote magnetite.zt --no-download` (`justfile::check-fast`); outputs stay in magnetite's store, reported `local` and skipped by nixbot (`build_scheduler.py::JobScheduler._classify`).
+`just check-fast auto on` uploads to niks3 for peer darwin laptops and is not needed to warm CI.
+
 ## Global constraints
 
 - Nothing under `modules/nixos/nixbot.nix`, `modules/nixos/buildbot.nix`, their generators, vhosts, or databases is edited; `sciexp-nixbot` (id `4743700`) is not touched. Verified per task by `git diff --stat`.
-- The four landing settings are `batchMax = 0`, `skipQueueIfUpToDate = true`, `requiredChecks = [ "nixbot/nix-eval" "nixbot/nix-build" ]`, and no assignment to the merge label anywhere; the assertions in the aspect are the only place `GITEA_MQ_MERGE_LABEL` appears in the repository.
+- The four landing settings are `batchMax = 5`, `skipQueueIfUpToDate = true`, `requiredChecks = [ "nixbot/nix-eval" "nixbot/nix-build" ]`, and no merge-label override; the assertions in the aspect are the only place `GITEA_MQ_MERGE_LABEL` appears under `modules/`.
 - Both generator files stay at the default owner `root`; the module reads them through `LoadCredential` and no static `gitea-mq` user exists.
 - `listenAddr` is `127.0.0.1:8092`; `:8080` is bound by the LiveKit JWT service (`modules/nixos/matrix.nix`).
 - `hideRefFromClients = false`; the default would inject an `ExecStartPre` into `systemd.services.gitea` on this host.
-- The ruleset diff is applied before the first deployment, so `EnsureRepoSetup` finds a ruleset named `gitea-mq` and creates none.
+- G2 adds only `nixbot/nix-eval` to our existing ruleset before first deployment; installation setup creates the App's separate `gitea-mq` ruleset and adds App bypass to ours. Both nixbot contexts must remain forge-required: `internal/github/forge.go::GetRequiredChecks` unions ruleset/classic contexts minus queue-owned contexts, and `internal/monitor/monitor.go::ResolveRequiredChecks` prefers that non-empty list over the configured fallback. No linear-history rule or classic protection is intended.
 - No upstream issue or pull request is opened against gitea-mq anywhere in this work.
 - Long or output-heavy commands are captured: `<command> 2>&1 | tee logs/<identifier>-$(date +%Y%m%d-%H%M%S).log`.
 - Verification of nix-managed outputs is by `nix eval` against `.#nixosConfigurations.magnetite` and by instantiation of `.#checks.x86_64-linux.nixos-magnetite.drvPath`; realization is deferred to the deployment on the host for the reason `stand-up-nixbot-on-magnetite` task 7.1 records.
@@ -39,7 +46,7 @@ Task 4 Step 2 here where the mapping is one to one and is cross-referenced where
 - Consumes: nothing.
 - Produces: the numeric App id used as `services.gitea-mq.github.appId` in Task 4 and as the integration id in Task 8's ruleset; the PEM private key the operator sets in Task 3.
 
-- [ ] **Step 1: Present the registration and stop (tasks.md 1.1)**
+- [ ] **Step 1: Present the registration and stop (tasks.md 1.1; operator gate, an agent MUST NOT tick)**
 
 Present to the operator, verbatim, and do not proceed until the operator reports the App id:
 
@@ -66,11 +73,14 @@ The `clan vars set` command only works once Task 4 has declared the generator an
 - [ ] **Step 2: Confirm the registration (tasks.md 1.2)**
 
 Run: `gh api /apps/<slug> --jq '{id,slug,owner:.owner.login,permissions,events}' 2>&1 | tee logs/gitea-mq-app-$(date +%Y%m%d-%H%M%S).log`
-Expected: `permissions` equal to `{administration: write, checks: write, contents: write, metadata: read, pull_requests: write, statuses: read}`, `events` contains the three configured subscribable events `check_run`, `pull_request`, `status`, `id` not `4743700`. Record extra reported events without blocking unless a required event is missing. Record `installation` and `installation_repositories` as automatically delivered by GitHub, not subscribable or required in `events`. Record in verify.md.
+Expected: `permissions` equal to `{administration: write, checks: write, contents: write, metadata: read, pull_requests: write, statuses: read}`, `events` equal as a set to exactly `check_run`, `pull_request`, `status`, and `id` not `4743700`.
+Record `installation` and `installation_repositories` as automatically delivered by GitHub, not subscribable or required in `events`.
+The older five-event expectation was corrected after it blocked a live gate (ADR Appendix A, R13); record the result in verify.md.
 
 - [ ] **Step 3: Record the installation selection (tasks.md 1.3)**
 
-Record `cameronraysmith/vanixiets ALONE` from the App's installations page, and the installation id from the service log once Task 9 has run.
+Record complete enumeration of all App installations and their repositories, with pagination, or equivalent complete operator-page evidence establishing `cameronraysmith/vanixiets` alone (design D11).
+The target repository's installation endpoint alone cannot prove exclusivity; incomplete evidence blocks deployment authorization because `github.repos` is additive.
 
 - [ ] **Step 4: Confirm `sciexp-nixbot` is unchanged (tasks.md 1.4)**
 
@@ -171,7 +181,6 @@ The generator declaration commits with Task 4; the vars entries commit as `clan 
   flake.modules.nixos.gitea-mq =
     {
       config,
-      lib,
       pkgs,
       ...
     }:
@@ -189,12 +198,12 @@ The generator declaration commits with Task 4; the vars entries commit as `clan 
         listenAddr = listen;
         hideRefFromClients = false;
         github = {
-          appId = <App id from Task 1>;
+          appId = 4875422;
           privateKeyFile = gen.gitea-mq-github-app-secret-key.files."key.pem".path;
           webhookSecretFile = gen.gitea-mq-github-webhook-secret.files."secret".path;
           repos = [ "cameronraysmith/vanixiets" ];
         };
-        batchMax = 0;
+        batchMax = 5;
         skipQueueIfUpToDate = true;
         requiredChecks = [
           "nixbot/nix-eval"
@@ -228,7 +237,7 @@ Verify: the three `nix eval` commands in tasks.md 4.1.
 - [ ] **Step 2: Confirm the environment (tasks.md 4.2)**
 
 Run: `nix eval .#nixosConfigurations.magnetite.config.systemd.services.gitea-mq.environment --apply 'e: { inherit (e) GITEA_MQ_BATCH_MAX GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE GITEA_MQ_REQUIRED_CHECKS; label = e ? GITEA_MQ_MERGE_LABEL; }' --json`
-Expected: `{"GITEA_MQ_BATCH_MAX":"0","GITEA_MQ_REQUIRED_CHECKS":"nixbot/nix-eval,nixbot/nix-build","GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE":"true","label":false}`.
+Expected: `{"GITEA_MQ_BATCH_MAX":"5","GITEA_MQ_REQUIRED_CHECKS":"nixbot/nix-eval,nixbot/nix-build","GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE":"true","label":false}`.
 
 - [ ] **Step 3: Assertions (tasks.md 4.3)**
 
@@ -236,19 +245,23 @@ Expected: `{"GITEA_MQ_BATCH_MAX":"0","GITEA_MQ_REQUIRED_CHECKS":"nixbot/nix-eval
       assertions =
         let
           cfg = config.services.gitea-mq;
-          adr = "docs/notes/development/version-control/adr-substitution-first-rollup-landing.md R12";
+          adr = "docs/notes/development/version-control/adr-substitution-first-rollup-landing.md R11";
         in
         [
           {
-            assertion = cfg.batchMax == 0;
-            message = "services.gitea-mq.batchMax must be 0 (batch everything queued; single-entry fast-forward path) per ${adr}";
+            assertion = cfg.batchMax == 5;
+            message = "services.gitea-mq.batchMax must be 5 (bors-style batching; landing fast-forwards the target to the exact tested batch SHA) per ${adr}";
           }
           {
-            assertion = cfg.skipQueueIfUpToDate;
+            assertion = cfg.skipQueueIfUpToDate == true;
             message = "services.gitea-mq.skipQueueIfUpToDate must be true per ${adr}";
           }
           {
-            assertion = cfg.requiredChecks == [ "nixbot/nix-eval" "nixbot/nix-build" ];
+            assertion =
+              cfg.requiredChecks == [
+                "nixbot/nix-eval"
+                "nixbot/nix-build"
+              ];
             message = "services.gitea-mq.requiredChecks must be exactly nixbot/nix-eval and nixbot/nix-build per ${adr}";
           }
           {
@@ -259,11 +272,13 @@ Expected: `{"GITEA_MQ_BATCH_MAX":"0","GITEA_MQ_REQUIRED_CHECKS":"nixbot/nix-eval
 ```
 
 Verify, positive: `nix eval .#checks.x86_64-linux.nixos-magnetite.drvPath` succeeds.
-Verify, negative control in a scratch edit to `modules/machines/nixos/magnetite/default.nix`, reverted afterward: add `services.gitea-mq.batchMax = lib.mkForce 1;`, run the same command, expect failure with the first message; replace with `systemd.services.gitea-mq.environment.GITEA_MQ_MERGE_LABEL = "x";`, expect failure with the fourth message. Capture both in `logs/gitea-mq-assertion-negative-$(date +%Y%m%d-%H%M%S).log`. Revert and confirm `git status --short` is clean.
+Verify, negative control in a separate authorized scratch workspace: add `services.gitea-mq.batchMax = lib.mkForce 1;` to the host, run the same command, and expect failure with the message requiring 5; replace with `systemd.services.gitea-mq.environment.GITEA_MQ_MERGE_LABEL = "x";` and expect the label assertion's failure.
+Capture both failures and revert only the scratch edits; task 4.3 is reopened because its earlier completion predates the five-entry assertion.
+Do not run a negative-control edit in this shared correction session.
 
 - [ ] **Step 4: Header (tasks.md 4.4)**
 
-Following `modules/nixos/nixbot.nix`'s header form: the two generators and how each is populated; the peer-authentication coupling (unit name `gitea-mq` is the dynamic user name is the role name); port 8092 and why 8080 is not used; `hideRefFromClients = false` and why; the precondition that the `gitea-mq` ruleset exists before first start.
+Following `modules/nixos/nixbot.nix`'s header form: document the two generators and how each is populated; the peer-authentication coupling (unit name, dynamic user name, and role name); port 8092 and why 8080 is not used; `hideRefFromClients = false` and why; G2's single check addition and the two-ruleset/forge-derived-check invariant.
 
 - [ ] **Step 5: Commit point**
 
@@ -353,7 +368,7 @@ Expected: a derivation path and exit 0; every assertion from Task 4 Step 3 evalu
 ### Task 8: Rulesets (G2 gate)
 
 **Files:**
-- Modify: `openspec/changes/stand-up-gitea-mq-on-magnetite/verify.md` (before and after state, collaborator set)
+- Modify: `openspec/changes/stand-up-gitea-mq-on-magnetite/verify.md` (before and after state, authorization interface dependency)
 
 - [ ] **Step 1: Capture the current state (tasks.md 8.1)**
 
@@ -367,35 +382,44 @@ gh api /repos/cameronraysmith/vanixiets/collaborators --jq '.[].login'
 
 Capture all five in `logs/rulesets-before-$(date +%Y%m%d-%H%M%S).log` and verify.md.
 
-- [ ] **Step 2: Present the diff and stop (tasks.md 8.2)**
+- [ ] **Step 2: Present the diff and stop (tasks.md 8.2; operator gate, an agent MUST NOT tick)**
 
 Present, verbatim, and do not proceed until the operator approves or amends:
 
 ```text
 BEFORE  ruleset 16212553 "nixbot"  target branch  enforcement active  include ~DEFAULT_BRANCH
         rules: deletion; non_fast_forward;
-               required_status_checks [nixbot/nix-build @ integration 4743700], strict false, do_not_enforce_on_create false
-        bypass: RepositoryRole 5 (admin) always
-AFTER   ruleset 16212553 renamed "gitea-mq"  target branch  enforcement active  include ~DEFAULT_BRANCH
-        rules: deletion; non_fast_forward; required_linear_history;
-               required_status_checks [gitea-mq @ integration <App id>], strict false, do_not_enforce_on_create true
-        bypass: Integration <App id> always; User cameronraysmith always; RepositoryRole 5 always
-        no pull_request rule; no workflows rule
-CLASSIC protection on main: unchanged (required_linear_history on, allow_force_pushes on, no required checks)
-REPO    allow_auto_merge: left true (gitea-mq's setup re-enables it at every start; orchestrator is sole enabler by collaborator set)
-REVERSE (rollback): PUT the BEFORE body back to /repos/cameronraysmith/vanixiets/rulesets/16212553
-Question for the operator: keep the explicit User bypass beside the admin role, or rely on the admin role alone?
+               required_status_checks [nixbot/nix-build @ integration 4743700]
+AFTER   same ruleset, name, enforcement, conditions, parameters, and bypass actors
+        rules: deletion; non_fast_forward;
+               required_status_checks [nixbot/nix-build @ integration 4743700,
+                                       nixbot/nix-eval @ integration 4743700]
+DIFF    add only nixbot/nix-eval @ integration 4743700; remove nothing
+REVERSE remove only that added context; retain nixbot/nix-build and both protection rules
+SETUP   installation creates a second App-owned ruleset "gitea-mq", requiring only its context,
+        and adds the App bypass actor to ours; this is separate from the G2 operator edit
+CLASSIC main protection: absent (404); no required_linear_history in either ruleset
+REPO    allow_auto_merge: left true
 ```
 
-- [ ] **Step 3: Apply after approval (tasks.md 8.3)**
+Include the full captured before and proposed after API bodies with the summary above.
+If live state differs from the expected baseline, ask rather than broadening the operator mutation.
+Pre-creating a disabled `gitea-mq` ruleset is optional and only selects when its context starts blocking; record any separately approved activation timing.
+`internal/github/setup.go::EnsureRepoSetup` returns early when that name exists and does not repair or activate it.
 
-Write the approved body to `/tmp/gitea-mq-ruleset.json` and run:
-`gh api --method PUT /repos/cameronraysmith/vanixiets/rulesets/16212553 --input /tmp/gitea-mq-ruleset.json 2>&1 | tee logs/rulesets-after-$(date +%Y%m%d-%H%M%S).log`
-Verify: `gh api /repos/cameronraysmith/vanixiets/rulesets --jq '.[] | {id,name,target}'` lists exactly one branch ruleset named `gitea-mq`; its `required_status_checks` names only `gitea-mq` at the new App's id.
+- [ ] **Step 3: Apply only after approval (tasks.md 8.3)**
 
-- [ ] **Step 4: Record the collaborator set (tasks.md 8.4)**
+Apply only the added `nixbot/nix-eval @ 4743700` context to ruleset `16212553`, using the approved before/after body.
+Read back `gh api /repos/cameronraysmith/vanixiets/rulesets/16212553` and compare against the captured baseline: no other field changes, no rename, and no check replacement.
+After installation setup, Task 11 Step 4 verifies the separate queue ruleset and App bypass.
 
-Verify: `gh api /repos/cameronraysmith/vanixiets/collaborators --jq '.[].login'` prints `cameronraysmith` alone; record with the two App installations in verify.md.
+- [ ] **Step 4: Record the authorization interface dependency (tasks.md 8.4)**
+
+Reference the sibling R15/R16 procedure: E1 requires risk-based review before authorization by convention; ordinary trunk PRs use auto-merge, registered stacks use only the topmost intended label, and no stack member uses auto-merge.
+The queue is review-blind (`internal/poller/poller.go::enqueuePR`); the App bypasses rulesets, so a review rule cannot constrain its update.
+`internal/poller/poller.go::enqueueAutoMergePRs` uses `pr.BaseBranch`, while `labeledTargetBranch` resolves `stack.BaseBranch`.
+`PollOnce` runs auto-merge enqueue first and `enqueueLabeledPRs` skips already-queued PRs, so auto-merge on an upper member silently wins over a correct top label and targets the wrong branch.
+Collaborator counts do not establish E1 or shape compliance; the sibling owns the procedure and manual audit.
 
 ---
 
@@ -413,7 +437,8 @@ journalctl -u gitea-mq.service --since '-10 min' | grep -Ei 'migrat|auth|ruleset
 systemctl list-units --plain 'acme-mq*'
 ```
 
-Expected: `active`; `User=gitea-mq DynamicUser=yes`; migrations applied, no authentication error, no ruleset creation, no `cannot enable allow_auto_merge` warning, a webhook-config sync line; the ACME unit ran.
+Expected: `active`; `User=gitea-mq DynamicUser=yes`; migrations applied, no authentication error, successful creation of the second ruleset if absent and App bypass addition to ours, no setup permission warning, and the ACME unit ran.
+Confirm webhook configuration through Task 11 Step 2 rather than assuming a particular startup log message exists.
 
 ---
 
@@ -441,9 +466,9 @@ Record every observation in verify.md with the `[operator]` and `[verified here]
 - [ ] **Step 1: Hostname and certificate, both services (11.1)**
 - [ ] **Step 2: Webhook endpoint registered by the service; accepted and rejected arms (11.2)**
 - [ ] **Step 3: Database and role for the dynamic user (11.3)**
-- [ ] **Step 4: Rulesets untouched by startup setup; `allow_auto_merge` true (11.4)**
-- [ ] **Step 5: V3 check-run names and the resolved required-check pair (11.5)**
-- [ ] **Step 6: Four settings in the running unit's environment (11.6)**
-- [ ] **Step 7: V2 and the single-entry fast-forward, end to end (11.7)**
-- [ ] **Step 8: V6 observation on `refs/landings/v6-probe` (11.8)**
-- [ ] **Step 9: Rollback path by instantiation, with the ruleset's reverse edit recorded (11.9)**
+- [ ] **Step 4: Two rulesets, both nixbot contexts, App bypass, no linear-history/classic protection, `allow_auto_merge` true (11.4)**
+- [ ] **Step 5: V3 check-run names and the forge-derived required-check pair; fallback inactive (11.5)**
+- [ ] **Step 6: Four settings in the running unit's environment, including batch maximum 5 (11.6)**
+- [ ] **Step 7: V2 singleton original-head shortcut under `batchMax = 5`, ordinary auto-merge (11.7)**
+- [ ] **Step 8: Re-confirm discharged V1 at the first live stacked landing; retired V6 ref probe removed (11.8)**
+- [ ] **Step 9: Rollback instantiation in an authorized scratch workspace; G2 reverse diff and queue-gate disabling recorded separately (11.9)**

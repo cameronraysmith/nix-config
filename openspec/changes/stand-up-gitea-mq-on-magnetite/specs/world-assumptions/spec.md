@@ -2,51 +2,95 @@
 
 ### Requirement: A22 — gitea-mq resolves stacks only through GitHub's Stacks API
 
-It is true of gitea-mq at the revision this fleet pins, independent of what this fleet builds, that on the GitHub backend it learns which pull requests form a stack only by asking GitHub's Stacks API for the labeled pull request (`forge.go::ResolveStack`), that it lands the members up to and including the labeled one against the stack's base branch, and that it reads no `Depends-On:` header or pull-request body, so a stack published without native registration is a set of unrelated pull requests to it.
+It is true of gitea-mq at the pinned revision that label enqueue on GitHub resolves native membership through the Stacks API (`internal/github/forge.go::ResolveStack`) and targets the returned stack base (`internal/poller/poller.go::labeledTargetBranch`).
+The labelled PR contributes one entry whose head ancestry lands with it, so inclusion of all intended members requires verifying that ancestry.
+The queue reads no `Depends-On:` header or PR body; branch-chain hints from `internal/poller/poller.go::hintStackedPRs` do not establish native membership or supply stack-base resolution.
 Any requirement whose discharge depends on this fact SHALL name it explicitly, and SHALL be treated as losing its discharge once this assumption's violation condition below is observed.
 
 #### Scenario: gitea-mq comes to resolve stacks by another means, or stops resolving them
 
 - **WHEN** a pinned revision of gitea-mq resolves a stack from pull-request bodies, branch chaining, or any source other than the Stacks API, or stops resolving stacks on GitHub at all
-- **THEN** this assumption is void, and the `merge-queue-service` requirement `One up-to-date stack lands by fast-forward` loses the discharge argument that labeling the top pull request of a natively registered stack lands exactly its members
+- **THEN** this assumption is void, and the `merge-queue-service` requirement `Landing advances the default branch to a tested commit` loses the discharge argument that labelling the top pull request of a natively registered stack lands exactly its members
 
 ### Requirement: A23 — GitHub marks a fast-forwarded stack member merged
 
-It is true of the forge this fleet uses, independent of what this fleet builds, and not yet observed, that when the default branch is advanced by a non-force ref update to a commit from which a pull request's head is reachable, the forge marks that pull request merged with a merge timestamp and leaves its head unchanged, for every member of a natively registered stack whose head the update makes reachable.
-This assumption is the ADR's verification item V1; it is carried here because the landing protocol's client-side bookkeeping treats a commit as merged only when its pull request carries a merge timestamp and a head equal to the local commit, so a landing that leaves members open or closed-unmerged is not an acceptable degradation.
+The ADR's V1 records GitHub marking landed PRs merged with timestamps and unchanged head SHAs after a non-force update makes those SHAs reachable on the default branch.
+The non-stack case is discharged empirically by Mic92/dotfiles #5887–#5890; the stacked case rests on operator confirmation that GitHub retargets remaining members to the trunk and marks them merged when it detects their SHAs there (ADR §Compliance, V1).
+The stacked mechanism is unverified against a documentation or source citation here; V1 is nevertheless discharged on that attributed basis and is to be re-confirmed at the first live stacked landing, not treated as a promotion blocker.
+It is carried here because the landing protocol's client-side bookkeeping treats a commit as merged only when its pull request carries a merge timestamp and a head equal to the local commit, so a landing that leaves members open or closed-unmerged is not an acceptable degradation.
 Any requirement whose discharge depends on this fact SHALL name it explicitly, and SHALL be treated as losing its discharge once this assumption's violation condition below is observed.
 
 #### Scenario: A fast-forwarded member reads as open or closed rather than merged
 
 - **WHEN** the default branch is advanced by non-force ref update to a stack's tip and any member whose head became reachable reads as open, or as closed without a merge timestamp, on the forge
-- **THEN** this assumption is void, the `merge-queue-service` requirement `One up-to-date stack lands by fast-forward` loses the discharge argument that every member reads as merged, and native stack registration together with fast-forward landing of stacks is reopened as a decision rather than patched by the queue's close-with-comment fallback
+- **THEN** this assumption is void, the `merge-queue-service` requirement `Landing advances the default branch to a tested commit` loses the discharge argument that every member reads as merged, and native stack registration together with fast-forward landing of stacks is reopened as a decision rather than patched by the queue's close-with-comment fallback
 
 ### Requirement: A24 — gitea-mq enqueues auto-merge-enabled pull requests and its setup enables allow_auto_merge
 
-It is true of gitea-mq at the revision this fleet pins, independent of what this fleet builds, that a pull request with the forge's auto-merge enabled is enqueued exactly as a labeled one is (`poller.go::enqueueAutoMergePRs`), that the queue's startup setup turns the repository's `allow_auto_merge` setting on whenever the forge application holds the Administration permission (`setup.go::EnsureRepoSetup`), and that any identity with write access to the repository can enable auto-merge on a pull request.
-The merge label is therefore not the only path into the queue, and turning the repository setting off is undone at the next start.
+It is true of gitea-mq at the pinned revision that native auto-merge and labels both lead to `internal/poller/poller.go::enqueuePR` after required head checks pass, but their target selection differs.
+`enqueueAutoMergePRs` uses `pr.BaseBranch` without stack resolution; `labeledTargetBranch` calls `ResolveStack` and uses `stack.BaseBranch` for a registered member.
+`PollOnce` runs auto-merge enqueue first and `enqueueLabeledPRs` skips existing entries, so successful auto-merge enqueue wins over a correct label.
+The queue's startup setup enables repository `allow_auto_merge` when it has Administration permission (`internal/github/setup.go::EnsureRepoSetup`); turning it off is undone at the next start.
+The previous statement that auto-merge enqueues exactly as labels do is reversed because it omitted this target-selection difference.
 Any requirement whose discharge depends on this fact SHALL name it explicitly, and SHALL be treated as losing its discharge once this assumption's violation condition below is observed.
 
 #### Scenario: The auto-merge path changes shape
 
 - **WHEN** a pinned revision of gitea-mq stops enqueuing auto-merge-enabled pull requests, stops enabling `allow_auto_merge` at startup, or gains a setting that disables either
-- **THEN** this assumption no longer governs the queue, and the `merge-queue-service` requirement `Only the orchestrator puts a change into the queue` is re-examined, because its discharge by the collaborator set may then be replaceable by a machine-asserted setting
-
-#### Scenario: A second identity gains write access
-
-- **WHEN** an identity other than the orchestrator and the fleet's forge applications gains write access to a managed repository
-- **THEN** the collaborator-set argument that discharges `Only the orchestrator puts a change into the queue` is void for that repository until re-established
+- **THEN** this assumption no longer governs the queue, and `The enqueue signal is exposed as merge authorization` must be re-examined against the changed interface
 
 ### Requirement: A25 — gitea-mq takes required checks from the forge's protection before its own list
 
 It is true of gitea-mq at the revision this fleet pins, independent of what this fleet builds, that the set of checks it requires on a target branch is the forge's own required-status-check list from rulesets and classic protection with the queue's own contexts removed, and that its configured list is consulted only when that forge list is empty (`monitor.go::ResolveRequiredChecks`, `forge.go::GetRequiredChecks`).
-A forge-side requirement for any single build-service context therefore replaces the configured pair rather than adding to it.
+A forge-side requirement for any single build-service context therefore replaces the configured pair rather than adding to it, and a forge-side requirement for both makes the forge the operative source with the configured pair never consulted.
 Any requirement whose discharge depends on this fact SHALL name it explicitly, and SHALL be treated as losing its discharge once this assumption's violation condition below is observed.
 
 #### Scenario: The resolution order changes
 
 - **WHEN** a pinned revision of gitea-mq merges the forge's list with its configured list, prefers its configured list, or drops the forge list entirely
-- **THEN** this assumption is void, and the `merge-queue-service` requirement `The queue gates on the build service's verdicts and nothing else` and the `merge-queue-interface` requirement `The default branch is governed by the queue's ruleset` lose the argument that a ruleset naming only the queue's status makes the configured pair operative
+- **THEN** this assumption is void, and the `merge-queue-service` requirement `The queue gates on the build service's verdicts and nothing else` and the `merge-queue-interface` requirement `The default branch is governed by two rulesets` lose the argument that keeping both build-service contexts in the operator's ruleset makes exactly that pair the queue's required set
+
+### Requirement: A26 — the batch engine advances the target to the exact tested commit
+
+It is true of gitea-mq at the revision this fleet pins, independent of what this fleet builds, that its batch engine constructs a batch commit, has CI test that commit, and on a pass advances the target branch to that exact commit by an ancestry-checked non-force ref update (`internal/batch/batch.go::Engine.HandlePass` calling `internal/github/forge.go::FastForward`), so what lands is the tree CI saw even when the batch contains merge commits.
+A batch holds up to `batchMax` queue entries, and a single up-to-date entry with skipping enabled can land its own head without a batch ref (`internal/batch/batch.go::Engine.headIfUpToDate`, `Engine.Build`).
+This is the fact that retires the orchestrator rollup: no separately assembled linear candidate is needed to keep the landed tree identical to the tested tree.
+Any requirement whose discharge depends on this fact SHALL name it explicitly, and SHALL be treated as losing its discharge once this assumption's violation condition below is observed.
+
+#### Scenario: The engine lands something other than what it tested
+
+- **WHEN** a pinned revision of gitea-mq merges, squashes, rebases, or force-updates the target on a pass, rather than advancing it to the commit CI tested
+- **THEN** this assumption is void, and the `merge-queue-service` requirement `Landing advances the default branch to a tested commit` loses its discharge, together with the batching decision that rests on it
+
+### Requirement: A27 — the queue is review-blind and the enqueue signal is the merge authorization
+
+It is true of gitea-mq at the revision this fleet pins, independent of what this fleet builds, that it reads no review or approval state: a case-insensitive search of `internal/` for review-related identifiers returns no match, and `internal/poller/poller.go::enqueuePR` gates on check results alone.
+It is further true that the queue's forge application performs a direct ref update as a ruleset bypass actor (`internal/github/setup.go::EnsureRepoSetup`, `ensureBypass`; `internal/github/forge.go::FastForward`), so a forge-side approving-review rule does not constrain landing.
+Applying the merge label or enabling auto-merge is therefore the merge authorization itself, and ordering review before that signal is a convention, matching the three reference GitHub deployments, rather than a property the queue or the forge enforces.
+Any requirement whose discharge depends on this fact SHALL name it explicitly, and SHALL be treated as losing its discharge once this assumption's violation condition below is observed.
+
+#### Scenario: The queue gains review awareness
+
+- **WHEN** a pinned revision of gitea-mq reads approval state, or the forge comes to enforce an approving-review rule against the queue's application
+- **THEN** this assumption is void and the `merge-queue-service` requirement `The enqueue signal is exposed as merge authorization` must be re-examined because its description of review enforcement has changed
+
+#### Scenario: An unreviewed change is authorized
+
+- **WHEN** an identity applies the merge label or enables auto-merge on a review-required change before that change has been reviewed
+- **THEN** the queue can land it once required CI and landing conditions pass, because it supplies no review gate; this is the residual risk E1 records rather than a queue-enforced policy
+
+### Requirement: A28 — native stack members are based on one another
+
+For GitHub-native registered stacks, upper members are based on the member below and the bottom member is based on the trunk (operator assertion, consistent with `internal/github/forge.go::ResolveStack`, `internal/forge/forge.go::Stack.MembersUpTo`, and `internal/poller/poller.go::hintStackedPRs`).
+`internal/poller/poller.go::enqueueAutoMergePRs` uses `pr.BaseBranch` without stack resolution, while `labeledTargetBranch` resolves `stack.BaseBranch`.
+Because `PollOnce` runs auto-merge enqueue first and `enqueueLabeledPRs` skips already-queued PRs, an upper member can silently target its parent branch even when the intended top PR is correctly labelled.
+The sibling shape policy forbids auto-merge on every stack member, including the bottom member; the bottom member is not itself an example of wrong-parent target selection.
+Any requirement whose discharge depends on this fact SHALL name it explicitly, and SHALL be treated as losing its discharge once this assumption's violation condition below is observed.
+
+#### Scenario: Stack members stop being based on one another, or the enqueue order changes
+
+- **WHEN** GitHub-native stack members come to be based on the trunk rather than on the member below, or a pinned revision of gitea-mq resolves stacks on the auto-merge path or runs label enqueue first
+- **THEN** this assumption is void, and the shape rule that auto-merge is never enabled on any stack member loses the reason recorded for it
 
 ---
 
@@ -116,11 +160,13 @@ Thirteen terms carry two senses in this repository today and are disambiguated b
 | merge | machine | a commit object with more than one parent | machine-only |
 | merge label | — | the label whose presence on a pull request tells a merge queue to take it | shared |
 | verdict | — | a build service's published pass-or-fail outcome on a commit, one per named check run | shared |
-| orchestrator | — | the single identity, person or agent, that assembles stacks, publishes them, and marks them ready for the queue | world-only |
+| orchestrator | — | an agent coordinating work; the retired rollup assigned it stack assembly and sole authorization, neither of which this queue deployment requires | world-only |
 | auto-merge | — | a forge's own setting on a pull request asking the forge to merge it once its required checks pass | shared |
 | collaborator set | — | the identities a forge lists as able to write to a repository | world-only |
 | bypass actor | — | an identity a repository's forge-side protection exempts from its rules | shared |
-| landing settings | — | the values that decide how a merge queue lands: whether it batches, whether an up-to-date stack skips a further build, which verdicts it requires, and which label it watches | shared |
+| landing settings | — | the values that decide how a merge queue lands: how many changes it tests together, whether an up-to-date change skips a further build, which verdicts it requires, and which label it watches | shared |
+| queue entry | — | one change a merge queue holds as a single unit of work, whether that change is one pull request or a stack taken from its top | shared |
+| batch | — | the set of queue entries a merge queue tests together as one unit, and the commit that set produces | shared |
 
 #### Scenario: A term resolves to two phenomena
 

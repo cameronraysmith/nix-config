@@ -18,12 +18,15 @@
 #     an ExecStartPre into the local Gitea unit, which this GitHub queue does
 #     not use.
 #
-# Before first start, apply the approved G2 ruleset diff: one branch ruleset
-# named gitea-mq requiring only the queue's own status, with the queue App
-# and orchestrator bypasses. A remaining nixbot required check would replace
-# the configured fallback pair; an absent gitea-mq ruleset would be created
-# by startup setup. Installation selection must remain vanixiets alone:
-# github.repos adds repositories to installations, rather than filtering them.
+# Before first start, apply the approved G2 ruleset edit: add nixbot/nix-eval
+# beside the existing nixbot/nix-build required check on our default-branch
+# ruleset. gitea-mq derives its required set from the forge whenever that set
+# is non-empty, so both nixbot contexts must live in our ruleset; the
+# requiredChecks below is a fallback that does not fire in this configuration.
+# Startup setup adds its own second ruleset named gitea-mq carrying only the
+# queue's context, and adds the App as a bypass actor on ours. Installation
+# selection must remain vanixiets alone: github.repos adds repositories to
+# installations, rather than filtering them.
 {
   flake.modules.nixos.gitea-mq =
     {
@@ -64,7 +67,7 @@
           webhookSecretFile = gen.gitea-mq-github-webhook-secret.files."secret".path;
           repos = [ "cameronraysmith/vanixiets" ];
         };
-        batchMax = 0;
+        batchMax = 5;
         skipQueueIfUpToDate = true;
         requiredChecks = [
           "nixbot/nix-eval"
@@ -91,12 +94,12 @@
       assertions =
         let
           cfg = config.services.gitea-mq;
-          adr = "docs/notes/development/version-control/adr-substitution-first-rollup-landing.md R12";
+          adr = "docs/notes/development/version-control/adr-substitution-first-rollup-landing.md R11";
         in
         [
           {
-            assertion = cfg.batchMax == 0;
-            message = "services.gitea-mq.batchMax must be 0 (batch everything queued; single-entry fast-forward path) per ${adr}";
+            assertion = cfg.batchMax == 5;
+            message = "services.gitea-mq.batchMax must be 5 (bors-style batching; landing fast-forwards the target to the exact tested batch SHA) per ${adr}";
           }
           {
             assertion = cfg.skipQueueIfUpToDate == true;
