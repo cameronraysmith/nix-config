@@ -1,6 +1,7 @@
 { config, ... }:
 let
   nixosModules = config.flake.modules.nixos;
+  darwinModules = config.flake.modules.darwin;
 in
 {
   clan.modules.omnigent =
@@ -97,7 +98,20 @@ in
                   inherit (settings) environment;
                 };
               };
-            darwinModule = { };
+            darwinModule =
+              { pkgs, ... }:
+              {
+                imports = [ darwinModules.omnigent-host ];
+                services.omnigent-host = {
+                  enable = true;
+                  serverUrl = "https://${(lib.head (lib.attrValues roles.server.machines)).settings.domain}";
+                  hostName = machine.name;
+                  extraPackages = map (
+                    name: lib.getAttrFromPath (lib.splitString "." name) pkgs
+                  ) settings.extraPackages;
+                  inherit (settings) environment;
+                };
+              };
           };
       };
     };

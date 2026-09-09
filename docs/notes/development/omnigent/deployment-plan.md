@@ -2,7 +2,7 @@
 title: Omnigent server deployment plan
 status: working-note
 date: 2026-09-06
-amended: 2026-09-08
+amended: 2026-09-09
 ---
 
 # Omnigent server deployment plan
@@ -49,7 +49,7 @@ Release checks on `v0.12.0` confirm the ACP configuration fields, runner environ
 
 ### D1 Host placement
 
-Run the Omnigent server, its PostgreSQL database, and one co-located runner on `magnetite` now, under explicit systemd memory limits, and add `pyrite` and `stibnite` as further runners in the next increment through the same clan instance.
+Run the Omnigent server, its PostgreSQL database, and the always-on co-located runner on `magnetite` under explicit systemd memory limits; S7 adds `stibnite` as the second host in the same clan instance, while `pyrite` rollout remains deferred.
 
 `magnetite` is a Hetzner `cx53` with 16 vCPU and 32 GB RAM that already hosts Kanidm, synapse, Gitea, buildbot, and nginx (`github:cameronraysmith/vanixiets@590f75195cc7acbb3926d39397bf860c2c6efc65:modules/terranix/hetzner.nix:24-30`; `github:cameronraysmith/vanixiets@590f75195cc7acbb3926d39397bf860c2c6efc65:modules/machines/nixos/magnetite/default.nix:39-57`), and the 2026-09-02 audit measured 20 GiB available of 30.6 GiB with idle CPU and zero IO wait (`github:cameronraysmith/vanixiets@590f75195cc7acbb3926d39397bf860c2c6efc65:docs/notes/development/incidents/2026-09-02-nixbot-eval-throughput-magnetite-storage-audit.md:192-199`), while the buildbot sizing comment reserves about 24 GiB for everything other than eval workers and does not count Omnigent (`github:cameronraysmith/vanixiets@590f75195cc7acbb3926d39397bf860c2c6efc65:modules/nixos/buildbot.nix:161-165`).
 Upstream documents the server working set as about 512 MB to 1 GB and its compose template provisions `postgres:16-alpine` beside the server (`github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:deploy/README.md:181-184`; `github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:deploy/docker/docker-compose.yaml:26-27`), so the proposed budget is `MemoryHigh=2G` and `MemoryMax=3G` on the server unit and `MemoryHigh=6G` and `MemoryMax=8G` on the runner unit, leaving the buildbot reservation intact (`https://www.freedesktop.org/software/systemd/man/261/systemd.resource-control.html` fetched 2026-09-06).
@@ -298,7 +298,39 @@ Liveness is `HOST_LIVENESS_TTL_S = 90` seconds from the last update (`github:omn
 The web UI remembers the last host only while it is online and otherwise falls back to the first online host unless an explicit host is chosen (`github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:web/src/shell/NewChatDialog.tsx:2855-2903`); with `magnetite` always on, a session started while the laptop is asleep lands on `magnetite`, which is the intended fallback (Q7).
 Refresh grants have a 30-day absolute lifetime by default (`github:omnigent-ai/omnigent@381bf638fb31e6a51990d9dab54ea9ef4b933711:omnigent/server/routes/device_auth.py:114-128`), so each unattended runner needs a browser login refresh at least every 30 days; `OMNIGENT_GRANT_MAX_LIFETIME_DAYS` stays at its default (Q8).
 `pyrite` is reached through the same `host` role, since it is an `x86_64-linux` NixOS machine already in the inventory (`github:cameronraysmith/vanixiets@590f75195cc7acbb3926d39397bf860c2c6efc65:modules/clan/inventory/machines.nix:77-86`); its ZeroTier-only reachability is irrelevant because the tunnel is outbound to the public server.
-`stibnite` is `aarch64-darwin`, so its runner is a future `darwinModule` of the same clan service that expresses the unit as a Home Manager `launchd.agents` entry under the operator's user, following the moshi-hook precedent `launchd.agents.moshi-hook = lib.mkIf pkgs.stdenv.hostPlatform.isDarwin` in the Home Manager `ai` tree (`github:cameronraysmith/vanixiets@590f75195cc7acbb3926d39397bf860c2c6efc65:modules/home/ai/moshi/default.nix:201`); the pinned clan-core service contract supports `darwinModule` beside `nixosModule` (`github:clan-lol/clan-core@1c21a2388ffbf9a957a60f58d18757420666cc43:lib/inventory/distributed-service/service-module.nix:714-745`), and the module is a stub in the first deployment.
+S7 is the implemented Darwin extension: `modules/darwin/omnigent-host.nix` exports the typed bridge, and the clan host role imports it to emit a Home Manager-owned `launchd.agents.omnigent-host` for stibnite.
+Implementation does not mean activation or runtime acceptance; the controller build gates and human checklist below remain required.
+The selected user defaults to `config.system.primaryUser`; all home-dependent paths follow `config.users.users.${cfg.user}.home`, leaving the existing account alias split at the machine boundary.
+The shared role `extraModules` entry applies to Darwin as well as NixOS, contrary to the earlier clan README's NixOS-only wording from `73ee828b5` on 2026-09-07.
+Pinned Clan `1c21a2388ffbf9a957a60f58d18757420666cc43` imports both `darwinModule` and role `extraModules` at `lib/inventory/distributed-service/service-module.nix:967-977`; this corrects the wording without changing the design's HM ownership decision.
+No magnetite server-side or package change is needed: registration accepts another authenticated host, and the existing Darwin package evaluates without Linux derivations, as recorded in `omnigent-darwin-host-research.md` sections 1 and 4.
+The agent uses the configured package's foreground `host --server` argv in the user domain, waits for `/nix/store`, and keeps the same package in `programs.omnigent`.
+It has `RunAtLoad=true`, `KeepAlive.SuccessfulExit=false`, `ThrottleInterval=5`, and `ProcessType=Standard`; it never invokes `host enable`, `--background` or `service_entry`, and no second plist owns the process.
+Its environment is `cfg.environment // { HOME = userHome; PATH = explicitPath; }`.
+The required store PATH contains repository `claude-code` and `atomic`, llm-agents `codex`, `pi` and `omp`, and nixpkgs `bun`, `nodejs_22`, `python3`, `tmux`, `git` and `uv`, unconditionally before extras and `/usr/bin:/bin:/usr/sbin:/sbin`.
+It includes no bubblewrap and relies on no profile, login shell or `launchctl setenv`.
+Both log streams use `<selected-home>/.omnigent/logs/host/service.log`; HM creates the private directory with mode `0700` after `writeBoundary` and `omnigentMergeConfig`, before `setupLaunchAgents`.
+The same two shared ACP rows remain unchanged, with omp's `env_passthrough` exactly empty to exclude Atomic state.
+
+`NoNewPrivileges` has no launchd analogue.
+`MemoryHigh` and `MemoryMax` have no aggregate process-tree equivalent on launchd; per-process RSS is not a cgroup limit.
+Do not substitute `ResidentSetSize` or a different plist owner and claim Linux-equivalent hardening.
+A sleeping laptop becomes offline and reconnects automatically on wake or network return; offline is expected, not a fault.
+No network-state load restriction, fatal offline condition or disabled restart is introduced.
+An expired login after the roughly 30-day refresh grant can cause throttled foreground restart loops; inspect the declared log and run `omnigent login https://omni.scientistexperience.net` again as the selected user.
+This differs from upstream `service_entry`'s permanent-failure exit mapping; the foreground retry policy remains deliberate.
+
+On stibnite, the human procedure is ordered:
+
+1. Inspect and deliberately retire any competing `ai.omnigent.host` agent or manual host lifecycle without overwriting state.
+2. As the selected local user, run `omnigent login https://omni.scientistexperience.net` with the same Omnigent identity that owns magnetite.
+3. Preserve and verify vendor credentials, Pi's `~/.pi/agent`, Atomic's `~/.atomic/agent` and omp's `~/.omp/agent`; approve any credential replacement explicitly.
+4. Only after controller gates and independent review, activate the pinned stibnite configuration through the existing workstation process.
+   This workflow's deploy phase still targets magnetite, not stibnite.
+5. Inspect `launchctl print user/$(id -u)/org.nix-community.home.omnigent-host`, its argv/environment, the declared log, and the writable config without publishing tokens.
+   Verify name `stibnite`, a distinct persistent `host_id`, and both hosts in the authenticated UI; never copy magnetite state.
+6. Explicitly select stibnite and test native Claude/Codex/Pi and ACP Atomic/omp turns, Files after Resume, approvals, independent state roots, sleep/network recovery and logout/reboot recovery.
+   Record success, failure or not-tested per item as human attestation, including user-domain/Keychain and Background Items behavior; Nix evaluation cannot establish these outcomes.
 All runner credentials, vendor and Omnigent alike, remain per-runner local state under the runner user's home.
 
 Reversing evidence: a runner tunnel that cannot stay connected through nginx for a working day, an `enforce_sandbox` requirement that arrives before the dedicated-user migration, a Home Manager user service that proves necessary for vendor CLIs to find their state, or an upstream change that moves harness credentials out of the user's home.
@@ -358,8 +390,11 @@ Files to add or modify, without implementation commands.
 - Add `modules/nixos/omnigent-host.nix` as `flake.modules.nixos.omnigent-host`: options `services.omnigent-host.enable`, `package`, `serverUrl`, `user`, `hostName`, `extraPackages`, and `environment` (`attrsOf str`, default `{ }`); emit the D7 foreground unit, `User = cfg.user`, HOME derived from that user, required PATH including Atomic, Bun, and bare `pkgs.python3` before `cfg.extraPackages`, merged environment, `NoNewPrivileges = true`, and memory limits without namespace-restricting hardening.
 - Modify `modules/home/ai/claude-code/default.nix` by deleting `settings.env.TMPDIR` and `TMPPREFIX`; GLM and Cerebras inherit the deletion through the unchanged wrapper settings merge (D7).
 - Add `modules/clan/services/omnigent/flake-module.nix` and its `README.md`, following only the existing services' directory and manifest layout: `_class = "clan.service"`, `manifest.name = "omnigent"`, server interface `domain`/`port`, host interface `extraPackages`/`environment`; `perMachine.nixosModule` imports both plain modules once, and the server role enables its module and sets `cookieSecretGenerator = "omnigent-cookie-secret-${instanceName}"`.
-  The host role asserts `lib.length (lib.attrNames roles.server.machines) == 1` with exact message `Omnigent requires exactly one server`, derives `serverUrl` from that server's `settings.domain`, enables its module with `user = "cameron"` and `hostName = machine.name`, and forwards host environment settings; the Darwin role remains a documented stub.
-- Add `modules/clan/inventory/services/omnigent.nix`: declare `clan.inventory.instances.omnigent` with `module = { name = "omnigent"; input = "self"; }`, `roles.server.machines.magnetite.settings.domain = "omni.scientistexperience.net"`, and magnetite host settings carrying the D7 environment values.
+  The host role asserts `lib.length (lib.attrNames roles.server.machines) == 1` with exact message `Omnigent requires exactly one server`, derives `serverUrl` from that server's `settings.domain`, enables its module with NixOS `user = "cameron"` and `hostName = machine.name`, and forwards host environment settings.
+  S7 implements the Darwin role using `flake.modules.darwin.omnigent-host`, retaining its primary-user default and resolving dotted extra-package names against Darwin `pkgs`.
+- Add `modules/darwin/omnigent-host.nix` with the same typed enable/package/serverUrl/user/hostName/extraPackages/environment options, selected-account/HM/primary-user assertions, and the D7 HM-owned foreground lifecycle, environment and ordered private logs.
+- Add `modules/clan/inventory/services/omnigent.nix`: declare `clan.inventory.instances.omnigent` with `module = { name = "omnigent"; input = "self"; }`, `roles.server.machines.magnetite.settings.domain = "omni.scientistexperience.net"`, and magnetite plus stibnite host settings carrying the same home-independent D7 environment pair.
+  Retain the shared `extraModules` derivation of `PI_CODING_AGENT_DIR` from the selected user's home.
   The inventory is already split into per-service files; the previously named `modules/clan/inventory/services.nix` does not exist.
 - Modify `modules/nixos/kanidm.nix`: add group `omnigent_users` under `provision.groups`, add `provision.systems.oauth2.omnigent` with `displayName`, `originUrl = "https://omni.scientistexperience.net/auth/callback"`, `originLanding = "https://omni.scientistexperience.net"`, `preferShortUsername = true`, `scopeMaps.omnigent_users = [ "openid" "profile" "email" ]`, and `basicSecretFile`, and add the `kanidm-oauth2-omnigent` generator with files `secret` (owner `kanidm`) and `env` (owner `omnigent`) and `restartUnits = [ "kanidm.service" "omnigent.service" ]` (D4, D5).
 - Modify `modules/terranix/cloudflare.nix`: add the unproxied CNAME `omni` pointing at `magnetite.scientistexperience.net` (D6).
@@ -386,7 +421,7 @@ The `.#` examples below name attributes for local exploration; the current S1–
 
 - Package: first evaluate `.#packages.x86_64-linux.omnigent.version`, then have the controller build the package and inspect the built CLI's `--help` for `server` and `host`.
 - Clan module registration: `nix eval .#clan.modules --apply builtins.attrNames` lists `omnigent`.
-- Inventory roles: `nix eval .#clan.inventory.instances.omnigent.roles.server.machines --apply builtins.attrNames` prints `[ "magnetite" ]`, and `nix eval .#clan.inventory.instances.omnigent.roles.host.machines --apply builtins.attrNames` prints `[ "magnetite" ]`.
+- Inventory roles after S7: `nix eval .#clan.inventory.instances.omnigent.roles.server.machines --apply builtins.attrNames` prints `[ "magnetite" ]`, and `nix eval .#clan.inventory.instances.omnigent.roles.host.machines --apply builtins.attrNames` prints `[ "magnetite" "stibnite" ]`.
 - Server module: `nix eval .#nixosConfigurations.magnetite.config.services.omnigent.enable` is `true`, `.domain` is `omni.scientistexperience.net`, and `.cookieSecretGenerator` is `omnigent-cookie-secret-omnigent`.
 - Runner module: `nix eval .#nixosConfigurations.magnetite.config.services.omnigent-host.enable` is `true`, `.serverUrl` is `https://omni.scientistexperience.net`, and `.user` is `cameron`.
 - Exactly-one-server assertion: the contract's negative fixture adding a second server fails with exact message `Omnigent requires exactly one server`.
@@ -405,6 +440,11 @@ The `.#` examples below name attributes for local exploration; the current S1–
   Evaluate with `extraPackages = [ ]` to prove omp remains on the required runner PATH, and resolve the pinned Kanidm image to a nonempty SVG.
   The controller owns the S6 remote magnetite closure build and executable-omp check; independent gate nodes perform the carrier and merge checks.
   The UI dropdown, a completed `acp:oh-my-pi` turn, and Kanidm icon appearance require separate human attestations, not inference from evaluation or build gates.
+- S7 Darwin acceptance: stibnite is the second host, magnetite remains the only server, and both shared ACP rows match magnetite exactly with no Atomic state passed to omp.
+  The typed selected-user bridge, user-domain foreground lifecycle, ordered private logs and unconditional required PATH must pass the exact evaluations below, including changed-home and empty-extra-packages fixtures.
+  Preserve the unchanged magnetite runner/user/environment/PATH, single-worker server and exactly-one-server negative regression gates.
+  The controller builds `checks.aarch64-darwin.package-omnigent` and then `checks.aarch64-darwin.darwin-stibnite` locally; the writer performs no closure build or activation.
+  The D7 launchd security/memory gaps, expected offline recovery and expired-login remedy are acceptance constraints, not claims of Linux-equivalent isolation or observed runtime success.
 - Machine: evaluate the composed toplevel `drvPath`, then the controller runs the single remote build gate for `.#checks.x86_64-linux.nixos-magnetite`; do not repeat an unchanged-input closure build in the writer.
 - Post-deployment, read-only: `GET https://accounts.scientistexperience.net/oauth2/openid/omnigent/.well-known/openid-configuration` returns `issuer` equal to the D4 string; `kanidm person get <name>` on `magnetite` shows a `mail` line for the operator; one browser login reaches the Omnigent UI; one session streams events end to end with `proxy_buffering off;` in place; the `magnetite` host appears online in the UI within 90 seconds of `omnigent-host.service` starting.
 - Operator acceptance: record laptop passkey login, the `/ui/apps` tile, Android app login, and one `acp:atomic` session individually as passed, failed, or not tested; keep these human attestations distinct from tool observations.
@@ -417,13 +457,161 @@ TOK=$(curl -sS -u "omnigent:${SECRET}" -d grant_type=authorization_code -d "code
 printf '%s' "$TOK" | python3 -c 'import sys,json,base64; t=json.load(sys.stdin); p=t["id_token"].split(".")[1]; print(json.dumps(json.loads(base64.urlsafe_b64decode(p+"="*(-len(p)%4))),indent=2))'
 ```
 
+### S7 exact Darwin gates
+
+The immutable run contract is `.atomic/workflows/runs/deploy-omnigent/omnigent-magnetite/80f36dda-338d-469b-ae83-dd94df58e7bc/slice-7.json`.
+Its literal acceptance list and deterministic gates remain authoritative; the commands here collect the same predicates for operator inspection.
+Set `OMNIGENT_SOURCE` to the controller's pinned implementation source, not an unchanged branch tip or an untracked working-tree approximation.
+Every positive evaluation must return `true`.
+
+```bash
+export OMNIGENT_SOURCE='git+file:///Users/crs58/projects/vanixiets?ref=omnigent-magnetite&rev=<IMPLEMENTATION_FULL_COMMIT>'
+nix eval --impure --json --expr "$(cat <<'NIX'
+let
+  f = builtins.getFlake (builtins.getEnv "OMNIGENT_SOURCE");
+  c = f.darwinConfigurations.stibnite.config;
+  u = c.services.omnigent-host.user;
+  home = c.users.users.${u}.home;
+  h = c.home-manager.users.${u};
+  agent = h.launchd.agents.omnigent-host;
+  a = agent.config;
+  logs = h.home.activation.omnigentHostLogDirectory;
+  m = f.nixosConfigurations.magnetite.config;
+  p = f.nixosConfigurations.magnetite.pkgs;
+  r = f.packages.x86_64-linux;
+  tools = f.inputs.llm-agents.packages.x86_64-linux;
+in
+assert builtins.attrNames f.clan.inventory.instances.omnigent.roles.host.machines == [ "magnetite" "stibnite" ];
+assert builtins.attrNames f.clan.inventory.instances.omnigent.roles.server.machines == [ "magnetite" ];
+assert c.services.omnigent-host.enable && u == c.system.primaryUser;
+assert c.services.omnigent-host.serverUrl == "https://omni.scientistexperience.net" && c.services.omnigent-host.hostName == "stibnite";
+assert agent.enable && agent.domain == "user" && agent.waitForNixStore;
+assert h.programs.omnigent.enable && h.programs.omnigent.package == c.services.omnigent-host.package;
+assert h.home.homeDirectory == home && a.EnvironmentVariables.HOME == home;
+assert a.EnvironmentVariables.PI_CODING_AGENT_DIR == home + "/.atomic/agent";
+assert a.EnvironmentVariables.PI_ACP_PI_COMMAND == "atomic";
+assert a.EnvironmentVariables.OMNIGENT_RUNNER_ENV_PASSTHROUGH == "PI_ACP_PI_COMMAND,PI_CODING_AGENT_DIR";
+assert a.ProgramArguments == [ (p.lib.getExe c.services.omnigent-host.package) "host" "--server" "https://omni.scientistexperience.net" ];
+assert a.RunAtLoad && !a.KeepAlive.SuccessfulExit && a.ThrottleInterval == 5 && a.ProcessType == "Standard";
+assert builtins.filter (k: a.KeepAlive.${k} != null) (builtins.attrNames a.KeepAlive) == [ "SuccessfulExit" ];
+assert (a.Disabled or null) != true && (a.LimitLoadToHosts or null) == null && (a.LimitLoadFromHosts or null) == null;
+assert a.WorkingDirectory == home && a.StandardOutPath == home + "/.omnigent/logs/host/service.log" && a.StandardErrorPath == a.StandardOutPath;
+assert builtins.elem "setupLaunchAgents" logs.before && builtins.all (n: builtins.elem n logs.after) [ "writeBoundary" "omnigentMergeConfig" ];
+assert h.programs.omnigent.settings.host.name == "stibnite";
+assert h.programs.omnigent.settings.acp.agents == [
+  { name = "Atomic"; command = "bunx pi-acp@0.0.33"; omnigent_mcp = false; inject_system_prompt = false; env_passthrough = [ "PI_ACP_PI_COMMAND" "PI_CODING_AGENT_DIR" ]; }
+  { name = "Oh My Pi"; command = "omp acp"; omnigent_mcp = false; inject_system_prompt = false; env_passthrough = []; }
+];
+assert h.programs.omnigent.settings.acp == m.home-manager.users.cameron.programs.omnigent.settings.acp;
+assert [ m.services.omnigent-host.user m.systemd.services.omnigent-host.serviceConfig.User ] == [ "cameron" "cameron" ];
+assert builtins.removeAttrs m.systemd.services.omnigent-host.environment [ "PATH" ] == {
+  HOME = "/home/cameron"; PI_ACP_PI_COMMAND = "atomic"; PI_CODING_AGENT_DIR = "/home/cameron/.atomic/agent";
+  OMNIGENT_RUNNER_ENV_PASSTHROUGH = "PI_ACP_PI_COMMAND,PI_CODING_AGENT_DIR";
+};
+assert builtins.all (x: builtins.elem x m.systemd.services.omnigent-host.path) [ r.claude-code r.atomic tools.codex tools.pi tools.omp p.bun p.nodejs_22 p.python3 p.tmux p.git p.uv p.bubblewrap ];
+assert m.systemd.services.omnigent.environment.WEB_CONCURRENCY == "1";
+true
+NIX
+)"
+
+nix eval --impure --json --expr "$(cat <<'NIX'
+let
+  f = builtins.getFlake (builtins.getEnv "OMNIGENT_SOURCE");
+  base = f.darwinConfigurations.stibnite;
+  u = base.config.services.omnigent-host.user;
+  d = base.extendModules { modules = [ ({ lib, ... }: {
+    users.users.${u}.home = lib.mkForce "/Users/omnigent-home-fixture";
+    home-manager.users.${u}.home.homeDirectory = lib.mkForce "/Users/omnigent-home-fixture";
+  }) ]; };
+  home = d.config.users.users.${u}.home;
+  a = d.config.home-manager.users.${u}.launchd.agents.omnigent-host.config;
+in a.EnvironmentVariables.PI_CODING_AGENT_DIR == home + "/.atomic/agent" && a.EnvironmentVariables.HOME == home
+  && a.StandardOutPath == home + "/.omnigent/logs/host/service.log" && a.StandardErrorPath == a.StandardOutPath && a.WorkingDirectory == home
+NIX
+)"
+
+nix eval --impure --json --expr "$(cat <<'NIX'
+let
+  f = builtins.getFlake (builtins.getEnv "OMNIGENT_SOURCE");
+  g = f.inputs.flake-parts.lib.mkFlake { inputs = f.inputs // { self = f; }; } {
+    imports = [ (f.inputs.import-tree (f.outPath + "/modules")) ];
+    clan.inventory.instances.omnigent.roles.host.settings.extraPackages = [];
+  };
+  d = g.darwinConfigurations.stibnite; c = d.config; p = d.pkgs;
+  r = f.packages.aarch64-darwin; h = f.inputs.llm-agents.packages.aarch64-darwin;
+  a = c.home-manager.users.${c.services.omnigent-host.user}.launchd.agents.omnigent-host.config;
+  expected = p.lib.makeBinPath [ r.claude-code r.atomic h.codex h.pi h.omp p.bun p.nodejs_22 p.python3 p.tmux p.git p.uv ] + ":/usr/bin:/bin:/usr/sbin:/sbin";
+in c.services.omnigent-host.extraPackages == [] && a.EnvironmentVariables.PATH == expected && builtins.head a.ProgramArguments == p.lib.getExe c.services.omnigent-host.package
+NIX
+)"
+```
+
+The negative fixture must exit nonzero with exactly `Omnigent requires exactly one server` in its diagnostic:
+
+```bash
+nix eval --impure --json --expr "$(cat <<'NIX'
+let
+  f = builtins.getFlake (builtins.getEnv "OMNIGENT_SOURCE");
+  g = f.inputs.flake-parts.lib.mkFlake { inputs = f.inputs // { self = f; }; } {
+    imports = [ (f.inputs.import-tree (f.outPath + "/modules")) ];
+    clan.inventory.instances.omnigent.roles.server.machines.cinnabar.settings = { domain = "omni.scientistexperience.net"; port = 8080; };
+  };
+in g.nixosConfigurations.magnetite.config.system.build.toplevel.drvPath
+NIX
+)"
+```
+
+The contract's text gates also reject a literal `crs58` in the Darwin module or clan service and require the D7 platform-gap, expected-offline and expired-login documentation.
+Inspect the rendered log activation and generated plist in the realized Home Manager generation using the controller procedure below; runtime checks must still confirm ownership, modes and behavior on the activated machine.
+Only the controller proceeds from evaluation to these local builds, in order; set `OMNIGENT_PRIMARY` to `/Users/crs58/projects/vanixiets` and `OMNIGENT_SANDBOX` to the controller's gate sandbox.
+
+```bash
+nix eval --raw "$OMNIGENT_SOURCE#packages.aarch64-darwin.omnigent.drvPath"
+nix build --no-link "$OMNIGENT_SOURCE#checks.aarch64-darwin.package-omnigent"
+python3 "$OMNIGENT_PRIMARY/.atomic/workflows/omnigent/darwin-artifacts.py" "$OMNIGENT_SANDBOX" "$OMNIGENT_SOURCE#checks.aarch64-darwin.darwin-stibnite"
+```
+
+The Python command is the contract's exact gate 30.
+It builds the stibnite closure once, selects the unique Home Manager generation containing the agent from that closure, and checks its rendered plist, user-domain file and activation order.
+It emits the pinned source, built system and per-check observations, and fails if any inspection fails.
+The preceding run's closure-only command is insufficient for this contract; successful evaluation or a historical generation receipt cannot replace the current gate.
+
+#### Historical S7 post-build inspection evidence
+
+The previous run `77f8e42c-34d6-4a94-8b0c-fa95cde81ad4` recorded successful package and stibnite closure builds at `7f33fcbc1afa6b318bc5508a7b599aadf1a5c2c8` in `gate-sandbox-7.json:182-195`.
+The closure receipt names `/nix/store/kc9fmc0pdzf2zsp5avxcjkj09fzlg88f-home-manager-generation.drv`.
+The previous inspection-completion claim, added in that commit on 2026-09-08, instead named `v251glqwgpfvwidqkm1vrxc51xa36cra-home-manager-generation.drv` at `6d3ae175693373f747a6854c71d405f79c10f315` without an independent receipt or artifact-equivalence evidence.
+That run's review finding F1 was left open pending a rendered-artifact inspection receipt associated with the reviewed SHA; the successful deterministic gates did not discharge it.
+This corrects the evidence claim, not D7's Home Manager ownership decision or any acceptance requirement.
+
+The following read-only commands inspect that historical generation without another build or activation; they do not discharge the current run's gate 30.
+Keep any historical inspection output beside that run's reviewed SHA and `gate-sandbox-7-23.log`.
+For the current reviewed SHA, use the controller command above rather than reusing this derivation or assuming a fresh evaluation produces the same generation.
+
+```bash
+HM_DRV=/nix/store/kc9fmc0pdzf2zsp5avxcjkj09fzlg88f-home-manager-generation.drv
+HM_GENERATION=$(nix-store --query --outputs "$HM_DRV")
+printf 'generation: %s\n' "$HM_GENERATION"
+test -r "$HM_GENERATION/activate"
+rg -n 'Activating.*(writeBoundary|omnigentMergeConfig|omnigentHostLogDirectory|setupLaunchAgents)|install -d -m 0700 .*\.omnigent/logs/host' "$HM_GENERATION/activate"
+plutil -lint "$HM_GENERATION/LaunchAgents/org.nix-community.home.omnigent-host.plist"
+plutil -p "$HM_GENERATION/LaunchAgents/org.nix-community.home.omnigent-host.plist"
+cat "$HM_GENERATION/LaunchAgentDomains/org.nix-community.home.omnigent-host.domain"
+```
+
+The receipt must show `writeBoundary`, `omnigentMergeConfig`, the log directory's `install -d -m 0700`, and `setupLaunchAgents` in that order.
+Inspect the plist for the selected home and both log destinations, the full declared environment and required store PATH, `RunAtLoad=true`, `KeepAlive.SuccessfulExit=false`, `ThrottleInterval=5`, and `ProcessType=Standard`.
+Its foreground command must wait for `/nix/store` and `exec` the built Omnigent package with `host --server https://omni.scientistexperience.net`, without `--background`, `host enable` or `service_entry`; the domain file must read `user`.
+`LimitLoadToSessionType=Background` is distinct from `ProcessType=Background`; the latter must remain absent.
+These inspections establish rendered configuration only; log-directory ownership and mode after activation, credentials, host identity and laptop recovery remain human checks in D7.
+
 ## Deferred scope
 
 - Managed sandbox providers: freestyle.sh, Modal, Daytona, Blaxel, Kubernetes, and OpenShell.
 - A dedicated KVM or microvm sandbox host.
 - Harnesses beyond Claude Code, Codex, Pi, Atomic through `acp:atomic`, and omp through `acp:oh-my-pi`; the native omp RPC replacement remains deferred (D7).
 - `magnetite` PostgreSQL backups, monitoring, and observability, intended to be built with Omnigent once it runs.
-- `pyrite` and `stibnite` runner rollout as the next increment, including the `darwinModule` with a Home Manager `launchd.agents` entry.
+- `pyrite` runner rollout; stibnite's Darwin implementation is in S7, with activation and runtime acceptance reserved for the ordered human checklist in D7.
 - Migration of the runner to a dedicated `omnigent-host` user after Home Manager aspect PRs #2957, #2980, and #2982 merge.
 - `enforce_sandbox` policy for native sessions after the dedicated-user migration, including the `PrivateUsers` and namespace-hardening review that enforcement requires.
 - Direnv protected-root handling for Pi and Atomic: operator decision between filtering protected variables and scoping the extension, with behavior unchanged in S5 (D7).
@@ -436,7 +624,7 @@ printf '%s' "$TOK" | python3 -c 'import sys,json,base64; t=json.load(sys.stdin);
 The earlier H1b questions Q1-Q9 were answered by the decisions of 2026-09-06; S0 on 2026-09-07 resolves former Q6 in D4 and adds the foreground/environment, ACP, mobile, and R9 constraints in place.
 The remaining question identifiers are retained for continuity.
 
-- Q1 Should a vendor CLI require a Home Manager user service instead of the selected system service? Keep the system service unless runtime evidence establishes that need; the later dedicated-user migration must move credentials and update HOME and the Atomic state path together, not just change `User`.
+- Q1 Should a vendor CLI on NixOS require a Home Manager user service instead of the selected system service? Keep the NixOS system service unless runtime evidence establishes that need; Darwin already uses the S7 HM agent, and the later dedicated-user migration must move credentials and update HOME and the Atomic state path together, not just change `User`.
 - Q2 Should the location set `proxy_buffering off;` explicitly (D6) or rely on Omnigent's `X-Accel-Buffering: no` header as superconfig does? Recommended: set it explicitly, because the NixOS module emits no buffering directive and the header is runtime behaviour the module does not guarantee; the cost is unbuffered proxying of the small static bundle on the same location, and the SSE end-to-end observation stays in the verification plan either way.
 - Q3 Does Omnigent's Alembic schema depend on a database locale or encoding, given that `ensureDatabases` inherits the cluster defaults and synapse needed `allow_unsafe_locale = true` for the same cluster (`github:cameronraysmith/vanixiets@590f75195cc7acbb3926d39397bf860c2c6efc65:modules/nixos/matrix.nix:238`)? Recommended: proceed with the cluster default, since the schema uses ordinary text columns and no collation assertion was found, and treat a migration error on first start as the reversing evidence for D3.
 - Q4 Has the deployed Kanidm domain migrated to level 15, which is the level whose access-control data the D4 trust argument reads? Recommended: confirm the domain level with the Kanidm admin tooling on `magnetite` during implementation and record it beside the two D4 invariants; if lower, the invariants still hold operationally but the citation basis moves to the deployed level.
