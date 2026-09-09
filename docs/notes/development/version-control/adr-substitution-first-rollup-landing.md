@@ -9,7 +9,7 @@ Unimplemented.
 
 Filed as a working note under `docs/notes/development/version-control/`.
 Promotion to `docs/development/architecture/adrs/` with a sequence number follows discharge of the Compliance items in vanixiets.
-The registered-stack case of V1 blocks promotion from Proposed.
+V1 is discharged and no longer blocks promotion; it is marked for re-confirmation at the first live stacked landing.
 Supersedes the working note `stacked-landing-settings-review.md` as the description of the landing mechanism; that note's validation of the fast-forward push remains valid.
 
 Scope: every repository built by the `sciexp-nixbot` GitHub App.
@@ -75,6 +75,7 @@ nix-fast-build, used by vanixiets' `justfile::check-fast`:
 - `--skip-cached` skips derivations reported `cached`; `local` outputs are uploaded without a build unless an output link is requested (`nix_fast_build/processes.py::nix_eval_jobs`; `nix_fast_build/workers.py::run_evaluation`).
 - `--niks3-server https://niks3.scientistexperience.net` uploads every successful build result, whether built or substituted, and every `local` output; upload failure fails the run (`nix_fast_build/workers.py::run_builds`, `run_upload_worker`).
   Upload is opt-in: `just check-fast auto on` supplies the positional `push` parameter as `on` (`justfile::check-fast`).
+  The recipe's parameters are positional (`nom push system`), and a requested system differing from the native one adds `--remote magnetite.zt --no-download --retries 2`, building on magnetite and leaving the outputs in magnetite's own store (`justfile::check-fast`).
   `--select` narrows the evaluated attributes with a Nix function; the recipe pins `--flake .#checks.$system` and `--eval-workers 4` (`nix_fast_build/processes.py::nix_eval_jobs`; `justfile::check-fast`).
 
 gitea-mq, GitHub backend:
@@ -123,7 +124,7 @@ mergify-cli:
 - New or updated head branches are pushed atomically with `--force-with-lease`; unchanged or merged entries are skipped (`crates/mergify-stack/src/notes_push.rs::push_branches`; `crates/mergify-stack/src/commands/push.rs::run`).
 - A commit counts as merged only when its PR has non-null `merged_at` and its head SHA equals the local commit (`crates/mergify-stack/src/sync_status.rs::classify`; `crates/mergify-stack/src/changes.rs::classify`).
   Closed-unmerged PRs disappear from discovery and can be recreated on a later push or sync (`crates/mergify-stack/src/remote_changes.rs::group_by_change_id`).
-  Landed stack members must read as merged, not merely closed; V1 verifies this world assumption.
+  Landed stack members must read as merged, not merely closed; V1 records the basis for this world assumption.
 
 ### Deployment survey and live rulesets
 
@@ -194,7 +195,7 @@ We will permit the queue App's ruleset bypass and use neither `required_linear_h
 We will derive the required CI set from our ruleset; an environment fallback will not substitute for that ruleset.
 
 Technical justification: the batch engine fast-forwards to the exact tested SHA, and nixbot admits `gitea-mq/*` builds without branch-filter configuration.
-We will preserve substitution by filtering check sources, except the declared whole-tree scan allow-list, and warming shared niks3 with `just check-fast auto on` before publication.
+We will preserve substitution by filtering check sources, except the declared whole-tree scan allow-list, and warming magnetite's store with `just check-fast auto off x86_64-linux` before publication, so that nixbot classifies those check outputs `local` and skips them (R2).
 We will retain unconditional PR builds; their evaluation cost remains, and reuse depends on matching trees and available derivation outputs.
 We will measure uncached work rather than assume that every change costs a full rebuild or that every batch needs exactly one CI execution.
 
@@ -226,9 +227,9 @@ Business justification:
 - The queue is review-blind, so an errant authorization signal can land unreviewed work under E1.
   Repository approving-review rules do not repair this because the App bypasses them.
 - Auto-merge-wins ordering makes auto-merge on a stack member actively wrong: an upper member can be queued against its parent branch even when correctly labelled for trunk landing.
-- Stack-member bookkeeping is GitHub's, unobserved by the queue.
-  A failed V1 would leave landed lower members reading as open or closed rather than merged, breaking mergify-cli's merged detection and potentially recreating PRs.
-  The queue supplies no lower-member completion status or explicit close under batch mode.
+- Stack-member bookkeeping is GitHub's, unobserved by the queue: it supplies no lower-member completion status and no explicit close under batch mode.
+  V1 records GitHub's retarget-and-mark behaviour as discharged, so the residual risk is low and observable: were a landed lower member ever to read as open or closed rather than merged, mergify-cli's merged detection would miss it and could recreate the PR.
+  The first live stacked landing shows this directly.
 - An unlabelled stack member sits with the required `gitea-mq` check pending and a message directing a human to label the topmost intended PR.
   This makes the label discoverable instead of leaving an unexplained missing check; the hint does not establish post-landing completion.
 - PR builds remain unconditional and merged PR builds run to completion.
@@ -257,16 +258,20 @@ Automated checks to implement in the related OpenSpec changes:
   Query by branch, PR number, or commit prefix, compare returned `tree_hash` values, and count attributes with `cached = false` and `status != skipped_local` as an uncached-work proxy.
   This API has no tree-hash query or raw `notBuilt` count; failed or missing-status work requires log inspection rather than treating the proxy as a count of builders actually run.
 
+Discharged, retained for traceability:
+
+- V1. After a fast-forward landing, GitHub marks every landed PR merged rather than closed or left open, without any action by gitea-mq on lower stack members.
+  The non-stack case is discharged empirically by Mic92/dotfiles #5887–#5890 (`head.sha == merge_commit_sha`, GitHub merged).
+  The stacked case rests on operator confirmation of GitHub's mechanism: once the tip lands, GitHub retargets each remaining stack member to the trunk and marks a member merged when it detects that member's commit SHA on the default branch.
+  No source citation supports that mechanism here; the basis is the operator's own experience of it.
+  V1 no longer blocks promotion. Re-confirm it at the first live stacked landing by retaining head SHAs and `merged_at` for every member and checking that a subsequent mergify-cli sync recognizes them as merged.
+
 Manual checks before promotion from Proposed (existing V identifiers retained for traceability):
 
-- V1. After a fast-forward landing of a labelled registered stack, GitHub marks every member merged, not closed or left open, without any action by gitea-mq on lower members.
-  Require the top PR also to be marked merged without queue close fallback; retain head SHAs and `merged_at` for every member and confirm subsequent mergify-cli sync recognizes them.
-  The non-stack case is discharged empirically by Mic92/dotfiles #5887–#5890 (`head.sha == merge_commit_sha`, GitHub merged).
-  The registered-stack case remains unverified and blocks promotion; a pending hint or top-only merged-or-close fallback does not discharge it.
 - V2. Confirm in vanixiets that existing green checks on the selected head are accepted when authorization arrives later, including the single-entry shortcut.
   Source supports this: `internal/poller/poller.go::prCheckResult`, `pollMergeBranchChecks`, and `internal/batch/monitor.go::Engine.HandleCheck` have no arrive-after-enqueue timestamp requirement.
 - V3. Confirm replayed and newly posted check runs are exactly `nixbot/nix-eval` and `nixbot/nix-build` on the selected SHA (`status.py::ForgeStatusReporter`; `build_reuse.py::replay_terminal_status`).
-- V4. Measure uncached derivations per batch after members' authors use `just check-fast auto on`.
+- V4. Measure uncached derivations per batch after members' authors warm magnetite with `just check-fast auto off x86_64-linux`.
   Inspect the API proxy and logs to distinguish interaction inputs, cache misses, uploader failures, and unrelated-source invalidation; verify that unchanged filtered derivations substitute.
 - V9. Confirm the deployed module exposes `batchMax` and `skipQueueIfUpToDate`, and the binary retains its default merge label.
   This is settled at the source pin (`nix/module.nix::services.gitea-mq`; `internal/config/config.go::Load`); validate the rendered unit, database provisioning, and reverse proxy in deployment.
@@ -290,7 +295,7 @@ Those ignored logs are working evidence; the source symbols and API observation 
 
 Last modified: 2026-09-09, by the implementation assistant for Cameron Ray Smith.
 Revision 2 replaces orchestrator rollups with queue-only batching on two authorization axes, based on verified source, four consumer configurations, and live GitHub ruleset, signal, and landing observations.
-It distinguishes pending stack hints from completion and makes unverified GitHub member bookkeeping a promotion blocker.
+It distinguishes pending stack hints from completion; the current revision records V1 as discharged on operator confirmation of GitHub's retarget-and-mark behaviour, for re-confirmation at the first live stacked landing.
 The appendices remain temporary transfer material outside the seven-section ADR structure.
 
 ---
@@ -300,7 +305,13 @@ The appendices remain temporary transfer material outside the seven-section ADR 
 Source filtering and cache warming are the core; process policies and upstream world assumptions must be classified separately from machine requirements when transferred.
 
 - R1. Every filterable `checks.*` derivation depends only on its filtered source; unrelated file changes preserve its derivation hash, with `gitleaks` as the declared whole-tree allow-list exception (`filter-check-sources-for-substitution`).
-- R2. Authors warm the cache with `just check-fast auto on` before publication; authors and nixbot use the same niks3 substituter and upload destination.
+- R2. Authors warm the cache by building the CI system's check set on magnetite: `just check-fast auto off x86_64-linux 2>&1 | tee logs/checks-linux-$(date +%Y%m%d-%H%M%S).log`.
+  The recipe's parameters are positional (`nom push system`) and it computes `--remote magnetite.zt --no-download --retries 2` whenever the requested system differs from the native one (`justfile::check-fast`); the fleet's developers work from aarch64-darwin laptops while nixbot builds x86_64-linux.
+  The outputs therefore stay in magnetite's own store, which nixbot reports as `local` through `nix-eval-jobs --check-cache-status` and skips entirely with status `skipped_local` (`build_scheduler.py::JobScheduler._classify`) — cheaper than substituting from niks3, with neither fetch nor upload.
+  `push=on`, that is `just check-fast auto on`, serves a different purpose: it populates niks3 so that other machines, notably peer aarch64-darwin laptops, can substitute from the shared cache.
+  It is not needed to warm CI, because nixbot uploads what it builds through its own warn-only uploader.
+  `--no-download` returns nothing to the laptop, so a developer wanting local feedback still runs the plain native `just check-fast` separately; this warming covers x86_64-linux only, which is the whole of nixbot's `buildSystems`.
+  nixbot builds the post-merge tree (`gitrepo.py::WorkTree.tree_hash`), so a moving base can still require rebuilds: warming is a strong optimisation, not a guaranteed reduction.
 - R3. Each independently shippable change is one commit and one PR; mergify-cli renders stack PR title and body from its commit message.
 - R4. Each stack commit carries a `Change-Id` matching `^I[0-9a-f]{40}$`.
 - R5. Each commit must build on its own; nixbot's unconditional PR builds provide per-member feedback, while the queue gates the selected head and tested batch rather than all lower members separately.
@@ -311,7 +322,10 @@ Source filtering and cache warming are the core; process policies and upstream w
 - R10. Scope PR previews with `effects_on_pull_requests` and non-default branch effects with `effects_branches`, preserving the previews identified in V10.
 - R11. Serve `mq.scientistexperience.net` with `batchMax = 5`, `skipQueueIfUpToDate = true`, and the default `merge-queue` label; provision its database and reverse proxy.
 - R12. Publish stacks with `--github-native` and verify registration and selected-head ancestry before enqueue; `Depends-On:` alone does not enable queue stack resolution.
-- R13. Use a separate GitHub App from nixbot's with the permissions and events in gitea-mq `README.md`, “GitHub setup”: Checks read/write, Commit statuses read, Contents read/write, Pull requests read/write, Administration read/write, Metadata read; events `pull_request`, `check_run`, `status`, `installation`, `installation_repositories`.
+- R13. Use a separate GitHub App from nixbot's, with the permissions in gitea-mq `README.md`, “GitHub setup”: Checks read/write, Commit statuses read, Contents read/write, Pull requests read/write, Administration read/write, Metadata read.
+  The required subscribable event set is exactly `check_run`, `pull_request`, `status`, and our registered App `sciexp-gitea-mq` (id 4875422) carries exactly those (`GET /apps/sciexp-gitea-mq`: `events: ["check_run", "pull_request", "status"]`).
+  The README list also names `installation` and `installation_repositories`, which GitHub does not expose as subscribable events: GitHub delivers them to every App automatically, and they are absent from a correctly configured App's API `events` array.
+  Treating their absence as a defect blocked a live gate earlier; verify this requirement against the `events` array, not against the README list.
 - R14. Maintain our deletion/non-fast-forward/nixbot-check ruleset and the App's `gitea-mq` ruleset, with queue App bypass; enable `allow_auto_merge`, with no linear-history rule or classic protection.
 - R15. Apply E1: classify risk and obtain required review before authorization; the enqueue signal is merge authorization, enforced by convention and manual audit.
 - R16. Enable auto-merge only for ordinary trunk-based PRs; label only the topmost intended registered-stack member and never enable auto-merge on any stack member.
