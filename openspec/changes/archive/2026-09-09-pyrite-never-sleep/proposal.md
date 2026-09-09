@@ -3,15 +3,17 @@ linear_story_id: CAM-62
 linear_story_identifier: CAM-62
 linear_story_title: "Stop pyrite suspending itself on idle"
 linear_story_url: https://linear.app/cameronraysmith/issue/CAM-62/stop-pyrite-suspending-itself-on-idle
-linear_story_state: Todo
+linear_story_state: Done
 linear_team: CAM
 linear_project: pyrite-baremetal-nixos
-last_synced_state: Todo
-last_synced_at: 2026-09-08T23:19:42Z
+last_synced_state: Done
+last_synced_at: 2026-09-09T03:45:00Z
 review_round: 0
 max_review_rounds: 3
 attempt_log:
   - { at: "2026-09-08T23:19:42Z", transition: "Backlog->Todo", outcome: "posted", note: "T1 bind; issue created in the existing pyrite-baremetal-nixos project and seeded from this proposal's business-facing content" }
+  - { at: "2026-09-09T03:45:00Z", transition: "archive->mirror", outcome: "posted", note: "document UPSERT: graphical-desktop-session updated in place (8cf07dd5-2a48-4f45-bcd4-1add748aee46); world-assumptions created (a7f9d24e-8fe2-4120-9ba0-e7d4d3a23fe1) and its id recorded in openspec/linear.yaml" }
+  - { at: "2026-09-09T03:45:00Z", transition: "In Review->Done", outcome: "posted", note: "T4 archive gate; ordering was readiness, sync deltas, archive, mirror, Done. Intermediate T2 (Todo->In Progress) and T3 (In Progress->In Review) transitions were applied on the board but not written back to this ledger at the time; last_synced_state is reconciled here to the resolved Linear state" }
 ---
 
 ## Why

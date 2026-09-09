@@ -1,7 +1,7 @@
 ---
 title: Satisfaction argument
 description: Discharge status for every requirement in the OpenSpec corpus
-generated: 2026-09-02
+generated: 2026-09-09
 ---
 
 This file is a projection over `openspec/specs/`, regenerated wholesale at archive time and never patched.
@@ -14,9 +14,9 @@ Nothing in this projection is an end-to-end guarantee.
 
 ## Status
 
-The post-sync corpus contains 100 requirements across 15 capabilities: 91 requirement-side rows and 9 world-assumption rows.
-Three of the 91 requirement-side rows are discharged at their stated interface boundaries.
-Eighty-eight remain undischarged: 82 have neither specification-side evidence nor a named world assumption, and 6 name world assumptions but no specification-side evidence.
+The post-sync corpus contains 102 requirements across 15 capabilities: 92 requirement-side rows and 10 world-assumption rows.
+Three of the 92 requirement-side rows are discharged at their stated interface boundaries.
+Eighty-nine remain undischarged: 82 have neither specification-side evidence nor a named world assumption, and 7 name world assumptions but no specification-side evidence.
 
 The three discharged rows establish only Nix-boundary source alignment and offline composition, composed skill identity, and rendered guidance.
 They do not establish repository-local frozen delivery, harness selection, human compliance, authorization, forge correctness, activation, or a successful landing.
@@ -24,6 +24,7 @@ Unless a row names a more specific follow-up, `evidence annotation follow-up` re
 
 The strata of capabilities that predate the stratum discipline remain inferred and have not been re-audited.
 CAM-41 declared its three added requirements as `interface`.
+CAM-62 declared `graphical-desktop-session` as `behavioral` and `world-assumptions` as `world`, and its added behavioral requirement is recorded below as undischarged with an explicit follow-up rather than omitted or silently accepted.
 
 ## agentic-workflow-routing
 
@@ -51,7 +52,7 @@ Predates the stratum discipline; the behavioral classification is inferred and h
 | A USB-C keyboard and the clan-vars passphrase are prerequisites of the first boot, not recoveries improvised afterward | behavioral | — | — | undischarged — evidence annotation follow-up |
 | The machine's configuration is never seeded from nixos-generate-config | behavioral | — | — | undischarged — evidence annotation follow-up |
 | The sleep path is gated by three units the machine module defines itself | behavioral | — | — | undischarged — evidence annotation follow-up |
-| Suspend is entered through the systemd-sleep path and resumes with the pool intact | behavioral | — | — | undischarged — evidence annotation follow-up |
+| Suspend is entered through the systemd-sleep path and resumes with the pool intact | behavioral | — | — | undischarged — evidence annotation follow-up; contradicted in part by CAM-59, see CAM-62 qualification V5 |
 | A panic that outlives the disk is recorded through EFI pstore, because every other channel is unavailable on this machine | behavioral | — | — | undischarged — evidence annotation follow-up |
 
 ## bare-metal-install-path
@@ -95,11 +96,13 @@ Predates the stratum discipline except for CAM-41's declared interface requireme
 
 ## graphical-desktop-session
 
-Predates the stratum discipline; the behavioral classification is inferred and has not been re-audited.
+The incumbent requirement predates the stratum discipline; its behavioral classification is inferred and has not been re-audited.
+CAM-62 declared its added requirement `behavioral`.
 
 | Requirement | Stratum | Discharged by (S) | Under (W) | Status |
 |---|---|---|---|---|
 | The pyrite host provides a local GNOME desktop under GDM | behavioral | — | — | undischarged — evidence annotation follow-up |
+| The laptop does not suspend itself when nobody is using it | behavioral | — | `world-assumptions` A13 | undischarged — no interface property named; archived CAM-62 `verify.md` §8b, qualification V3 |
 
 ## openspec-linear-sync
 
@@ -165,7 +168,7 @@ No automated check guards this capability, and no per-requirement evidence is re
 | Requirement | Stratum | Discharged by (S) | Under (W) | Status |
 |---|---|---|---|---|
 | Stratum assignment for any requirement-like statement | behavioral | — | — | undischarged — evidence annotation follow-up |
-| Grounding of terms used in requirements | behavioral | — | — | undischarged — evidence annotation follow-up |
+| Grounding of terms used in requirements | behavioral | — | — | undischarged — evidence annotation follow-up; three unresolved nouns recorded at CAM-62 qualification V4 |
 | Separation of what is assumed from what is wanted | behavioral | — | — | undischarged — evidence annotation follow-up |
 | Discharge of a requirement is stated, not implied | behavioral | — | — | undischarged — evidence annotation follow-up |
 | Obstacle analysis produces the boundary and open questions | behavioral | — | — | undischarged — evidence annotation follow-up |
@@ -221,7 +224,7 @@ Predates the stratum discipline except for CAM-41's declared interface requireme
 
 ## world-assumptions
 
-These nine rows are the `W` side of the argument rather than requirement-side goals.
+These ten rows are the `W` side of the argument rather than requirement-side goals.
 Their truth is asserted in their requirement text but is not independently checked by a scenario execution, proof obligation, or dated inspection.
 They are therefore self-attested rather than discharged.
 
@@ -236,6 +239,10 @@ They are therefore self-attested rather than discharged.
 | A7 — Pi's enumerated path forms are exhaustive | world | Non-Bash edit and write policy; Git default-branch boundary; Jj diamond boundary | self-attested |
 | A8 — Jj's outside-repository diagnostic is stable | world | Git default-branch boundary; Jj diamond boundary | self-attested |
 | Grounded vocabulary for behavioral requirements | world | Grounds behavioral content nouns; not requirement-scoped | self-attested |
+| A13 — Resuming this laptop from a suspended state is unreliable, and recovering a failed resume requires a person at the machine | world | The laptop does not suspend itself when nobody is using it | self-attested; the recorded rate is 7 failures against 30 successes across 14 boots, and CAM-62's own verification added an eighth failure |
+
+`A9` through `A12` are absent by construction: they belong to the unarchived change `stand-up-nixbot-on-magnetite` and enter this corpus when that change archives, not before.
+The numbering gap between `A8` and `A13` is therefore expected and is not a dropped row.
 
 ## CAM-41 qualifications
 
@@ -252,6 +259,21 @@ W4 is a post-main delivery follow-up rather than a pre-publication acceptance st
 W5 and W6 bound external-state claims and do not weaken the three narrow interface discharges above.
 S1 is corpus maintenance outside CAM-41.
 
+## CAM-62 qualifications
+
+- V1: `The laptop does not suspend itself when nobody is using it` is observed only on mains power. The battery branch's behaviour was never watched; its configuration is decoded on the machine and its resolution read through the running daemon's own environment, and the remaining step is a source-level argument. Closing it costs one 35-minute unplugged idle window and no redeploy. Archived CAM-62 `verify.md` §7 row 1.
+- V2: The panel blank-and-lock clause establishes non-regression, not behaviour: `idle-delay` is intact and no screensaver key was touched, but no one watched a panel. Closing it costs one 30-minute idle window and no redeploy. Archived CAM-62 `verify.md` §7 row 2.
+- V3: The added behavioral requirement names **no** discharging interface property. CAM-62 deliberately created no interface capability, on the grounds that it changes the value of an existing machine property rather than introducing a new one, so the properties that in fact discharge it are named only in `design.md` and `tasks.md`, which are not vocabulary-governed. The accepted disposition is to record this rather than accept it silently; the alternative disposition — promoting the greeter and user dconf database content to a `machine-interface`-stratum capability so the requirement has a named `S` — remains open and belongs to its own change. Archived CAM-62 `verify.md` §8b and `retrospective.md` §6.
+- V4: Three world-flavoured content nouns used by the added requirement resolve to no row in the designation table: `laptop`, `person`, and `network`. Zero unresolved machine nouns. Recommended dispositions are recorded and deliberately not applied: restate the requirement title using `host`, add a `person` row (distinct from `operator`), and add a shared `network` row. Archived CAM-62 `verify.md` §8a.
+- V5: `apple-laptop-hardware-support`'s requirement `Suspend is entered through the systemd-sleep path and resumes with the pool intact` is contradicted in part by the tracked resume defect CAM-59, now at 8 recorded failures against 30 successes across 14 boots. CAM-62 reduces how often the host takes that risk and does not reduce the risk; it is harm reduction, not a repair. The newest failure was the first and only suspend of its boot, which is a counterexample to the previously 7/7 "the first suspend of a boot never fails" regularity. Archived CAM-62 `verify.md` §2 and `retrospective.md` §5.
+- V6: CAM-62 authored no `plan.md`, so the schema's `verify` dependency is formally unmet; `tasks.md` carried the manual-check role. Its two commits are not on `origin/main`, which is the ordinary state of an in-flight jj diamond chain. Archived CAM-62 `verify.md` §5 and §7.
+
+V1 and V2 are coverage residuals, each one elapsed idle window and no redeploy.
+V3 is the undischarged row this projection is required to carry rather than omit, and it is carried above in the `graphical-desktop-session` table.
+V4 is vocabulary maintenance against `world-assumptions`.
+V5 bounds what CAM-62 claims and is the reason CAM-59 remains open.
+V6 bounds process and publication state and weakens no discharge.
+
 ## Known limits
 
 This projection contains no formal proof discharge and no claim that an implementation is verified end to end.
@@ -261,3 +283,6 @@ They do not establish that the upstream guidance is correct, that a harness sele
 The root lock does not contain `mergify-stack`, and the contents of an existing ignored repository-local `.agents/` tree remain unspecified.
 Fresh frozen repository-local delivery cannot be claimed until W4 is complete.
 The branch can be offered for authorized review without claiming activation, landing, or repository-local materialization.
+
+For pyrite, evaluating the flake establishes what a generated dconf database contains and establishes nothing about what the consuming daemon reads, because a user database sits ahead of the Nix file database by deliberate design.
+The `graphical-desktop-session` power-policy requirement is therefore what the host does absent a change made at the machine's own settings panel, not a guarantee about what it does.

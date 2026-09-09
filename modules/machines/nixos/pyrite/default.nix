@@ -336,22 +336,52 @@ in
       # it does not touch the initrd passphrase path, and it enables no plymouth
       # (2.9/D11 stand). niri is out of scope, deferred to a reversible follow-up.
       services.displayManager.gdm.enable = true;
+      # The greeter is the machine's own worst offender: with autoSuspend at its nixpkgs
+      # default of true the greeter's power settings are left empty and gnome-settings-daemon
+      # falls through to its schema default of 900 s / suspend, which is the source of every
+      # idle suspend in the journal (logs/pyrite-idle-suspend-diagnosis.md §1.1-§1.4). false
+      # makes nixpkgs write a greeter database with both timeouts 0 and both types "nothing".
+      services.displayManager.gdm.autoSuspend = false;
       services.desktopManager.gnome.enable = true;
 
+      # Nothing on this machine suspends itself on idle. Resume from suspend fails in roughly
+      # one cycle in five — 7 failures against 30 successes across 14 boots — with no
+      # identified signature: the last journal line before a failure is byte-identical to the
+      # last line before a success (logs/pyrite-resume-failure-diagnosis.md §0, §1.3, §4.4).
+      # disable-lid-wakeup above leaves the power button as the machine's only wake source
+      # (ibid. §5.2), so any failed unattended resume costs a physical trip. This is harm
+      # reduction, not a fix: manual suspend stays available and still carries the risk.
+      # Both halves of each pair are set, and the -type key is the durable one. In
+      # gnome-settings-daemon's idle_configure() the watch registration is nested as
+      # `if (timeout_sleep != 0) { ... if (action_type != GSD_POWER_ACTION_NOTHING) { ... } }`
+      # (verified at tag 50.1, plugins/power/gsd-power-manager.c:2102 and :2105), so a 0
+      # timeout and a "nothing" type each independently stop the idle watch from ever being
+      # registered; neither merely declines to fire an already-armed watch. The -type keys are
+      # kept because they still hold if a nonzero timeout is later written back into the user
+      # database, which is exactly what GNOME Settings did on 2026-09-08
+      # (logs/pyrite-graphical-session-idle-evidence.md §5). idle-delay stays 1800: the panel
+      # must still blank and lock at 30 minutes; only suspend is disabled.
+      #
       # settings carries no locks attribute, deliberately: locking these keys would grey
       # out the matching GNOME Settings controls, and a change made there has to win over
       # what is set here. The generated /etc/dconf/profile/user lists user-db:user ahead of
       # the file-db, which is what makes it win. Every integer carries the constructor for
       # its schema type — "u" for idle-delay, "i" for the sleep timeouts — because
       # lib.gvariant.mkValue refuses to infer a width from a bare Nix integer and throws
-      # during the keyfile generation rather than at the option's type check.
+      # during the keyfile generation rather than at the option's type check. The -type keys
+      # are enum-typed (enum="org.gnome.settings-daemon.GsdPowerActionType", schema default
+      # 'suspend'), so they serialize as GVariant strings and take bare Nix strings; the
+      # compiled keyfile reads sleep-inactive-ac-type='nothing' (verified by reading the
+      # generated keyfile out of the store, not from the source).
       programs.dconf.profiles.user.databases = [
         {
           settings = {
             "org/gnome/desktop/session".idle-delay = lib.gvariant.mkUint32 1800;
             "org/gnome/settings-daemon/plugins/power" = {
               sleep-inactive-ac-timeout = lib.gvariant.mkInt32 0;
-              sleep-inactive-battery-timeout = lib.gvariant.mkInt32 1800;
+              sleep-inactive-battery-timeout = lib.gvariant.mkInt32 0;
+              sleep-inactive-ac-type = "nothing";
+              sleep-inactive-battery-type = "nothing";
             };
           };
         }

@@ -51,6 +51,15 @@ projects:
         id: "ba0ffa20-a82b-40db-b292-d04f6a83eed2"
       "graphical-desktop-session":
         id: "8cf07dd5-2a48-4f45-bcd4-1add748aee46"
+      "world-assumptions":
+        # Added at the 2026-09-09 archive of `pyrite-never-sleep` (CAM-62), whose
+        # `world-assumptions` delta added A13 and modified the designation table.
+        # The capability is shared across projects; this document mirrors the
+        # single canonical `openspec/specs/world-assumptions/spec.md` and is
+        # parented here because CAM-62 is the change that produced it. A later
+        # archive from another project that also touches this capability should
+        # reuse this id rather than creating a second mirror.
+        id: "a7f9d24e-8fe2-4120-9ba0-e7d4d3a23fe1"
   "nixbot-herculesci-cicd":
     # slugId, not the project UUID (6fce4cfd-4c9b-4ca4-b797-9d91ccb4b669), for the
     # reason recorded on the sibling entries: `linear document list --project`
