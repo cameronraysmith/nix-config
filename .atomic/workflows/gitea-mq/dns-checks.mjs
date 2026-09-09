@@ -15,6 +15,10 @@ function publicProjection(plan) {
 }
 
 export function runDnsChecks(tools) {
+  const raw = { existingWitness: { resolvers: [{ resolver: "8.8.8.8", queries: [{ command: "dig", stdout: "49.12.12.74", stderr: "" }] }] } };
+  assert.throws(() => tools.assertNoRawOutput(raw), /Raw process output.*stdout/);
+  assert.throws(() => tools.assertNoRawOutput({ one: { two: { three: { stderr: "" } } } }), /Raw process output.*stderr/);
+  assert.doesNotThrow(() => tools.assertNoRawOutput({ note: "stdout is a word, not a key", empty: null }));
   const fixture = JSON.parse(readFileSync(new URL("./adopted-s2.redacted.json", import.meta.url), "utf8"));
   const flag = process.argv.indexOf("--dns-plan");
   const plans = [fixture];

@@ -1,13 +1,22 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, join } from "node:path";
+import { tmpdir } from "node:os";
 
 const dataUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`;
 
 /** Exercise the actual capture implementation with fake child streams and disk ports. */
 export async function runProcessChecks({ ts, moduleUrl }) {
   const processTools = await import(moduleUrl(".atomic/workflows/gitea-mq/process.ts"));
+  await assert.rejects(processTools.processCheckpoint(join(tmpdir(), "gitea-mq-no-raw-test"), "dns", async () => ({
+    dns: { resolvers: [{ queries: [{ stdout: "PRIVATE OUTPUT", stderr: "" }] }] },
+  })), (error) => {
+    assert.match(error.message, /gitea-mq checkpoint: checkpoint.evidence.dns.resolvers.0.queries.0.stdout/);
+    assert(!error.message.includes("PRIVATE OUTPUT"));
+    return true;
+  });
+  console.log("PASS local checkpoint boundary: nested DNS raw receipt rejected before shared guard; key path only, no output leaked");
   const streaming = new processTools.OutputBuffer(true);
   const chunk = "x".repeat(65536);
   for (let i = 0; i < 1024; i++) streaming.append(i % 2 ? "stdout" : "stderr", chunk);

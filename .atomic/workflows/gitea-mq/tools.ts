@@ -13,8 +13,8 @@ import { snapshot, assertHealthy, oneId, ids, pathsIn, changeRef, identityRevset
 import {
   resolveSource as sharedResolveSource, resolveRevisionSource as sharedRevisionSource, committedSource, type DeploymentSource,
 } from "../omnigent/deployment.js";
-import { capture, captureStreaming, readResponse, assertExternalEvidence, canonicalExternalEvidence } from "./process.js";
-export { processCheckpoint, allocateEvidence } from "./process.js";
+import { capture, captureStreaming, readResponse, assertExternalEvidence, canonicalExternalEvidence, assertNoRawOutput } from "./process.js";
+export { processCheckpoint, allocateEvidence, assertNoRawOutput } from "./process.js";
 export { appTokenCleanup } from "./credentials.js";
 import { preparePlan, deletePlans } from "./plan-security.js";
 export { planCleanup, finalizeArtifacts } from "./plan-security.js";
@@ -950,10 +950,7 @@ export async function planDns(cwd: string, root: string, name: string, source: T
   catch { throw new Blocked("Cannot parse private OpenTofu plan JSON (content withheld)"); }
   const decision = dnsDecision(value, reconciling);
   // State alone cannot establish public DNS reality. A failed witness blocks this plan.
-  const witnessed = decision.kind === "Reconciled" ? await dnsWitness(cwd, signal) : null;
-  const existingWitness = witnessed && { ...witnessed, resolvers: witnessed.resolvers.map(({ queries, ...resolver }) => ({
-    ...resolver, queries: queries.map(({ command, state, exitCode, logPath }) => ({ command, state, exitCode, logPath })),
-  })) };
+  const existingWitness = decision.kind === "Reconciled" ? await dnsWitness(cwd, signal) : null;
   return {
     ...source, tree, plan, foreignDrift,
     sha256: sha256(await readFile(plan)), decision, ...(existingWitness ? { existingWitness } : {}),
@@ -988,28 +985,40 @@ export async function applyDns(cwd: string, root: string, name: string, plan: Aw
   const deletion = await deletePlans(cwd, root);
   return { applied: true, outcome: "applied" as const, reconciled: false, plan: plan.plan, sha256: plan.sha256, foreignDrift, deletion };
 }
-export async function dnsWitness(cwd: string, signal: AbortSignal, hostname: typeof domain | "nixbot.scientistexperience.net" = domain) {
+/** The only DNS checkpoint contract. Stream buffers/tails never escape capture. */
+export type DnsQueryEvidence = {
+  command: string; state: Awaited<ReturnType<typeof capture>>["state"];
+  exitCode: number; logPath: string; answer: string[];
+};
+export type DnsWitnessEvidence = {
+  hostname: string; target: string; quorum: number; commonAddresses: string[]; note: string;
+  resolvers: { resolver: string; queries: DnsQueryEvidence[]; cnames: string[];
+    addresses: string[]; resolved: string[]; agrees: boolean }[];
+};
+function dnsQueryEvidence(result: Awaited<ReturnType<typeof capture>>, command: string): DnsQueryEvidence {
+  return { command, state: result.state, exitCode: result.exitCode, logPath: result.logPath,
+    answer: result.state === "exited" && result.exitCode === 0
+      ? result.stdout.trim().toLowerCase().split(/\s+/).filter(Boolean) : [] };
+}
+export async function dnsWitness(cwd: string, signal: AbortSignal, hostname: typeof domain | "nixbot.scientistexperience.net" = domain): Promise<DnsWitnessEvidence> {
   const target = "magnetite.scientistexperience.net";
   const note = "DNS propagation can lag; the witness may be retried.";
-  type Query = Pick<Awaited<ReturnType<typeof capture>>, "command" | "stdout" | "stderr" | "state" | "exitCode" | "logPath">;
-  const resolvers: { resolver: string; queries: Query[]; cnames: string[]; addresses: string[]; resolved: string[]; agrees: boolean }[] = [];
-  const lines = (text: string) => text.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const resolvers: DnsWitnessEvidence["resolvers"] = [];
   const ipv4 = (text: string) => /^(?:\d{1,3}\.){3}\d{1,3}$/.test(text) && text.split(".").every((octet) => Number(octet) <= 255);
   for (const resolver of ["1.1.1.1", "8.8.8.8"]) {
-    const queries = [];
+    const queries: DnsQueryEvidence[] = [];
     for (const question of [`CNAME ${hostname}`, `A ${hostname}`, `A ${target}`]) {
       // dig's own deadline bounds each query; the enclosing tool signal also
       // cancels the process group. capture persists exact commands and output
       // even for dig's timeout exit (9), rather than run throwing prematurely.
       const command = `dig @${resolver} +time=2 +tries=1 +short ${question}`;
       const result = await capture(cwd, command, signal);
-      queries.push({ command, stdout: result.stdout, stderr: result.stderr, state: result.state, exitCode: result.exitCode, logPath: result.logPath });
+      queries.push(dnsQueryEvidence(result, command));
     }
     const [cname, resolved, address] = queries;
-    const ok = (query: typeof cname) => query.state === "exited" && query.exitCode === 0;
-    const cnames = ok(cname) ? lines(cname.stdout) : [];
-    const chain = ok(resolved) ? lines(resolved.stdout) : [];
-    const addresses = ok(address) ? lines(address.stdout).filter(ipv4) : [];
+    const cnames = cname.answer;
+    const chain = resolved.answer;
+    const addresses = address.answer.filter(ipv4);
     const ips = chain.filter(ipv4);
     const names = chain.filter((line) => !ipv4(line));
     const expectedName = (name: string) => name.replace(/\.$/, "") === target;
@@ -1024,7 +1033,8 @@ export async function dnsWitness(cwd: string, signal: AbortSignal, hostname: typ
   const commonAddresses = resolvers[0].addresses.filter((ip) => resolvers.every((resolver) => resolver.addresses.includes(ip)));
   const consistent = resolvers.every((resolver) => resolver.cnames.length > 0) ||
     commonAddresses.some((ip) => resolvers.every((resolver) => resolver.cnames.length > 0 || resolver.resolved.includes(ip)));
-  const evidence = { hostname, target, quorum: 2, resolvers, commonAddresses, note };
+  const evidence: DnsWitnessEvidence = { hostname, target, quorum: 2, resolvers, commonAddresses, note };
+  assertNoRawOutput(evidence);
   if (resolvers.filter((resolver) => resolver.agrees).length < evidence.quorum || !consistent) {
     throw Object.assign(new Blocked(`Public DNS quorum does not confirm magnetite. ${note}\n${JSON.stringify(evidence)}`), { evidence });
   }
@@ -1126,7 +1136,7 @@ export async function rulesWitness(cwd: string, approved: string, beforeFile: st
   const collaborators = parse(Type.Array(Type.Array(Type.Object({ login: Type.String() }))), await json(cwd, `gh api ${api}/collaborators --paginate --slurp`, signal)).flat().map((u) => u.login);
   if (!isDeepStrictEqual(collaborators, ["cameronraysmith"])) throw new Blocked("Sole human collaborator condition failed");
   if (await run(cwd, `gh api ${api} --jq .allow_auto_merge`, signal) !== "true") throw new Blocked("allow_auto_merge is not true");
-  return { ruleset: actual, classic: { exitCode: classic.exitCode, body: classic.stdout }, collaborators, allow_auto_merge: true };
+  return { ruleset: actual, classic, collaborators, allow_auto_merge: true };
 }
 export async function hookWitness(cwd: string, appId: number, signal: AbortSignal): Promise<VResult> {
   const hook = await capture(cwd, `python3 -c ${quote(appScript)} ${appId} hook`, signal);
@@ -1304,7 +1314,9 @@ export async function classicWitness(cwd: string, beforeFile: string, signal: Ab
   }), JSON.parse(await readFile(join(cwd, beforeFile), "utf8")));
   const current = await capture(cwd, `gh api ${api}/branches/main/protection`, signal);
   assertClassicUnchanged(before.classic, current);
-  return current;
+  // Producer-side allowlist: callers must never receive the capture object.
+  return { command: current.command, state: current.state, exitCode: current.exitCode,
+    logPath: current.logPath, body: current.stdout };
 }
 
 export function classicContexts(value: unknown): string[] {

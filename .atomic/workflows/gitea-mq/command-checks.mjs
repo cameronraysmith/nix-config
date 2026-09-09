@@ -88,7 +88,18 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
     return whole;
   });
   code = code.replace('from "typebox"', `from "${typeboxUrl}"`);
-  const actual = await import(dataUrl(code));
+  const imported = await import(dataUrl(code));
+  const audited = new Set();
+  // Assert real returned observations, not hand-authored lookalike fixtures.
+  const actual = new Proxy(imported, { get(target, name) {
+    const value = target[name];
+    if (typeof value !== "function" || name === "capture") return value;
+    return (...args) => {
+      const check = (result) => { tools.assertNoRawOutput(result); audited.add(name); return result; };
+      const result = value(...args);
+      return result && typeof result.then === "function" ? result.then(check) : check(result);
+    };
+  } });
   await runVcsChecks({ vcs: await import(dataUrl(vcsCode)), actual, mock: globalThis.__mqCommandMock, signal, setHandler: (next) => { handler = next; } });
   if (process.argv.includes("--vcs-only")) return;
   if (process.argv.includes("--vars-only")) {
@@ -122,10 +133,20 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
       assert.equal(evidence.quorum, 2);
       assert.deepEqual(evidence.resolvers.map((r) => r.resolver), resolvers);
       assert.deepEqual(evidence.resolvers.flatMap((r) => r.queries.map((q) => q.command)), expected);
+      tools.assertNoRawOutput({ observation: { existingWitness: evidence } });
+      tools.assertNoRawOutput({ runtime: { publicDns: [evidence] } });
+      for (const query of evidence.resolvers.flatMap((r) => r.queries)) {
+        assert.equal(query.logPath, "mock.log");
+        assert.equal(typeof query.exitCode, "number");
+        assert(Array.isArray(query.answer));
+        assert.deepEqual(Object.keys(query).sort(), ["answer", "command", "exitCode", "logPath", "state"]);
+      }
       return evidence;
     }
     const good = (command) => observed(command.includes("CNAME") ? `${target}.\n` : "192.0.2.7\n");
-    await witness(good, true);
+    const projected = await witness(good, true);
+    assert.deepEqual(projected.resolvers[1].queries[0].answer, [target + "."]);
+    assert.deepEqual(projected.resolvers[1].queries[2].answer, ["192.0.2.7"]);
     await witness((command) => observed(command.includes("CNAME") ? "" : "192.0.2.7\n"), true);
     await witness((command) => observed(command.includes("CNAME") ? "" : command.endsWith(`A ${target}`) ? "192.0.2.7\n" : `${target}.\n192.0.2.7\n`), true);
     const wrong = (command) => observed(command.endsWith(`A ${target}`) ? "192.0.2.7\n" : command.includes("CNAME") ? "elsewhere.example.\n" : "192.0.2.8\n");
@@ -136,7 +157,7 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
     await witness((command) => observed(command.includes("CNAME") ? "" : command.includes("@1.1.1.1") ? "192.0.2.7\n" : "192.0.2.8\n"), false);
     await witness((command) => command.includes("@1.1.1.1") ? good(command) : observed("", 9, "timed out"), false);
     const timeout = await witness(() => observed("", 9, "communications error: timed out"), false);
-    assert(timeout.resolvers.every((r) => r.queries.every((q) => q.exitCode === 9 && q.stderr.includes("timed out"))));
+    assert(timeout.resolvers.every((r) => r.queries.every((q) => q.exitCode === 9 && q.answer.length === 0)));
     console.log("PASS DNS witness: explicit public 2/2 quorum, CNAME-empty/A-chain fallback, disagreement/foreign/empty blocking, changed target A, bounded recorded timeouts");
   }
   {
@@ -454,6 +475,9 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   await actual.applyRules(cwd, "approved.json", tools.sha256(JSON.stringify(approved)), "before.json", signal);
   assert.equal(classicReads, 2);
   assert(commands.findIndex((command) => command.endsWith("/branches/main/protection")) < commands.findIndex((command) => command.includes("--method PUT")));
+  const classicEvidence = await actual.classicWitness(cwd, "before.json", signal);
+  assert.deepEqual(Object.keys(classicEvidence).sort(), ["body", "command", "exitCode", "logPath", "state"]);
+  assert.equal(classicEvidence.body, "{}");
   const savedHandler = handler;
   handler = (command) => command.endsWith("/branches/main/protection") ? observed({ changed: true }) : savedHandler(command);
   const previousPuts = commands.filter((command) => command.includes("--method PUT")).length;
@@ -849,5 +873,6 @@ export async function runCommandChecks({ ts, source, moduleUrl, tools, slices, t
   const withoutTime = (text) => text.replace(/^\*\*Verified at\*\*:.*$/m, "");
   assert.equal(withoutTime(get(join(cwd, slices.verify)).split("## Non-verdict model commentary")[0]), withoutTime(verdicts), "Verdicts and attributions must be independent of model text");
   console.log("PASS P11: model-invented pass and attribution cannot enter deterministic task verdict sections");
+  console.log(`PASS no-raw-output observation audit: ${[...audited].sort().join(", ")}`);
   delete globalThis.__mqCommandMock;
 }

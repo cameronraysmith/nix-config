@@ -30,10 +30,25 @@ export async function allocateEvidence(cwd: string): Promise<string> {
   await mkdir(base, { recursive: true, mode: 0o700 });
   return relative(cwd, await canonicalExternalEvidence(cwd, await mkdtemp(join(base, "run-"))));
 }
+/** Workflow-local boundary: reject raw receipts at any depth, including arrays.
+ * Include only the key path in the error, never potentially private output. */
+export function assertNoRawOutput(value: unknown): void {
+  const seen = new WeakSet<object>();
+  function visit(value: unknown, path: string): void {
+    if (!value || typeof value !== "object" || seen.has(value)) return;
+    seen.add(value);
+    for (const key of Object.getOwnPropertyNames(value)) {
+      if (key === "stdout" || key === "stderr") throw new Blocked(`Raw process output cannot enter a gitea-mq checkpoint: ${path}.${key}`);
+      visit((value as Record<string, unknown>)[key], `${path}.${key}`);
+    }
+  }
+  visit(value, "checkpoint");
+}
 export async function processCheckpoint<T>(root: string, node: string, action: () => Promise<T>) {
   const state: Context = { root, node, next: 0, receipts: [] };
   return context.run(state, async () => {
     const checkpoint = { receipt: state.receipts, evidence: await action() };
+    assertNoRawOutput(checkpoint);
     assertCompactCheckpoint(checkpoint);
     return checkpoint;
   });
