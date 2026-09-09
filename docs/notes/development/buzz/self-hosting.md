@@ -426,3 +426,25 @@ The mulatta relay package labels version `0.2.0` from `relayVersion` while build
 
 Above all, every relay claim was read at `desktop-v0.5.4`, which is not the relay's release axis, while `crates/buzz-relay` ships at 0.2.0 on `relay-v*`.
 The spike labeled this caveat throughout and then reasoned as though it did not apply; it applies, and it applies to every citation in this document.
+
+## Addendum, 2026-08-19: the R2 gate is settled, and the relay has landed disabled
+
+This section is appended; nothing above it has been altered, and its record stands as written on 2026-08-04.
+
+The R2 conformance gate above has now been settled at the source, against upstream `relay-v0.2.1` (`6e5c462`) and against Cloudflare documentation fetched live on 2026-08-19.
+The verdict of this note is upheld — R2 fails, and it fails both the startup probe and the steady-state push path — but three of the arguments above are wrong and are corrected here.
+First, this note missed the documented off-switch: `BUZZ_GIT_CONFORMANCE_PROBE=false` exists at `main.rs:496-499` and is used by upstream's own tests, so the judgement that disabling hides rather than fixes the problem was right while the mechanism went unnamed.
+Second, this note asserted the 429 mechanism without checking the S3 client layer: the client is `rust-s3` v0.37.2 with `fail-on-err`, and it does retry blindly — once, after one second, retrying 412 as well — which is insufficient against 32 writers on a 1-write/sec key but was never verified before the conclusion was drawn.
+Third, this note overstated R2's consistency weakness: R2 documents strong read-after-write and strong list consistency, and would likely pass the probe's phases 1, 3 and 4, so the real gap is Cloudflare's silence on conditional-PUT CAS atomicity rather than documented weakness, and the disqualifying mechanism is throttling.
+Two further corrections of detail: the probe issues 192 conditional writes per boot rather than roughly 96, and the probe's `DeleteObject` calls are error-ignored, so a 403 leaks scratch keys rather than failing the probe as the token-scope guidance above implies.
+The recommendation carried forward is Garage single-node on magnetite, with MinIO as the known-good fallback because upstream verifies empirically against MinIO; Garage's conditional-PUT CAS was not documentation-verified in that pass, so the probe itself is the intended adjudicator.
+
+Packaging and a NixOS module now exist on branch `fm/vx-buzz-relay-magnetite`.
+The relay is pinned separately from the desktop train at `pkgs/by-name/buzz/relay-source` and built at `pkgs/by-name/buzz/relay`, so a server upgrade is not coupled to a client upgrade.
+The module is `modules/nixos/buzz-relay.nix`, imported by magnetite and NOT enabled.
+The full change is recorded under `openspec/changes/buzz-relay-module/`, whose `design.md` carries the object-storage finding with its citations.
+
+The "if it is built anyway" section above, and its Phase 4 instruction to deploy to magnetite with the relay running, are superseded by the binding deploy-scope decision of 2026-08-19.
+That decision lands the packaging, the module and the change reviewed and buildable with `services.buzz-relay.enable` defaulting to false and no host setting it, and keeps the operational go/no-go as a separate later change.
+Three prerequisites remain unmet and gate that later change: an object store that passes the conformance probe, a decision on Redis as a new daemon class on this fleet, and a backup story that does not exist fleet-wide.
+The hostname question in the open questions above is deliberately still unanswered, because the Host is a durable tenant key and the choice belongs to the change that actually turns the relay on.

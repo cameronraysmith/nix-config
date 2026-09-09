@@ -54,6 +54,11 @@ in
         kanidm
         matrix
         omnigraph
+        # Imported but deliberately not enabled: services.buzz-relay.enable
+        # defaults to false and is not set here. See the header comment in
+        # modules/nixos/buzz-relay.nix for the object-store, Redis and backup
+        # prerequisites that gate switching it on.
+        buzz-relay
         effects-vanixiets-secrets
         effects-ironstar-secrets
       ]);
