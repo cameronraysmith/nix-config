@@ -44,7 +44,7 @@
     "astro": "7.2.9"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.11",
+    "@biomejs/biome": "^2.5.13",
     "@cloudflare/vite-plugin": "^1.54.2",
     "@playwright/test": "1.61.1",
     "@semantic-release/changelog": "^7.0.0",
