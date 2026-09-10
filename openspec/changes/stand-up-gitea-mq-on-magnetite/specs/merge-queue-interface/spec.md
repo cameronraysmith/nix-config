@@ -16,13 +16,13 @@ The machine SHALL serve the merge queue at one hostname of its own, distinct fro
 
 ### Requirement: The four landing settings are evaluated values guarded by an assertion
 
-The machine's evaluated configuration SHALL carry the queue's batch maximum as `5`, its up-to-date shortcut as enabled, its configured fallback required checks as exactly `nixbot/nix-eval` and `nixbot/nix-build`, and no override of the merge label on the queue's unit, and SHALL refuse to evaluate when the merged configuration differs from those values.
+The machine's evaluated configuration SHALL carry the queue's batch maximum as `20`, its up-to-date shortcut as enabled, its configured fallback required checks as exactly `nixbot/nix-eval` and `nixbot/nix-build`, and no override of the merge label on the queue's unit, and SHALL refuse to evaluate when the merged configuration differs from those values.
 The configured fallback is not the operative required set: the queue consults it only when the forge names no required check, and the ruleset requirement below keeps the forge's set non-empty, so the two settings are one invariant rather than two independent ones.
 
 #### Scenario: The evaluated options are read
 
 - **WHEN** the queue's options are read from the host's evaluated configuration
-- **THEN** the batch maximum is `5`, the up-to-date shortcut is enabled, the configured fallback required checks are exactly the two build-service contexts, and the unit's environment carries no merge-label attribute
+- **THEN** the batch maximum is `20`, the up-to-date shortcut is enabled, the configured fallback required checks are exactly the two build-service contexts, and the unit's environment carries no merge-label attribute
 
 #### Scenario: Another module forces a different value
 
@@ -32,7 +32,7 @@ The configured fallback is not the operative required set: the queue consults it
 #### Scenario: The unit's environment is read on the host
 
 - **WHEN** the queue's unit environment is read on the host after activation
-- **THEN** it carries the batch maximum `5`, the up-to-date shortcut `true`, the two contexts as the configured required-checks list, and no merge-label variable, so the queue's own default of `merge-queue` is in force
+- **THEN** it carries the batch maximum `20`, the up-to-date shortcut `true`, the two contexts as the configured required-checks list, and no merge-label variable, so the queue's own default of `merge-queue` is in force
 
 ### Requirement: A database and role exist for the unit's dynamic user
 

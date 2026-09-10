@@ -45,8 +45,21 @@ The 2026-09-09 ADR revision retires the orchestrator rollup onto `staging` becau
 
 **Four settings fixed by the ADR, and pinned**
 - From: nothing.
-- To: `batchMax = 5`, `skipQueueIfUpToDate = true`, `requiredChecks = [ "nixbot/nix-eval" "nixbot/nix-build" ]`, and the merge label left at gitea-mq's default `merge-queue`; a NixOS assertion in the aspect reads the merged configuration back and fails evaluation of the host if any of the three options drifts or if any module sets `GITEA_MQ_MERGE_LABEL` on the unit.
-- Reason: gitea-mq's batch engine fast-forwards the target to the exact commit CI tested (`internal/batch/batch.go::Engine.HandlePass` calling `internal/github/forge.go::FastForward`), so testing up to five entries together preserves the tested tree the substitution argument depends on; five is the value all three surveyed GitHub deployments use. The up-to-date shortcut lets a single ready entry land its own head without a further build. The configured checks are a fallback the queue consults only when the forge names none, and the merge label is not a module option, so the only drift possible there is an override, which is what the fourth assertion catches.
+- To: `batchMax = 20`, `skipQueueIfUpToDate = true`, `requiredChecks = [ "nixbot/nix-eval" "nixbot/nix-build" ]`, and the merge label left at gitea-mq's default `merge-queue`; a NixOS assertion in the aspect reads the merged configuration back and fails evaluation of the host if any of the three options drifts or if any module sets `GITEA_MQ_MERGE_LABEL` on the unit.
+- Reason: gitea-mq's batch engine fast-forwards the target to the exact commit CI tested (`internal/batch/batch.go::Engine.HandlePass` calling `internal/github/forge.go::FastForward`), so testing up to twenty entries together preserves the tested tree the substitution argument depends on.
+  Twenty supersedes the prior five-entry cap chosen to match Mic92/dotfiles, SBEE-Lab/infra, and mulatta/dots; `design.md::D2` preserves both decisions and their reasons.
+  Our twice-weekly flake-update lane produces waves of 20–40 simultaneously-ready PRs (`.github/workflows/update-flake-inputs.yaml::on.schedule`) absent from those reference deployments.
+  Twenty can cover a twenty-entry wave; a forty-entry wave still needs multiple batches.
+  Our unlimited `bisectMaxSteps = 0` makes twenty affordable to recover from: `internal/batch/batch.go::Engine.HandleFail` isolates a failing entry in roughly log2(N) builds.
+  Its whole-batch ejection guard `BisectMaxSteps > 0 && Builds >= BisectMaxSteps`, which comments “batch bisection reached the configured limit”, is unreachable here; not every reference deployment shares this configuration.
+  We accept that a large batch holds the queue for one build cycle, and one bad entry delays the other nineteen while bisection runs.
+  The empirical basis is one local observation: five PRs landed in two batches, first two and then three, using two batch builds.
+  `internal/queue/batch.go::Service.FormBatch` greedily takes up to `BatchMax` entries at the instant a poll runs, with no accumulation window.
+  `internal/webhook/github.go::maybeTriggerPoll` requests an immediate poll on green checks; `GithubHandler`'s `PullRequestEvent` path does so when auto-merge is enabled (`prTriggerActions`).
+  These triggers and greedy selection explain the observed split: batch size emerges from arrival rate versus build time.
+  Raising the cap raises the ceiling; it does not force larger batches, and any speedup from twenty remains a projection rather than a measured result.
+  The up-to-date shortcut lets a single ready entry land its own head without a further build.
+  The configured checks are a fallback the queue consults only when the forge names none, and the merge label is not a module option, so the only drift possible there is an override, which is what the fourth assertion catches.
 - Impact: any later edit to one of these values, in this aspect or by `lib.mkForce` elsewhere, fails `checks.x86_64-linux.nixos-magnetite`.
 
 **A dedicated GitHub App, separate from nixbot's**

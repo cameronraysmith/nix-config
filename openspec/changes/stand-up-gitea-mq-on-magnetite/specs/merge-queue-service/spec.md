@@ -18,14 +18,14 @@ The fleet SHALL provide a merge queue on the host that runs its build service, r
 
 ### Requirement: Landing advances the default branch to a tested commit
 
-The merge queue SHALL test queued changes together, up to five queue entries at a time, and SHALL advance the default branch only to a commit whose content the build service has already reported on, by an ancestry-checked update that creates no commit the build service has not seen.
+The merge queue SHALL test queued changes together, up to twenty queue entries at a time, and SHALL advance the default branch only to a commit whose content the build service has already reported on, by an ancestry-checked update that creates no commit the build service has not seen.
 A single queued change whose head already contains the default branch's tip MAY land that head without a further build.
 
 **Discharged by**: `merge-queue-interface` requirement `The four landing settings are evaluated values guarded by an assertion`, resting on world assumptions `A22 — gitea-mq resolves stacks only through GitHub's Stacks API`, `A23 — GitHub marks a fast-forwarded stack member merged`, and `A26 — the batch engine advances the target to the exact tested commit`.
 
 #### Scenario: Several ready changes are tested together
 
-- **WHEN** between two and five ready queue entries targeting the same branch are selected together for a batch
+- **WHEN** between two and twenty ready queue entries targeting the same branch are selected together for a batch
 - **THEN** the queue tests them as one unit and, on a pass, advances the default branch to the commit that was tested, so that what lands is what was tested even when the unit contains merge commits
 
 #### Scenario: An authorized publisher labels the intended top of a stack

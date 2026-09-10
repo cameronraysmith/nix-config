@@ -9,7 +9,7 @@ path. It decomposes tasks.md group by group with the same numbering, so task 4.2
 Task 4 Step 2 here where the mapping is one to one and is cross-referenced where it is not.
 -->
 
-**Goal:** Stand up gitea-mq on magnetite at `mq.scientistexperience.net` with `batchMax = 5`, the other pinned landing settings, a dedicated GitHub App, database/proxy provisioning (R11/R13), and two default-branch rulesets (R14).
+**Goal:** Stand up gitea-mq on magnetite at `mq.scientistexperience.net` with `batchMax = 20`, the other pinned landing settings, a dedicated GitHub App, database/proxy provisioning (R11/R13), and two default-branch rulesets (R14).
 
 **Architecture:** A new first-party aspect `flake.modules.nixos.gitea-mq` at `modules/nixos/gitea-mq.nix` carries the service configuration, the PostgreSQL provisioning, the nginx vhost, two clan vars generators, and the pinning assertions; the upstream `inputs.gitea-mq.nixosModules.default` is imported at the host beside `inputs.nixbot.nixosModules.nixbot`. The unit runs as a dynamic user named for the unit, authenticates to PostgreSQL by peer identity, listens on loopback port 8092 behind the host's nginx, and reads both GitHub secrets as systemd credentials from root-owned clan vars files. Two operator gates stop the plan: App registration (Task 1) and the ruleset diff (Task 8).
 
@@ -25,7 +25,7 @@ Its positional system parameter adds `--remote magnetite.zt --no-download` (`jus
 ## Global constraints
 
 - Nothing under `modules/nixos/nixbot.nix`, `modules/nixos/buildbot.nix`, their generators, vhosts, or databases is edited; `sciexp-nixbot` (id `4743700`) is not touched. Verified per task by `git diff --stat`.
-- The four landing settings are `batchMax = 5`, `skipQueueIfUpToDate = true`, `requiredChecks = [ "nixbot/nix-eval" "nixbot/nix-build" ]`, and no merge-label override; the assertions in the aspect are the only place `GITEA_MQ_MERGE_LABEL` appears under `modules/`.
+- The four landing settings are `batchMax = 20`, `skipQueueIfUpToDate = true`, `requiredChecks = [ "nixbot/nix-eval" "nixbot/nix-build" ]`, and no merge-label override; the assertions in the aspect are the only place `GITEA_MQ_MERGE_LABEL` appears under `modules/`.
 - Both generator files stay at the default owner `root`; the module reads them through `LoadCredential` and no static `gitea-mq` user exists.
 - `listenAddr` is `127.0.0.1:8092`; `:8080` is bound by the LiveKit JWT service (`modules/nixos/matrix.nix`).
 - `hideRefFromClients = false`; the default would inject an `ExecStartPre` into `systemd.services.gitea` on this host.
@@ -203,7 +203,7 @@ The generator declaration commits with Task 4; the vars entries commit as `clan 
           webhookSecretFile = gen.gitea-mq-github-webhook-secret.files."secret".path;
           repos = [ "cameronraysmith/vanixiets" ];
         };
-        batchMax = 5;
+        batchMax = 20;
         skipQueueIfUpToDate = true;
         requiredChecks = [
           "nixbot/nix-eval"
@@ -237,7 +237,7 @@ Verify: the three `nix eval` commands in tasks.md 4.1.
 - [ ] **Step 2: Confirm the environment (tasks.md 4.2)**
 
 Run: `nix eval .#nixosConfigurations.magnetite.config.systemd.services.gitea-mq.environment --apply 'e: { inherit (e) GITEA_MQ_BATCH_MAX GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE GITEA_MQ_REQUIRED_CHECKS; label = e ? GITEA_MQ_MERGE_LABEL; }' --json`
-Expected: `{"GITEA_MQ_BATCH_MAX":"5","GITEA_MQ_REQUIRED_CHECKS":"nixbot/nix-eval,nixbot/nix-build","GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE":"true","label":false}`.
+Expected: `{"GITEA_MQ_BATCH_MAX":"20","GITEA_MQ_REQUIRED_CHECKS":"nixbot/nix-eval,nixbot/nix-build","GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE":"true","label":false}`.
 
 - [ ] **Step 3: Assertions (tasks.md 4.3)**
 
@@ -249,8 +249,8 @@ Expected: `{"GITEA_MQ_BATCH_MAX":"5","GITEA_MQ_REQUIRED_CHECKS":"nixbot/nix-eval
         in
         [
           {
-            assertion = cfg.batchMax == 5;
-            message = "services.gitea-mq.batchMax must be 5 (bors-style batching; landing fast-forwards the target to the exact tested batch SHA) per ${adr}";
+            assertion = cfg.batchMax == 20;
+            message = "services.gitea-mq.batchMax must be 20 (flake-update waves with unlimited bisection; landing fast-forwards the target to the exact tested batch SHA) per ${adr}";
           }
           {
             assertion = cfg.skipQueueIfUpToDate == true;
@@ -272,8 +272,8 @@ Expected: `{"GITEA_MQ_BATCH_MAX":"5","GITEA_MQ_REQUIRED_CHECKS":"nixbot/nix-eval
 ```
 
 Verify, positive: `nix eval .#checks.x86_64-linux.nixos-magnetite.drvPath` succeeds.
-Verify, negative control in a separate authorized scratch workspace: add `services.gitea-mq.batchMax = lib.mkForce 1;` to the host, run the same command, and expect failure with the message requiring 5; replace with `systemd.services.gitea-mq.environment.GITEA_MQ_MERGE_LABEL = "x";` and expect the label assertion's failure.
-Capture both failures and revert only the scratch edits; task 4.3 is reopened because its earlier completion predates the five-entry assertion.
+Verify, negative control in a separate authorized scratch workspace: add `services.gitea-mq.batchMax = lib.mkForce 1;` to the host, run the same command, and expect failure with the message requiring 20; replace with `systemd.services.gitea-mq.environment.GITEA_MQ_MERGE_LABEL = "x";` and expect the label assertion's failure.
+Capture both failures and revert only the scratch edits; task 4.3 remains reopened because its earlier completion predates the twenty-entry assertion.
 Do not run a negative-control edit in this shared correction session.
 
 - [ ] **Step 4: Header (tasks.md 4.4)**
@@ -468,7 +468,7 @@ Record every observation in verify.md with the `[operator]` and `[verified here]
 - [ ] **Step 3: Database and role for the dynamic user (11.3)**
 - [ ] **Step 4: Two rulesets, both nixbot contexts, App bypass, no linear-history/classic protection, `allow_auto_merge` true (11.4)**
 - [ ] **Step 5: V3 check-run names and the forge-derived required-check pair; fallback inactive (11.5)**
-- [ ] **Step 6: Four settings in the running unit's environment, including batch maximum 5 (11.6)**
-- [ ] **Step 7: V2 singleton original-head shortcut under `batchMax = 5`, ordinary auto-merge (11.7)**
+- [ ] **Step 6: Four settings in the running unit's environment, including batch maximum 20 (11.6)**
+- [ ] **Step 7: V2 singleton original-head shortcut under `batchMax = 20`, ordinary auto-merge (11.7)**
 - [ ] **Step 8: Re-confirm discharged V1 at the first live stacked landing; retired V6 ref probe removed (11.8)**
 - [ ] **Step 9: Rollback instantiation in an authorized scratch workspace; G2 reverse diff and queue-gate disabling recorded separately (11.9)**

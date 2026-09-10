@@ -89,7 +89,7 @@ gitea-mq, GitHub backend:
   Neither path reads `Depends-On:`; native registration is required for the stack-aware label path (`internal/github/forge.go::ResolveStack`).
 - A labelled stack forms one queue entry; lower members land as ancestors of the selected head (`internal/poller/poller.go::enqueuePR`, `labeledTargetBranch`; `internal/batch/batch.go::Engine.Build`).
   Enqueue checks the selected head, not every lower member (`internal/poller/poller.go::prCheckResult`).
-- With `batchMax = 5`, entries become `testing` and successful `Engine.HandlePass` deletes them through `internal/queue/batch.go::Service.SaveBatch`.
+- With `batchMax = 20`, entries become `testing` and successful `Engine.HandlePass` deletes them through `internal/queue/batch.go::Service.SaveBatch`.
   Batch finalization posts completion and calls `Engine.ensureMergedOrClose` only for actual queue entries: for a labelled stack, the selected top PR alone.
   That helper polls for merged-or-closed state for about ten seconds and, if still unresolved, comments with the landing SHA and closes the entry PR.
   It never calls the forge merge endpoint (`internal/batch/batch.go::Engine.HandlePass`, `Engine.ensureMergedOrClose`).
@@ -98,7 +98,7 @@ gitea-mq, GitHub backend:
   The hint goes on unlabelled, unqueued branch-chain members, deduplicated by head SHA, with “Stack detected — add the 'merge-queue' label to the topmost PR you want to merge”.
   Their merged-or-closed state after the fast-forward is GitHub's behaviour alone, unobserved by the queue.
   `finalizeLabeledMerge` and its “Merge queue passed (stack)” completion status are legacy/non-batch only, reachable here solely for persisted non-batch entries surviving a configuration change.
-- The batch engine is active when `batchMax != 1`; zero means unlimited, while five limits queue entries, not commits (`internal/batch/batch.go::Engine.Enabled`; `internal/queue/batch.go::Service.FormBatch`).
+- The batch engine is active when `batchMax != 1`; zero means unlimited, while twenty limits queue entries, not commits (`internal/batch/batch.go::Engine.Enabled`; `internal/queue/batch.go::Service.FormBatch`).
   A single up-to-date entry with skipping enabled can land its original head without a batch ref or extra branch CI run (`internal/batch/batch.go::Engine.headIfUpToDate`, `Engine.Build`).
   Existing head checks are still evaluated (`internal/poller/poller.go::pollMergeBranchChecks`; `internal/batch/monitor.go::Engine.HandleCheck`).
 - A head behind the target, an `IsUpToDate` error, or two or more entries takes `CreateMergeBranch`/`MergeInto` through `Engine.stack` (`internal/batch/batch.go::Engine.Build`, `Engine.headIfUpToDate`; `internal/github/forge.go::mergeHead`).
@@ -130,6 +130,7 @@ mergify-cli:
 
 Four consumers were surveyed; none uses `batchMax = 0`, and none showed a linear-history mandate.
 The three GitHub deployments set `batchMax = 5`: Mic92/dotfiles (`machines/eve/modules/gitea-mq.nix::services.gitea-mq`), SBEE-Lab/infra (`modules/gitea-mq/default.nix::services.gitea-mq`), and mulatta/dots (`machines/cask/modules/gitea-mq.nix::services.gitea-mq`).
+Our prior choice of five matched these deployments; the Decision below supersedes that choice with twenty for flake-update waves and unlimited bisection.
 clan-lol/clan-infra uses the Gitea backend at the default one (`modules/web01/gitea-mq.nix::services.gitea-mq`); its live Gitea protection was not checked.
 Mic92/dotfiles' `.github/settings.yml::branches.protection.required_linear_history` is false, with “Disabled for bors to work”; this bors-era declaration is vestigial against the live GitHub state.
 
@@ -169,8 +170,8 @@ These observations distinguish original-head landing from batched merge history;
    Do not combine it with gitea-mq (mulatta/dots `home/bin/gh-bootstrap::check_gitea_mq`).
 7. gitea-mq for one labelled stack at a time, after an orchestrator assembles and prebuilds a linear rollup on `staging`: rejected in this revision.
    Queue-created merge commits are tested before landing, so assembly and serialization add no substitution guarantee and prevent multi-entry batching.
-8. gitea-mq alone for queue formation and landing, with `batchMax = 5`, author cache warming, and shape-specific authorization signals: chosen.
-   This follows all three surveyed GitHub deployments and preserves the tested-tree property without a bespoke rollup service.
+8. gitea-mq alone for queue formation and landing, with `batchMax = 20`, author cache warming, and shape-specific authorization signals: chosen.
+   This preserves the tested-tree property without a bespoke rollup service; the Decision records why the cap now differs from the three surveyed GitHub deployments' five.
 
 ## Decision
 
@@ -189,7 +190,22 @@ We will separate authorization into two orthogonal axes:
   For a registered stack, we will label its topmost intended PR `merge-queue` after verifying registration and head ancestry.
   We will never enable auto-merge on any stack member, including the bottom member; auto-merge enqueue does not resolve stacks and wins over label enqueue.
 
-We will deploy `services.gitea-mq.batchMax = 5` and `skipQueueIfUpToDate = true`, keeping the default `merge-queue` label.
+We will deploy `services.gitea-mq.batchMax = 20` and `skipQueueIfUpToDate = true`, keeping the default `merge-queue` label.
+This supersedes our prior `batchMax = 5` decision, which matched Mic92/dotfiles, SBEE-Lab/infra, and mulatta/dots (Context, Deployment survey and live rulesets).
+Our flake-update lane produces waves of 20–40 simultaneously-ready PRs, scheduled twice weekly (`.github/workflows/update-flake-inputs.yaml::on.schedule`); the reference deployments do not have this lane.
+The cap of twenty can cover a twenty-entry wave; a forty-entry wave still needs multiple batches.
+Our `bisectMaxSteps = 0` means unlimited bisection (`nix/module.nix::services.gitea-mq.bisectMaxSteps`), so `internal/batch/batch.go::Engine.HandleFail` isolates a failing entry in roughly log2(N) builds.
+Its whole-batch ejection guard, `BisectMaxSteps > 0 && Builds >= BisectMaxSteps`, which comments “batch bisection reached the configured limit”, is unreachable here.
+Unlimited bisection makes recovery from twenty entries affordable; not every reference deployment shares that configuration.
+We accept that a large batch holds the queue for one build cycle, and one bad entry delays the other nineteen while bisection runs.
+
+The empirical basis is one local observation: five PRs landed in two batches, first two and then three, using two batch builds.
+`internal/queue/batch.go::Service.FormBatch` greedily takes up to `BatchMax` entries at the instant a poll runs, with no accumulation window.
+`internal/webhook/github.go::maybeTriggerPoll` requests an immediate poll on green checks; `GithubHandler`'s `PullRequestEvent` path does so when auto-merge is enabled (`prTriggerActions`).
+These triggers and greedy selection explain the observed split: batch size emerges from arrival rate versus build time.
+Raising the cap raises the ceiling; it does not force larger batches.
+Any speedup from twenty is a projection, not a measured result.
+
 We will enable repository `allow_auto_merge` and maintain two default-branch rulesets: ours requiring deletion protection, non-fast-forward protection, `nixbot/nix-eval`, and `nixbot/nix-build`; the App's requiring `gitea-mq`.
 We will permit the queue App's ruleset bypass and use neither `required_linear_history` nor classic branch protection.
 We will derive the required CI set from our ruleset; an environment fallback will not substitute for that ruleset.
@@ -206,7 +222,7 @@ Business justification:
 - Time to market: we will make landing asynchronous after authorization, allowing a person or agent to start the next task while the queue tests and lands work.
   Required review and CI remain prerequisites; there is no fixed author-wait bound.
 - User satisfaction: we will provide the same discoverable signals to people and agents, with pending stack hints and queue status, instead of requiring a human to wait for orchestrator assembly.
-- Strategic positioning: we will follow the deployed Nix ecosystem configuration and maintain source-filtering and cache integration rather than a second queue implementation.
+- Strategic positioning: we will retain the deployed Nix ecosystem's queue integration, with a larger batch cap for our flake-update lane, and maintain source-filtering and cache integration rather than a second queue implementation.
 
 ## Consequences
 
@@ -250,7 +266,7 @@ Automated checks to implement in the related OpenSpec changes:
 
 - Retain `filter-check-sources-for-substitution`'s `structure-check-source-isolation` check, negative control, and transitive `check-source-audit` probe against its declared whole-tree allow-list (`openspec/changes/filter-check-sources-for-substitution/proposal.md`, “Assertion of the property”).
   Unrelated source changes must leave unaffected filtered checks' derivation hashes stable; the deliberately whole-tree `gitleaks` scan is the declared exception.
-- Add a module assertion pinning `services.gitea-mq.batchMax = 5` and `skipQueueIfUpToDate = true`; assert no merge-label override, because `nix/module.nix::services.gitea-mq` exposes batch size but not the label.
+- Add a module assertion pinning `services.gitea-mq.batchMax = 20` and `skipQueueIfUpToDate = true`; assert no merge-label override, because `nix/module.nix::services.gitea-mq` exposes batch size but not the label.
 - Add a read-only GitHub ruleset check requiring both `nixbot/nix-eval` and `nixbot/nix-build` in our default-branch ruleset.
   Also verify the separate App-owned `gitea-mq` gate, bypass actor, absence of linear-history and classic protection, and `allow_auto_merge = true`.
   Checking only `GITEA_MQ_REQUIRED_CHECKS` is insufficient because `internal/monitor/monitor.go::ResolveRequiredChecks` prefers the forge-derived set.
@@ -320,7 +336,7 @@ Source filtering and cache warming are the core; process policies and upstream w
 - R8. Keep unconditional PR builds without orchestrator-controlled publication timing.
 - R9. Required external contexts are `nixbot/nix-eval` and `nixbot/nix-build`.
 - R10. Scope PR previews with `effects_on_pull_requests` and non-default branch effects with `effects_branches`, preserving the previews identified in V10.
-- R11. Serve `mq.scientistexperience.net` with `batchMax = 5`, `skipQueueIfUpToDate = true`, and the default `merge-queue` label; provision its database and reverse proxy.
+- R11. Serve `mq.scientistexperience.net` with `batchMax = 20`, `skipQueueIfUpToDate = true`, and the default `merge-queue` label; provision its database and reverse proxy.
 - R12. Publish stacks with `--github-native` and verify registration and selected-head ancestry before enqueue; `Depends-On:` alone does not enable queue stack resolution.
 - R13. Use a separate GitHub App from nixbot's, with the permissions in gitea-mq `README.md`, “GitHub setup”: Checks read/write, Commit statuses read, Contents read/write, Pull requests read/write, Administration read/write, Metadata read.
   The required subscribable event set is exactly `check_run`, `pull_request`, `status`, and our registered App `sciexp-gitea-mq` (id 4875422) carries exactly those (`GET /apps/sciexp-gitea-mq`: `events: ["check_run", "pull_request", "status"]`).

@@ -67,7 +67,7 @@
           webhookSecretFile = gen.gitea-mq-github-webhook-secret.files."secret".path;
           repos = [ "cameronraysmith/vanixiets" ];
         };
-        batchMax = 5;
+        batchMax = 20;
         skipQueueIfUpToDate = true;
         requiredChecks = [
           "nixbot/nix-eval"
@@ -98,8 +98,8 @@
         in
         [
           {
-            assertion = cfg.batchMax == 5;
-            message = "services.gitea-mq.batchMax must be 5 (bors-style batching; landing fast-forwards the target to the exact tested batch SHA) per ${adr}";
+            assertion = cfg.batchMax == 20;
+            message = "services.gitea-mq.batchMax must be 20 (flake-update waves with unlimited bisection; landing fast-forwards the target to the exact tested batch SHA) per ${adr}";
           }
           {
             assertion = cfg.skipQueueIfUpToDate == true;
