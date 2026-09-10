@@ -18,11 +18,13 @@
 #     an ExecStartPre into the local Gitea unit, which this GitHub queue does
 #     not use.
 #
-# Before first start, apply the approved G2 ruleset edit: add nixbot/nix-eval
-# beside the existing nixbot/nix-build required check on our default-branch
-# ruleset. gitea-mq derives its required set from the forge whenever that set
-# is non-empty, so both nixbot contexts must live in our ruleset; the
-# requiredChecks below is a fallback that does not fire in this configuration.
+# The original G2 edit added nixbot/nix-eval beside nixbot/nix-build; the
+# operator later added nixbot/effects so landing waits for effects to finish.
+# gitea-mq prefers the non-empty forge-required list, so requiredChecks below
+# remains an inactive fallback. It must match all three contexts nonetheless:
+# an empty forge list must not silently weaken the landing gate.
+# Requiring effects also needs default-branch nixbot.toml to keep PR effects
+# enabled and a non-empty effect set, or that context is never posted.
 # Startup setup adds its own second ruleset named gitea-mq carrying only the
 # queue's context, and adds the App as a bypass actor on ours. Installation
 # selection must remain vanixiets alone: github.repos adds repositories to
@@ -72,6 +74,7 @@
         requiredChecks = [
           "nixbot/nix-eval"
           "nixbot/nix-build"
+          "nixbot/effects"
         ];
       };
 
@@ -110,8 +113,9 @@
               cfg.requiredChecks == [
                 "nixbot/nix-eval"
                 "nixbot/nix-build"
+                "nixbot/effects"
               ];
-            message = "services.gitea-mq.requiredChecks must be exactly nixbot/nix-eval and nixbot/nix-build per ${adr}";
+            message = "services.gitea-mq.requiredChecks must be exactly nixbot/nix-eval, nixbot/nix-build, and nixbot/effects to match the authoritative ruleset without weakening the fallback per ${adr}";
           }
           {
             assertion = !(config.systemd.services.gitea-mq.environment ? GITEA_MQ_MERGE_LABEL);

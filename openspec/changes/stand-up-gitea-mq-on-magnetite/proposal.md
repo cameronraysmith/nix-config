@@ -45,7 +45,7 @@ The 2026-09-09 ADR revision retires the orchestrator rollup onto `staging` becau
 
 **Four settings fixed by the ADR, and pinned**
 - From: nothing.
-- To: `batchMax = 20`, `skipQueueIfUpToDate = true`, `requiredChecks = [ "nixbot/nix-eval" "nixbot/nix-build" ]`, and the merge label left at gitea-mq's default `merge-queue`; a NixOS assertion in the aspect reads the merged configuration back and fails evaluation of the host if any of the three options drifts or if any module sets `GITEA_MQ_MERGE_LABEL` on the unit.
+- To: `batchMax = 20`, `skipQueueIfUpToDate = true`, `requiredChecks = [ "nixbot/nix-eval" "nixbot/nix-build" "nixbot/effects" ]`, and the merge label left at gitea-mq's default `merge-queue`; a NixOS assertion in the aspect reads the merged configuration back and fails evaluation of the host if any of the three options drifts or if any module sets `GITEA_MQ_MERGE_LABEL` on the unit.
 - Reason: gitea-mq's batch engine fast-forwards the target to the exact commit CI tested (`internal/batch/batch.go::Engine.HandlePass` calling `internal/github/forge.go::FastForward`), so testing up to twenty entries together preserves the tested tree the substitution argument depends on.
   Twenty supersedes the prior five-entry cap chosen to match Mic92/dotfiles, SBEE-Lab/infra, and mulatta/dots; `design.md::D2` preserves both decisions and their reasons.
   Our twice-weekly flake-update lane produces waves of 20–40 simultaneously-ready PRs (`.github/workflows/update-flake-inputs.yaml::on.schedule`) absent from those reference deployments.
@@ -59,7 +59,9 @@ The 2026-09-09 ADR revision retires the orchestrator rollup onto `staging` becau
   These triggers and greedy selection explain the observed split: batch size emerges from arrival rate versus build time.
   Raising the cap raises the ceiling; it does not force larger batches, and any speedup from twenty remains a projection rather than a measured result.
   The up-to-date shortcut lets a single ready entry land its own head without a further build.
-  The configured checks are a fallback the queue consults only when the forge names none, and the merge label is not a module option, so the only drift possible there is an override, which is what the fourth assertion catches.
+  The configured checks are a fallback the queue consults only when the forge names none; the fallback must match the authoritative three-context ruleset so it cannot silently weaken the gate.
+  Requiring effects also depends on default-branch `nixbot.toml::effects_on_pull_requests = true` and a non-empty effect set (`design.md::D2`).
+  The merge label is not a module option, so the only drift possible there is an override, which is what the fourth assertion catches.
 - Impact: any later edit to one of these values, in this aspect or by `lib.mkForce` elsewhere, fails `checks.x86_64-linux.nixos-magnetite`.
 
 **A dedicated GitHub App, separate from nixbot's**
@@ -68,11 +70,16 @@ The 2026-09-09 ADR revision retires the orchestrator rollup onto `staging` becau
 - Reason: the queue writes refs and edits rulesets, which are permissions the build service must never hold; adding them to nixbot's App would edit a registration a running service depends on.
 - Impact: one more registration to hold and one more credential set to rotate; registration is a human gate.
 
-**One check context added to our ruleset, and a second ruleset created by the queue**
+**Three check contexts required by our ruleset, and a second ruleset created by the queue**
 - From: ruleset `16212553` on `cameronraysmith/vanixiets` carries `deletion`, `non_fast_forward`, and required check `nixbot/nix-build` pinned to App `4743700`, with repository admins as its only bypass actor.
-- To: the same ruleset, with `nixbot/nix-eval` added beside `nixbot/nix-build`; nothing renamed, nothing removed, no linear-history rule, and no classic branch protection. The queue's own startup setup creates a second ruleset named `gitea-mq` carrying only its own status, adds its App as a bypass actor on ours, and leaves `allow_auto_merge` on.
-- Reason: `internal/github/forge.go::GetRequiredChecks` unions ruleset and classic contexts minus queue-owned contexts, and `internal/monitor/monitor.go::ResolveRequiredChecks` prefers a non-empty forge list. Both nixbot contexts must stay in ours, making the configured fallback inactive. This matches the live SBEE-Lab/infra and mulatta/dots pattern. `internal/github/setup.go::EnsureRepoSetup` adds App bypass to ours and creates its own second ruleset if absent; an existing `gitea-mq` name makes it return without repairing or activating that ruleset.
-- Impact: the ruleset diff is presented for approval before it is applied, and it adds one required context and removes nothing. A pull request that once merged on `nixbot/nix-build` alone now needs both contexts, and the queue's own context once its ruleset exists.
+- To: the same ruleset, with `nixbot/nix-eval` and `nixbot/effects` beside `nixbot/nix-build`; nothing renamed, nothing removed, no linear-history rule, and no classic branch protection.
+  The queue's own startup setup creates a second ruleset named `gitea-mq` carrying only its own status, adds its App as a bypass actor on ours, and leaves `allow_auto_merge` on.
+- Reason: `internal/github/forge.go::GetRequiredChecks` unions ruleset and classic contexts minus queue-owned contexts, and `internal/monitor/monitor.go::ResolveRequiredChecks` prefers a non-empty forge list.
+  All three nixbot contexts must stay in ours, making the matching configured fallback inactive without permitting a weaker fallback gate.
+  The two-ruleset arrangement matches the live SBEE-Lab/infra and mulatta/dots pattern, not necessarily their required-check names or count.
+  `internal/github/setup.go::EnsureRepoSetup` adds App bypass to ours and creates its own second ruleset if absent; an existing `gitea-mq` name makes it return without repairing or activating that ruleset.
+- Impact: the original G2 diff added one required context, eval, after approval; the operator subsequently added effects so landing waits for effects to conclude (`design.md::D2`).
+  A pull request that once merged on `nixbot/nix-build` alone now needs all three contexts, and the queue's own context once its ruleset exists.
 
 **Credentials through the fleet's primary secrets system**
 - From: nothing.
@@ -83,7 +90,7 @@ The 2026-09-09 ADR revision retires the orchestrator rollup onto `staging` becau
 ## Capabilities
 
 ### New Capabilities
-- `merge-queue-service` (stratum: `behavioral`): queue reachability, tested-SHA batch landing, both nixbot verdicts, a separate App identity, documented merge-authorization signals and review-blind boundary, secret handling, declarative activation, and pinned settings. The earlier orchestrator-only authorization requirement is retired; E1 review-before-signal and ordinary-PR auto-merge versus registered-stack top label are sibling procedure, with auto-merge prohibited on every stack member.
+- `merge-queue-service` (stratum: `behavioral`): queue reachability, tested-SHA batch landing, all three nixbot verdicts, a separate App identity, documented merge-authorization signals and review-blind boundary, secret handling, declarative activation, and pinned settings. The earlier orchestrator-only authorization requirement is retired; E1 review-before-signal and ordinary-PR auto-merge versus registered-stack top label are sibling procedure, with auto-merge prohibited on every stack member.
 - `merge-queue-interface` (stratum: `interface`): the properties at the machine's interface that discharge those requirements — a distinct hostname served over TLS proxied to a loopback port, the four settings as evaluated option values guarded by an assertion, a database and role provisioned for the unit's dynamic user, credentials present only as activation-resolved systemd credentials, the forge application's permission and event set, the two rulesets governing the default branch, and the webhook endpoint the service registers for itself. Its trust boundary is stated in the capability: the installation selection, the collaborator set that bounds who can enable auto-merge, and GitHub's marking of fast-forwarded stack members as merged are all outside what this machine can assert; the shared nginx, PostgreSQL, and ACME account remain common-mode surfaces; and the assertion guards the evaluated configuration, not the running process.
 
 ### Modified Capabilities

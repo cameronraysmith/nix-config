@@ -109,7 +109,8 @@ gitea-mq, GitHub backend:
   Batch state persists in Postgres and resumes after restart (`internal/store/pg/migrations/004_batches.sql::batches`; `internal/batch/batch.go::Engine.ReconcileLive`).
 - Required checks are forge-derived whenever that list is nonempty; `GITEA_MQ_REQUIRED_CHECKS` is only fallback (`internal/monitor/monitor.go::ResolveRequiredChecks`).
   GitHub unions rulesets and classic protection, excluding MQ-owned contexts (`internal/github/forge.go::GetRequiredChecks`).
-  Our ruleset's `nixbot/nix-eval` and `nixbot/nix-build` therefore supply the queue's required set; the environment fallback does not fire in the intended configuration.
+  Our ruleset's `nixbot/nix-eval`, `nixbot/nix-build`, and `nixbot/effects` therefore supply the queue's required set; the environment fallback does not fire in the intended configuration.
+  The fallback must nonetheless match the authoritative ruleset so an empty forge list cannot silently weaken the landing gate.
 - The queue is review-blind: a case-insensitive search of `internal/` for `pull_request_review|approved|review` returned no matches, and `internal/poller/poller.go::enqueuePR` gates only on `prCheckResult`.
   `internal/github/setup.go::EnsureRepoSetup` enables `allow_auto_merge`, attempts to add the App as a bypass actor on every other branch-target ruleset, and returns early if a ruleset named `gitea-mq` already exists.
   Repository rulesets can be updated; organization-owned rulesets without bypass and insufficient setup permissions produce warnings (`internal/github/setup.go::ensureBypass`).
@@ -206,9 +207,9 @@ These triggers and greedy selection explain the observed split: batch size emerg
 Raising the cap raises the ceiling; it does not force larger batches.
 Any speedup from twenty is a projection, not a measured result.
 
-We will enable repository `allow_auto_merge` and maintain two default-branch rulesets: ours requiring deletion protection, non-fast-forward protection, `nixbot/nix-eval`, and `nixbot/nix-build`; the App's requiring `gitea-mq`.
+We will enable repository `allow_auto_merge` and maintain two default-branch rulesets: ours requiring deletion protection, non-fast-forward protection, `nixbot/nix-eval`, `nixbot/nix-build`, and `nixbot/effects`; the App's requiring `gitea-mq`.
 We will permit the queue App's ruleset bypass and use neither `required_linear_history` nor classic branch protection.
-We will derive the required CI set from our ruleset; an environment fallback will not substitute for that ruleset.
+We will derive the required CI set from our ruleset; an environment fallback will not substitute for that ruleset and must never be weaker than it.
 
 Technical justification: the batch engine fast-forwards to the exact tested SHA, and nixbot admits `gitea-mq/*` builds without branch-filter configuration.
 We will preserve substitution by filtering check sources, except the declared whole-tree scan allow-list, and warming magnetite's store with `just check-fast auto off x86_64-linux` before publication, so that nixbot classifies those check outputs `local` and skips them (R2).
@@ -267,7 +268,7 @@ Automated checks to implement in the related OpenSpec changes:
 - Retain `filter-check-sources-for-substitution`'s `structure-check-source-isolation` check, negative control, and transitive `check-source-audit` probe against its declared whole-tree allow-list (`openspec/changes/filter-check-sources-for-substitution/proposal.md`, “Assertion of the property”).
   Unrelated source changes must leave unaffected filtered checks' derivation hashes stable; the deliberately whole-tree `gitleaks` scan is the declared exception.
 - Add a module assertion pinning `services.gitea-mq.batchMax = 20` and `skipQueueIfUpToDate = true`; assert no merge-label override, because `nix/module.nix::services.gitea-mq` exposes batch size but not the label.
-- Add a read-only GitHub ruleset check requiring both `nixbot/nix-eval` and `nixbot/nix-build` in our default-branch ruleset.
+- Add a read-only GitHub ruleset check requiring all three contexts, `nixbot/nix-eval`, `nixbot/nix-build`, and `nixbot/effects`, in our default-branch ruleset, and pin the configured fallback to the same set with a module assertion.
   Also verify the separate App-owned `gitea-mq` gate, bypass actor, absence of linear-history and classic protection, and `allow_auto_merge = true`.
   Checking only `GITEA_MQ_REQUIRED_CHECKS` is insufficient because `internal/monitor/monitor.go::ResolveRequiredChecks` prefers the forge-derived set.
 - Report batch SHA, landed PRs, and nixbot build identities using `web/api_routes.py::create_api_router`, `Build`, and `Attribute`.
@@ -286,7 +287,7 @@ Manual checks before promotion from Proposed (existing V identifiers retained fo
 
 - V2. Confirm in vanixiets that existing green checks on the selected head are accepted when authorization arrives later, including the single-entry shortcut.
   Source supports this: `internal/poller/poller.go::prCheckResult`, `pollMergeBranchChecks`, and `internal/batch/monitor.go::Engine.HandleCheck` have no arrive-after-enqueue timestamp requirement.
-- V3. Confirm replayed and newly posted check runs are exactly `nixbot/nix-eval` and `nixbot/nix-build` on the selected SHA (`status.py::ForgeStatusReporter`; `build_reuse.py::replay_terminal_status`).
+- V3. Confirm the selected SHA carries required contexts `nixbot/nix-eval`, `nixbot/nix-build`, and `nixbot/effects`, checking build-result replay separately from effect execution (`status.py::ForgeStatusReporter`; `build_reuse.py::replay_terminal_status`; `effects_run.py::enqueue_effects`).
 - V4. Measure uncached derivations per batch after members' authors warm magnetite with `just check-fast auto off x86_64-linux`.
   Inspect the API proxy and logs to distinguish interaction inputs, cache misses, uploader failures, and unrelated-source invalidation; verify that unchanged filtered derivations substitute.
 - V9. Confirm the deployed module exposes `batchMax` and `skipQueueIfUpToDate`, and the binary retains its default merge label.
@@ -334,7 +335,10 @@ Source filtering and cache warming are the core; process policies and upstream w
 - R6. Commit bodies retain the Linear issue id for traceability, without a rollup-specific transport bookmark or dependency-assembly contract.
 - R7. Set `build_branches = []` to suppress arbitrary non-default branch builds; queue patterns remain admitted independently.
 - R8. Keep unconditional PR builds without orchestrator-controlled publication timing.
-- R9. Required external contexts are `nixbot/nix-eval` and `nixbot/nix-build`.
+- R9. Required external contexts are `nixbot/nix-eval`, `nixbot/nix-build`, and `nixbot/effects` in both the authoritative ruleset and the configured fallback.
+  This extends the original eval/build pair after the operator added effects to ruleset `16212553` so landing waits for effect completion; `openspec/changes/stand-up-gitea-mq-on-magnetite/design.md::D2` records the reason and the coupled invariant.
+  Requiring effects depends on default-branch `nixbot.toml::effects_on_pull_requests = true` and a non-empty effect set: `effects_run.py::enqueue_effects` returns before `effects_started` on an empty set, leaving a required context unposted and a PR blocked indefinitely.
+  The ruleset, configured fallback, and effect-production configuration must move together.
 - R10. Scope PR previews with `effects_on_pull_requests` and non-default branch effects with `effects_branches`, preserving the previews identified in V10.
 - R11. Serve `mq.scientistexperience.net` with `batchMax = 20`, `skipQueueIfUpToDate = true`, and the default `merge-queue` label; provision its database and reverse proxy.
 - R12. Publish stacks with `--github-native` and verify registration and selected-head ancestry before enqueue; `Depends-On:` alone does not enable queue stack resolution.

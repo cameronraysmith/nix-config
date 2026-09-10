@@ -42,13 +42,13 @@ Any requirement whose discharge depends on this fact SHALL name it explicitly, a
 ### Requirement: A25 — gitea-mq takes required checks from the forge's protection before its own list
 
 It is true of gitea-mq at the revision this fleet pins, independent of what this fleet builds, that the set of checks it requires on a target branch is the forge's own required-status-check list from rulesets and classic protection with the queue's own contexts removed, and that its configured list is consulted only when that forge list is empty (`monitor.go::ResolveRequiredChecks`, `forge.go::GetRequiredChecks`).
-A forge-side requirement for any single build-service context therefore replaces the configured pair rather than adding to it, and a forge-side requirement for both makes the forge the operative source with the configured pair never consulted.
+A forge-side requirement for any single build-service context therefore replaces the configured three-context set rather than adding to it, and a forge-side requirement for all three makes the forge the operative source with the matching configured fallback never consulted.
 Any requirement whose discharge depends on this fact SHALL name it explicitly, and SHALL be treated as losing its discharge once this assumption's violation condition below is observed.
 
 #### Scenario: The resolution order changes
 
 - **WHEN** a pinned revision of gitea-mq merges the forge's list with its configured list, prefers its configured list, or drops the forge list entirely
-- **THEN** this assumption is void, and the `merge-queue-service` requirement `The queue gates on the build service's verdicts and nothing else` and the `merge-queue-interface` requirement `The default branch is governed by two rulesets` lose the argument that keeping both build-service contexts in the operator's ruleset makes exactly that pair the queue's required set
+- **THEN** this assumption is void, and the `merge-queue-service` requirement `The queue gates on the build service's verdicts and nothing else` and the `merge-queue-interface` requirement `The default branch is governed by two rulesets` lose the argument that keeping all three build-service contexts in the operator's ruleset makes exactly that set the queue's required set
 
 ### Requirement: A26 — the batch engine advances the target to the exact tested commit
 

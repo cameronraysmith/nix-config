@@ -25,11 +25,15 @@ Its positional system parameter adds `--remote magnetite.zt --no-download` (`jus
 ## Global constraints
 
 - Nothing under `modules/nixos/nixbot.nix`, `modules/nixos/buildbot.nix`, their generators, vhosts, or databases is edited; `sciexp-nixbot` (id `4743700`) is not touched. Verified per task by `git diff --stat`.
-- The four landing settings are `batchMax = 20`, `skipQueueIfUpToDate = true`, `requiredChecks = [ "nixbot/nix-eval" "nixbot/nix-build" ]`, and no merge-label override; the assertions in the aspect are the only place `GITEA_MQ_MERGE_LABEL` appears under `modules/`.
+- The four landing settings are `batchMax = 20`, `skipQueueIfUpToDate = true`, `requiredChecks = [ "nixbot/nix-eval" "nixbot/nix-build" "nixbot/effects" ]`, and no merge-label override; the assertions in the aspect are the only place `GITEA_MQ_MERGE_LABEL` appears under `modules/`.
 - Both generator files stay at the default owner `root`; the module reads them through `LoadCredential` and no static `gitea-mq` user exists.
 - `listenAddr` is `127.0.0.1:8092`; `:8080` is bound by the LiveKit JWT service (`modules/nixos/matrix.nix`).
 - `hideRefFromClients = false`; the default would inject an `ExecStartPre` into `systemd.services.gitea` on this host.
-- G2 adds only `nixbot/nix-eval` to our existing ruleset before first deployment; installation setup creates the App's separate `gitea-mq` ruleset and adds App bypass to ours. Both nixbot contexts must remain forge-required: `internal/github/forge.go::GetRequiredChecks` unions ruleset/classic contexts minus queue-owned contexts, and `internal/monitor/monitor.go::ResolveRequiredChecks` prefers that non-empty list over the configured fallback. No linear-history rule or classic protection is intended.
+- G2 originally added only `nixbot/nix-eval` to our existing ruleset; the operator later added `nixbot/effects` so landing waits for effects, as recorded in `design.md::D2`.
+  Installation setup creates the App's separate `gitea-mq` ruleset and adds App bypass to ours.
+  All three nixbot contexts must remain forge-required: `internal/github/forge.go::GetRequiredChecks` unions ruleset/classic contexts minus queue-owned contexts, and `internal/monitor/monitor.go::ResolveRequiredChecks` prefers that non-empty list over the configured fallback.
+  The inactive fallback must match the authoritative list and must never weaken it; requiring effects also depends on default-branch `nixbot.toml::effects_on_pull_requests = true` and a non-empty effect set.
+  No linear-history rule or classic protection is intended.
 - No upstream issue or pull request is opened against gitea-mq anywhere in this work.
 - Long or output-heavy commands are captured: `<command> 2>&1 | tee logs/<identifier>-$(date +%Y%m%d-%H%M%S).log`.
 - Verification of nix-managed outputs is by `nix eval` against `.#nixosConfigurations.magnetite` and by instantiation of `.#checks.x86_64-linux.nixos-magnetite.drvPath`; realization is deferred to the deployment on the host for the reason `stand-up-nixbot-on-magnetite` task 7.1 records.
@@ -208,6 +212,7 @@ The generator declaration commits with Task 4; the vars entries commit as `clan 
         requiredChecks = [
           "nixbot/nix-eval"
           "nixbot/nix-build"
+          "nixbot/effects"
         ];
       };
 
@@ -237,7 +242,7 @@ Verify: the three `nix eval` commands in tasks.md 4.1.
 - [ ] **Step 2: Confirm the environment (tasks.md 4.2)**
 
 Run: `nix eval .#nixosConfigurations.magnetite.config.systemd.services.gitea-mq.environment --apply 'e: { inherit (e) GITEA_MQ_BATCH_MAX GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE GITEA_MQ_REQUIRED_CHECKS; label = e ? GITEA_MQ_MERGE_LABEL; }' --json`
-Expected: `{"GITEA_MQ_BATCH_MAX":"20","GITEA_MQ_REQUIRED_CHECKS":"nixbot/nix-eval,nixbot/nix-build","GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE":"true","label":false}`.
+Expected: `{"GITEA_MQ_BATCH_MAX":"20","GITEA_MQ_REQUIRED_CHECKS":"nixbot/nix-eval,nixbot/nix-build,nixbot/effects","GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE":"true","label":false}`.
 
 - [ ] **Step 3: Assertions (tasks.md 4.3)**
 
@@ -261,8 +266,9 @@ Expected: `{"GITEA_MQ_BATCH_MAX":"20","GITEA_MQ_REQUIRED_CHECKS":"nixbot/nix-eva
               cfg.requiredChecks == [
                 "nixbot/nix-eval"
                 "nixbot/nix-build"
+                "nixbot/effects"
               ];
-            message = "services.gitea-mq.requiredChecks must be exactly nixbot/nix-eval and nixbot/nix-build per ${adr}";
+            message = "services.gitea-mq.requiredChecks must be exactly nixbot/nix-eval, nixbot/nix-build, and nixbot/effects to match the authoritative ruleset without weakening the fallback per ${adr}";
           }
           {
             assertion = !(config.systemd.services.gitea-mq.environment ? GITEA_MQ_MERGE_LABEL);
@@ -384,7 +390,10 @@ Capture all five in `logs/rulesets-before-$(date +%Y%m%d-%H%M%S).log` and verify
 
 - [ ] **Step 2: Present the diff and stop (tasks.md 8.2; operator gate, an agent MUST NOT tick)**
 
-Present, verbatim, and do not proceed until the operator approves or amends:
+The diff and apply instructions below record the original G2 eval addition, not today's complete required set.
+The operator subsequently added `nixbot/effects`; verify today's three-context set read-only under `design.md::D2`, without replaying the historical mutation or removing effects.
+
+The original gate required presenting the following verbatim and waiting for operator approval or amendment:
 
 ```text
 BEFORE  ruleset 16212553 "nixbot"  target branch  enforcement active  include ~DEFAULT_BRANCH
@@ -466,8 +475,8 @@ Record every observation in verify.md with the `[operator]` and `[verified here]
 - [ ] **Step 1: Hostname and certificate, both services (11.1)**
 - [ ] **Step 2: Webhook endpoint registered by the service; accepted and rejected arms (11.2)**
 - [ ] **Step 3: Database and role for the dynamic user (11.3)**
-- [ ] **Step 4: Two rulesets, both nixbot contexts, App bypass, no linear-history/classic protection, `allow_auto_merge` true (11.4)**
-- [ ] **Step 5: V3 check-run names and the forge-derived required-check pair; fallback inactive (11.5)**
+- [ ] **Step 4: Two rulesets, all three nixbot contexts, App bypass, no linear-history/classic protection, `allow_auto_merge` true (11.4)**
+- [ ] **Step 5: V3 check-run names and the forge-derived three-context required set; matching fallback inactive (11.5)**
 - [ ] **Step 6: Four settings in the running unit's environment, including batch maximum 20 (11.6)**
 - [ ] **Step 7: V2 singleton original-head shortcut under `batchMax = 20`, ordinary auto-merge (11.7)**
 - [ ] **Step 8: Re-confirm discharged V1 at the first live stacked landing; retired V6 ref probe removed (11.8)**

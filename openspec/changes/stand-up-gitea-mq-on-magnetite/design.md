@@ -4,7 +4,7 @@ Magnetite is the Hetzner CX53 host that carries this fleet's server-side service
 Its composition is the repository's deferred-module pattern: `flake.nix` hands `modules/` to `import-tree`, each aspect file assigns a deferred module into `flake.modules.nixos.<aspect>`, `modules/machines/nixos/magnetite/default.nix` imports upstream modules and names the aspects the host takes, and `modules/clan/inventory/machines.nix` binds the result into `clan.machines.magnetite`, which `clan machines update magnetite` deploys.
 nixbot sits in that pattern as `inputs.nixbot.nixosModules.nixbot` imported at the host plus the aspect `flake.modules.nixos.nixbot` in `modules/nixos/nixbot.nix`, and serves `cameronraysmith/vanixiets` and `sciexp/ironstar` under the App `sciexp-nixbot` (id `4743700`).
 
-The ADR `docs/notes/development/version-control/adr-substitution-first-rollup-landing.md` decides that changes land through gitea-mq's own bors-style batching: up to twenty queue entries tested together, checks read from nixbot's two contexts, and `main` fast-forwarded by non-force `UpdateRef` to the exact commit CI tested.
+The ADR `docs/notes/development/version-control/adr-substitution-first-rollup-landing.md` decides that changes land through gitea-mq's own bors-style batching: up to twenty queue entries tested together, checks read from nixbot's three contexts, and `main` fast-forwarded by non-force `UpdateRef` to the exact commit CI tested.
 Revision 2 of that ADR retired the earlier orchestrator rollup onto `staging`, because `internal/batch/batch.go::Engine.HandlePass` fast-forwards the target to the tested batch SHA, so a separately assembled linear candidate adds no substitution guarantee.
 The ADR assigns this change R11 (the service and its four settings), R13 (a separate GitHub App), R14 (the two rulesets, App bypass, `allow_auto_merge`, no linear history, no classic protection), the second automated Compliance item (pinning the settings), and the world-assumption entries about gitea-mq and GitHub.
 R15 and R16, the human-and-agent authorization procedure, and R1 and R2, source filtering and cache warming, belong to sibling changes; this change references them where a dependency needs stating and does not absorb them.
@@ -28,7 +28,7 @@ The earlier orchestrator-only labelling and bypass role is retired with the roll
 A gitea-mq instance on magnetite, served at `mq.scientistexperience.net` over TLS, deployed by `clan machines update magnetite`.
 The four R11 settings in force and pinned by an assertion that fails host evaluation on drift.
 A dedicated GitHub App with exactly the R13 permission and subscribable-event set, its credentials supplied through clan vars with no value in the repository.
-The two-ruleset arrangement on `cameronraysmith/vanixiets` per R14: our ruleset gains `nixbot/nix-eval` by an operator-approved diff, the queue's own ruleset is created by its startup setup, and the `allow_auto_merge` question is settled.
+The two-ruleset arrangement on `cameronraysmith/vanixiets` per R14: our ruleset requires `nixbot/nix-eval`, `nixbot/nix-build`, and `nixbot/effects`, the queue's own ruleset is created by its startup setup, and the `allow_auto_merge` question is settled.
 Runtime confirmation of V2, V3, and V9, with discharged V1 re-confirmed at the first live stacked landing.
 
 **Non-Goals:**
@@ -50,7 +50,7 @@ Any upstream filing to gitea-mq.
 
 ### D2: The four settings are module options, the label is a default, and an assertion pins all four
 
-- **Choice**: `batchMax = 20`, `skipQueueIfUpToDate = true`, `requiredChecks = [ "nixbot/nix-eval" "nixbot/nix-build" ]`; no value for the merge label; `assertions` in the aspect that read `config.services.gitea-mq.batchMax`, `.skipQueueIfUpToDate`, and `.requiredChecks` from the merged configuration and compare them to those values, plus one asserting `!(config.systemd.services.gitea-mq.environment ? GITEA_MQ_MERGE_LABEL)`.
+- **Choice**: `batchMax = 20`, `skipQueueIfUpToDate = true`, `requiredChecks = [ "nixbot/nix-eval" "nixbot/nix-build" "nixbot/effects" ]`; no value for the merge label; `assertions` in the aspect that read `config.services.gitea-mq.batchMax`, `.skipQueueIfUpToDate`, and `.requiredChecks` from the merged configuration and compare them to those values, plus one asserting `!(config.systemd.services.gitea-mq.environment ? GITEA_MQ_MERGE_LABEL)`.
 - **Reversal, zero to five**: the earlier design chose unlimited `batchMax = 0` while relying on orchestrator serialization to supply one rollup entry at a time; zero itself never guaranteed a singleton (`internal/queue/batch.go::Service.FormBatch`).
   The rollup rested on a false premise about queue-created merge commits.
   `internal/batch/batch.go::Engine.HandlePass` calls `internal/github/forge.go::FastForward` with the exact tested batch SHA, preserving nixbot's tested-tree identity (`gitrepo.py::WorkTree.tree_hash`) even with merge history.
@@ -69,7 +69,19 @@ Any upstream filing to gitea-mq.
   Raising the cap raises the ceiling; it does not force larger batches.
   Any speedup from twenty is a projection, not a measured result.
 - **Rationale**: the module maps the three options straight to `GITEA_MQ_BATCH_MAX`, `GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE`, and `GITEA_MQ_REQUIRED_CHECKS`; `GITEA_MQ_MERGE_LABEL` is not an option, the module's `environment` set is closed, and `config.go::Load` defaults the label to `merge-queue`, so the only drift possible is an override from another module, which is what the fourth assertion detects. The assertions read the merged configuration, so an `lib.mkForce` elsewhere or a one-sided edit fails `checks.x86_64-linux.nixos-magnetite` at evaluation. The ADR's Compliance item allows a flake check or a module assertion; the assertion needs no new check attribute.
-- **Coupling, not two settings**: `requiredChecks` is a fallback the queue consults only when the forge names no required check (`internal/monitor/monitor.go::ResolveRequiredChecks`), and D7 keeps both nixbot contexts in our ruleset, so the forge list is non-empty and this fallback never fires. The assertion pins the fallback; D7 pins what is actually operative.
+- **Extension, two required contexts to three**: the original G2 decision added `nixbot/nix-eval` beside `nixbot/nix-build`; the operator subsequently added `nixbot/effects` to ruleset `16212553` so landing waits for herculesCI-style effects to conclude.
+  The operator reported that this also fixed orphaned `gitea-mq/*` mirror check runs: they had been copied mid-flight and never updated after the queue entry finalized.
+  The configured fallback and its assertion now include effects, superseding the two-context fallback rather than preserving a weaker gate merely because it is inactive.
+- **Coupled invariant, forge and fallback**: the ruleset is authoritative, and `requiredChecks` must never be weaker than its required external contexts.
+  `internal/github/forge.go::GetRequiredChecks` unions ruleset and classic-protection contexts minus queue-owned contexts; `internal/monitor/monitor.go::ResolveRequiredChecks` prefers that non-empty list, so the fallback does not fire in this configuration.
+  If the forge returns an empty list, the fallback must still require `nixbot/nix-eval`, `nixbot/nix-build`, and `nixbot/effects`: a fallback that silently reduces the gate is worse than no fallback.
+  Forge-read errors propagate from `ResolveRequiredChecks`; they do not activate the fallback.
+  D2's assertion pins the configured list during magnetite evaluation; D7's read-only forge verification checks the authoritative list, which the assertion cannot inspect.
+- **Coupled invariant, effects gate and effect production**: nixbot posts `nixbot/effects` only when at least one effect runs.
+  In nixbot's `nixbot/nixbot/effects_run.py::enqueue_effects`, an empty effect set returns before `effects_started` is called, so no context is posted.
+  A required context that is never posted blocks a PR indefinitely rather than failing it (`internal/monitor/monitor.go::EvaluateChecks`).
+  Requiring `nixbot/effects` is therefore safe only while the default branch keeps `nixbot.toml::effects_on_pull_requests = true` and a non-empty effect set that runs for each gated candidate.
+  `nixbot.toml`, the effect declarations, the authoritative ruleset, and this required-check list must move together; disabling PR effects or removing the last effect requires a coordinated gate change, not an isolated configuration edit.
 - **Alternatives considered**: setting `GITEA_MQ_MERGE_LABEL` on the unit directly, rejected because it duplicates a default that already holds and creates the override the assertion exists to catch. A structure check under `modules/checks/structure/` evaluating the magnetite configuration, rejected as a second place to keep the same four values.
 - **Boundary**: source-versus-delivered. The assertion is a property of evaluation and says nothing about the running process; the runtime tasks read the unit's environment on the host.
 
@@ -100,12 +112,19 @@ Any upstream filing to gitea-mq.
 - **Alternatives considered**: reusing `sciexp-nixbot`, rejected above. Registering without Administration so that `EnsureRepoSetup` is skipped, rejected because R13 fixes the set and the ADR relies on setup to create the queue's own ruleset and to keep the App a bypass actor on ours.
 - **Trust boundary**: the installation selection is externally maintained forge state, not a restriction enforced by this NixOS configuration. D11 requires complete external verification of the one-repository installation scope before deployment authorization.
 
-### D7: Two rulesets — ours gains one check context, the queue creates its own
+### D7: Two rulesets — ours requires three contexts, the queue creates its own
 
-- **Choice**: ruleset `16212553` on `cameronraysmith/vanixiets` keeps its name, its `deletion` and `non_fast_forward` rules, its existing `nixbot/nix-build` required check pinned to App `4743700`, and its repository-admin bypass, and gains `nixbot/nix-eval` beside `nixbot/nix-build`. Nothing is renamed, nothing is removed, no linear-history rule is added, and classic branch protection stays absent. The queue's `EnsureRepoSetup` creates a second ruleset named `gitea-mq` requiring only its own status pinned to the queue's App, and adds the queue's App as a bypass actor on ours. The single-context addition is presented as a diff for approval (gate G2) before it is applied.
+- **Choice**: ruleset `16212553` on `cameronraysmith/vanixiets` keeps its name, its `deletion` and `non_fast_forward` rules, its `nixbot/nix-build` required check pinned to App `4743700`, and its repository-admin bypass, and also requires `nixbot/nix-eval` and `nixbot/effects`.
+  Nothing is renamed, nothing is removed, no linear-history rule is added, and classic branch protection stays absent.
+  The queue's `EnsureRepoSetup` creates a second ruleset named `gitea-mq` requiring only its own status pinned to the queue's App, and adds the queue's App as a bypass actor on ours.
+  The original G2 approval covered only the eval addition; the subsequent operator-added effects requirement extends that decision for the reason recorded in D2 and is matched here without another forge mutation.
 - **Reversal**: an earlier revision chose the opposite edit — rename `16212553` to `gitea-mq`, add `required_linear_history`, drop `nixbot/nix-build`, and require only the queue's status — so that the forge list would be empty and `GITEA_MQ_REQUIRED_CHECKS` would become operative. It is retired for two reasons. Linear history was a consequence of the abandoned one-entry rollup and no surveyed deployment mandates it. And `internal/github/setup.go::EnsureRepoSetup` returns early only when a ruleset *named* `gitea-mq` already exists, so pre-creating one was a way to suppress a second ruleset that is not needed: SBEE-Lab/infra and mulatta/dots both run two rulesets live, a human-owned one carrying `deletion`, `non_fast_forward`, and their build service's two contexts, beside the App-owned one carrying only `gitea-mq`.
-- **Rationale**: `internal/monitor/monitor.go::ResolveRequiredChecks` prefers the forge's list whenever it is non-empty and consults `GITEA_MQ_REQUIRED_CHECKS` only when it is empty, and `internal/github/forge.go::GetRequiredChecks` unions ruleset and classic contexts minus the queue's own. Keeping both nixbot contexts in our ruleset therefore makes the forge the operative source and the pair exactly what the queue requires; a ruleset naming one context only would silently shrink the queue's gate to that one. This is one invariant with D2 rather than two independent settings: the module's `requiredChecks` is the fallback, and it does not fire in this configuration.
-- **Alternatives considered**: leaving our ruleset unchanged and relying on `requiredChecks` is rejected because its non-empty `[nixbot/nix-build]` list suppresses the fallback pair. Pre-creating a disabled ruleset named `gitea-mq` remains optional, solely to choose when the queue context starts blocking. Setup returns early for that name without creating, repairing, or activating it, so the operator must separately approve activation; otherwise setup creates its own active second ruleset.
+- **Rationale**: `internal/monitor/monitor.go::ResolveRequiredChecks` prefers the forge's list whenever it is non-empty and consults `GITEA_MQ_REQUIRED_CHECKS` only when it is empty, and `internal/github/forge.go::GetRequiredChecks` unions ruleset and classic contexts minus the queue's own.
+  Keeping all three nixbot contexts in our ruleset makes the forge authoritative; a non-empty proper subset would silently shrink the queue's gate despite the stronger fallback.
+  D2 and D7 form one invariant: the inactive fallback must match the authoritative gate so an empty forge list cannot weaken it, and requiring effects remains coupled to default-branch PR-effect enablement and a non-empty effect set.
+- **Alternatives considered**: leaving our ruleset unchanged and relying on `requiredChecks` was rejected because its non-empty `[nixbot/nix-build]` list suppressed the original fallback pair; it would likewise suppress today's three-context fallback.
+  Pre-creating a disabled ruleset named `gitea-mq` remains optional, solely to choose when the queue context starts blocking.
+  Setup returns early for that name without creating, repairing, or activating it, so the operator must separately approve activation; otherwise setup creates its own active second ruleset.
 - **Retired verification**: V6's `refs/landings/*` probe is removed because the revised ADR retires that provenance protocol.
 
 ### D8: `allow_auto_merge` stays on, and the enqueue signal is the authorization
@@ -140,7 +159,7 @@ Any upstream filing to gitea-mq.
 
 [Risk] A later edit changes batch size, skipping, the configured fallback, or the label → Mitigation: D2's assertions reject that drift during host evaluation; merge commits in tested batches are expected, not a configuration failure.
 
-[Risk] A nixbot context disappears from our ruleset and the queue gates only on the remaining context → Mitigation: D7 and tasks 11.4/11.5 read both rulesets and classic-protection state to establish the exact forge-derived pair; visibility of the resolved list in logs or the dashboard is unverified.
+[Risk] A nixbot context disappears from our ruleset and the queue gates only on the remaining contexts → Mitigation: D7 and tasks 11.4/11.5 read both rulesets and classic-protection state to establish the exact forge-derived three-context set; visibility of the resolved list in logs or the dashboard is unverified.
 
 [Risk] Peer authentication fails because the role name and the dynamic user name diverge → Mitigation: D3 records the coupling; the deployment task checks the unit's log for a successful migration rather than inferring from the role's existence.
 
@@ -169,7 +188,7 @@ Write the aspect with both generators, the service configuration, the PostgreSQL
 Generate the webhook secret.
 Instantiate the host's configuration as a check.
 Apply the DNS record and confirm resolution.
-G2: present the single-context ruleset addition for `cameronraysmith/vanixiets` and wait for approval; apply it.
+G2 originally presented the single-context eval addition for `cameronraysmith/vanixiets` for approval before application; the operator's later effects addition extends the required set as recorded in D2/D7.
 Deploy with `clan machines update magnetite`.
 Confirm that setup created its own ruleset if absent and added App bypass to ours without changing our rules, that the App's webhook URL matches the service, and that V2, V3, and V9 hold.
 Re-confirm discharged V1 at the first live stacked landing; the old V6 ref probe is retired.
@@ -177,9 +196,9 @@ Re-confirm discharged V1 at the first live stacked landing; the old V6 ref probe
 Rollback is the ordinary one: remove `gitea-mq` from the host's aspect list and redeploy, which withdraws the unit, the vhost, and the assertions.
 The database and role, the cache directory, the credential entries, the App registration, and both rulesets persist after such a rollback.
 The App-owned queue gate still requires `gitea-mq` after service removal; an operator-approved disabling of that gate accompanies rollback so the branch is not left awaiting a stopped service.
-Record that separately from the G2 reverse diff, which removes only the added eval context from ours and preserves its build check and protection rules.
+Record that separately from the original G2 reverse diff, which removes only the added eval context from ours and preserves its build check and protection rules; the later effects requirement and fallback must remain coordinated under D2.
 
-Acceptance is the integration verification in tasks.md: the hostname serves over TLS, the unit is running with the four settings visible in its environment, the database exists owned by its role and the schema is migrated, the App's webhook URL reads the service's endpoint, both rulesets read as approved and as created by startup, and an up-to-date pull request whose tip already carries both nixbot contexts is landed by fast-forward.
+Acceptance is the integration verification in tasks.md: the hostname serves over TLS, the unit is running with the four settings visible in its environment, the database exists owned by its role and the schema is migrated, the App's webhook URL reads the service's endpoint, both rulesets read as approved and as created by startup, and an up-to-date pull request whose tip already carries all three nixbot contexts is landed by fast-forward.
 
 ## Gate 1 modality verdicts
 
@@ -225,6 +244,6 @@ Whether the operator wants the App owned by `sciexp` and public, as `sciexp-nixb
 
 Whether to pre-create a disabled `gitea-mq` ruleset or let setup create it active is an optional timing preference, not a prerequisite.
 If pre-created, setup does not create or activate it; the operator separately chooses activation timing.
-The old explicit-User-bypass question and V6 namespace question are retired: G2 adds only `nixbot/nix-eval`, and the ADR removes the orchestrator provenance protocol.
+The old explicit-User-bypass question and V6 namespace question are retired: G2 originally added only `nixbot/nix-eval`, D2/D7 record the later `nixbot/effects` extension, and the ADR removes the orchestrator provenance protocol.
 
 The `world-assumptions` designation table is modified by this change and by `stand-up-nixbot-on-magnetite`, which is In Review and not yet archived; archive applies MODIFIED by full-text replacement, so this change's table carries the union of the corpus rows, the sibling's rows, and its own, and whichever change archives second must carry the other's rows or lose them.

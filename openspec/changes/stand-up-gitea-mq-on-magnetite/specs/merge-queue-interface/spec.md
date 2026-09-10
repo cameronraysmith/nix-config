@@ -16,13 +16,15 @@ The machine SHALL serve the merge queue at one hostname of its own, distinct fro
 
 ### Requirement: The four landing settings are evaluated values guarded by an assertion
 
-The machine's evaluated configuration SHALL carry the queue's batch maximum as `20`, its up-to-date shortcut as enabled, its configured fallback required checks as exactly `nixbot/nix-eval` and `nixbot/nix-build`, and no override of the merge label on the queue's unit, and SHALL refuse to evaluate when the merged configuration differs from those values.
-The configured fallback is not the operative required set: the queue consults it only when the forge names no required check, and the ruleset requirement below keeps the forge's set non-empty, so the two settings are one invariant rather than two independent ones.
+The machine's evaluated configuration SHALL carry the queue's batch maximum as `20`, its up-to-date shortcut as enabled, its configured fallback required checks as exactly `nixbot/nix-eval`, `nixbot/nix-build`, and `nixbot/effects`, and no override of the merge label on the queue's unit, and SHALL refuse to evaluate when the merged configuration differs from those values.
+The configured fallback is not the operative required set: the queue consults it only when the forge names no required check, and the ruleset requirement below keeps the forge's set non-empty.
+The ruleset is authoritative, and the fallback SHALL match its three required external contexts so an empty forge list cannot silently weaken the gate.
+Requiring `nixbot/effects` SHALL remain coupled to default-branch `nixbot.toml::effects_on_pull_requests = true` and a non-empty effect set; an empty set returns before `effects_started` in nixbot's `nixbot/nixbot/effects_run.py::enqueue_effects`, leaving the required context unposted and a PR blocked indefinitely.
 
 #### Scenario: The evaluated options are read
 
 - **WHEN** the queue's options are read from the host's evaluated configuration
-- **THEN** the batch maximum is `20`, the up-to-date shortcut is enabled, the configured fallback required checks are exactly the two build-service contexts, and the unit's environment carries no merge-label attribute
+- **THEN** the batch maximum is `20`, the up-to-date shortcut is enabled, the configured fallback required checks are exactly the three build-service contexts, and the unit's environment carries no merge-label attribute
 
 #### Scenario: Another module forces a different value
 
@@ -32,7 +34,7 @@ The configured fallback is not the operative required set: the queue consults it
 #### Scenario: The unit's environment is read on the host
 
 - **WHEN** the queue's unit environment is read on the host after activation
-- **THEN** it carries the batch maximum `20`, the up-to-date shortcut `true`, the two contexts as the configured required-checks list, and no merge-label variable, so the queue's own default of `merge-queue` is in force
+- **THEN** it carries the batch maximum `20`, the up-to-date shortcut `true`, the three contexts as the configured required-checks list, and no merge-label variable, so the queue's own default of `merge-queue` is in force
 
 ### Requirement: A database and role exist for the unit's dynamic user
 
@@ -83,13 +85,13 @@ The target-repository installation endpoint alone cannot establish exclusivity; 
 
 ### Requirement: The default branch is governed by two rulesets
 
-The managed repository's default branch SHALL be governed by two rulesets: one maintained by the operator, requiring deletion protection, non-fast-forward protection, and both of the build service's check contexts; and one created and owned by the queue's own startup setup, requiring only the queue's own status.
+The managed repository's default branch SHALL be governed by two rulesets: one maintained by the operator, requiring deletion protection, non-fast-forward protection, and all three of the build service's check contexts; and one created and owned by the queue's own startup setup, requiring only the queue's own status.
 Neither SHALL require linear history, no classic branch protection SHALL govern the branch, the queue's forge application SHALL be a bypass actor on the operator's ruleset, and the repository's `allow_auto_merge` setting SHALL be left as the queue sets it.
 
 #### Scenario: The rulesets are read on the forge
 
 - **WHEN** the default branch's rulesets are read through the forge's API after the queue has started
-- **THEN** two rulesets govern it, the operator's naming both build-service contexts and the queue's naming only its own status pinned to the queue's application, the queue's application is a bypass actor on the operator's ruleset, no rule requires linear history, and the branch's classic protection is absent
+- **THEN** two rulesets govern it, the operator's naming all three build-service contexts and the queue's naming only its own status pinned to the queue's application, the queue's application is a bypass actor on the operator's ruleset, no rule requires linear history, and the branch's classic protection is absent
 
 #### Scenario: The queue's startup setup runs
 
@@ -103,8 +105,18 @@ Neither SHALL require linear history, no classic branch protection SHALL govern 
 
 #### Scenario: A build-service context is dropped from the operator's ruleset
 
-- **WHEN** either build-service context is removed from the operator's ruleset on the default branch
+- **WHEN** any build-service context is removed from the operator's ruleset on the default branch while the forge's required list remains non-empty
 - **THEN** the queue's required set shrinks to whatever the forge still names, because it prefers a non-empty forge list over its configured fallback, which is the drift the behavioral requirement `The queue gates on the build service's verdicts and nothing else` names
+
+#### Scenario: The forge names no required external context
+
+- **WHEN** the forge returns an empty required-check list after excluding queue-owned contexts
+- **THEN** the queue uses the configured fallback containing evaluation, build, and effects contexts without weakening the landing gate
+
+#### Scenario: No effects context is posted
+
+- **WHEN** PR effects are disabled or the effect set is empty while `nixbot/effects` remains required
+- **THEN** the missing context blocks the PR indefinitely rather than failing it, so the required-check list, ruleset, and effect-production configuration must change together
 
 ### Requirement: The service registers its own webhook endpoint
 
@@ -141,7 +153,7 @@ This capability SHALL state what its properties guarantee and what they do not, 
 #### Scenario: The properties above are read as a set
 
 - **WHEN** the properties of this capability are read as a set
-- **THEN** what they establish is that the queue is reached at its own hostname over its own certificate through a loopback listener, that its four landing settings are fixed at evaluation and visible at runtime, that its database and role are its own, that its credentials exist only as activation-resolved systemd credentials, that its forge application holds exactly the stated set, that the default branch is governed by the operator's ruleset naming both build-service contexts and the queue's own ruleset naming only its status, that the queue maintains its own delivery endpoint, and that what runs is a consequence of the host's declared configuration
+- **THEN** what they establish is that the queue is reached at its own hostname over its own certificate through a loopback listener, that its four landing settings are fixed at evaluation and visible at runtime, that its database and role are its own, that its credentials exist only as activation-resolved systemd credentials, that its forge application holds exactly the stated set, that the default branch is governed by the operator's ruleset naming all three build-service contexts and the queue's own ruleset naming only its status, that the queue maintains its own delivery endpoint, and that what runs is a consequence of the host's declared configuration
 
 #### Scenario: A guarantee about who can enqueue is sought from this capability
 

@@ -40,24 +40,24 @@ A single queued change whose head already contains the default branch's tip MAY 
 
 ### Requirement: The queue gates on the build service's verdicts and nothing else
 
-The merge queue SHALL consider a change ready to land only when the build service's two verdicts, its evaluation verdict and its build verdict, are both passed on the commit it tests, and SHALL NOT require any other check run beyond its own, whether or not those verdicts were published before the change was queued.
+The merge queue SHALL consider a change ready to land only when the build service's three verdicts, its evaluation verdict, build verdict, and effects verdict, are all passed on the commit it tests, and SHALL NOT require any other check run beyond its own, whether or not those verdicts were published before the change was queued.
 
 **Discharged by**: `merge-queue-interface` requirements `The four landing settings are evaluated values guarded by an assertion` and `The default branch is governed by two rulesets`, resting on world assumption `A25 — gitea-mq takes required checks from the forge's protection before its own list`.
 
 #### Scenario: Verdicts were published before the change was queued
 
-- **WHEN** a single up-to-date entry's head already carries both successful build-service verdicts before authorization and the queue takes the head shortcut without a later rebuild
+- **WHEN** a single up-to-date entry's head already carries all three successful build-service verdicts before authorization and the queue takes the head shortcut without a later rebuild
 - **THEN** the queue accepts the existing head verdicts for enqueue and landing without requiring a new check run or an arrive-after-enqueue timestamp
 
 #### Scenario: One verdict is failed
 
-- **WHEN** a tested batch fails either required build-service verdict
+- **WHEN** a tested batch fails any required build-service verdict
 - **THEN** the queue withholds that batch's landing and bisects a multi-entry batch, or ejects a failing singleton with a comment naming the failed verdict; any surviving subset must pass on its tested SHA before landing
 
 #### Scenario: The forge's own protection names one verdict only
 
-- **WHEN** the repository's forge-side protection on the default branch comes to name one of the build service's two verdicts and not the other
-- **THEN** the queue gates on that single verdict, because it prefers the forge's list whenever that list is non-empty, which is why both verdicts are required in our own ruleset rather than left to the queue's configured fallback
+- **WHEN** the repository's forge-side protection on the default branch comes to name one of the build service's three verdicts and neither of the others
+- **THEN** the queue gates on that single verdict, because it prefers the forge's list whenever that list is non-empty, which is why all three verdicts are required in our own ruleset rather than left to the queue's configured fallback
 
 ### Requirement: The queue acts under its own identity
 
